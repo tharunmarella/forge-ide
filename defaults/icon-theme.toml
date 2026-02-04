@@ -58,6 +58,37 @@ name = "Lapce Codicons"
 "scm.change.add" = "add.svg"
 "scm.change.remove" = "remove.svg"
 
+# Git Operations
+"git.commit" = "git-commit.svg"
+"git.push" = "repo-push.svg"
+"git.pull" = "repo-pull.svg"
+"git.fetch" = "repo-clone.svg"
+"git.merge" = "git-merge.svg"
+"git.sync" = "refresh.svg"
+"git.stash" = "history.svg"
+"git.stash.apply" = "history.svg"
+"git.stash.pop" = "history.svg"
+"git.compare" = "git-compare.svg"
+"git.revert" = "discard.svg"
+"git.clone" = "repo-clone.svg"
+"git.force_push" = "repo-force-push.svg"
+
+# Git Branch & PR
+"git.branch" = "repo.svg"
+"git.branch.changes" = "repo.svg"
+"git.branch.conflicts" = "repo.svg"
+"git.branch.staged" = "repo.svg"
+"git.pull_request" = "issues.svg"
+"git.pull_request.create" = "issues.svg"
+"git.pull_request.closed" = "issues.svg"
+"git.pull_request.merged" = "issues.svg"
+"git.pull_request.draft" = "issues.svg"
+
+# Cloud/Sync
+"cloud.upload" = "arrow-up.svg"
+"cloud.download" = "arrow-down.svg"
+"refresh" = "refresh.svg"
+
 "palette.menu" = "chevron-down.svg"
 
 "fold" = "fold.svg"

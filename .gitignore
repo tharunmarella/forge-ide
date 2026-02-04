@@ -18,3 +18,4 @@
 # Environment files
 .env
 .env.local
+reference-repositories/

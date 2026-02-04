@@ -55,6 +55,37 @@ impl LapceIcons {
     pub const SCM_CHANGE_ADD: &'static str = "scm.change.add";
     pub const SCM_CHANGE_REMOVE: &'static str = "scm.change.remove";
 
+    // Git Operations
+    pub const GIT_COMMIT: &'static str = "git.commit";
+    pub const GIT_PUSH: &'static str = "git.push";
+    pub const GIT_PULL: &'static str = "git.pull";
+    pub const GIT_FETCH: &'static str = "git.fetch";
+    pub const GIT_MERGE: &'static str = "git.merge";
+    pub const GIT_SYNC: &'static str = "git.sync";
+    pub const GIT_STASH: &'static str = "git.stash";
+    pub const GIT_STASH_APPLY: &'static str = "git.stash.apply";
+    pub const GIT_STASH_POP: &'static str = "git.stash.pop";
+    pub const GIT_COMPARE: &'static str = "git.compare";
+    pub const GIT_REVERT: &'static str = "git.revert";
+    pub const GIT_CLONE: &'static str = "git.clone";
+    pub const GIT_FORCE_PUSH: &'static str = "git.force_push";
+
+    // Git Branch & PR
+    pub const GIT_BRANCH: &'static str = "git.branch";
+    pub const GIT_BRANCH_CHANGES: &'static str = "git.branch.changes";
+    pub const GIT_BRANCH_CONFLICTS: &'static str = "git.branch.conflicts";
+    pub const GIT_BRANCH_STAGED: &'static str = "git.branch.staged";
+    pub const GIT_PULL_REQUEST: &'static str = "git.pull_request";
+    pub const GIT_PULL_REQUEST_CREATE: &'static str = "git.pull_request.create";
+    pub const GIT_PULL_REQUEST_CLOSED: &'static str = "git.pull_request.closed";
+    pub const GIT_PULL_REQUEST_MERGED: &'static str = "git.pull_request.merged";
+    pub const GIT_PULL_REQUEST_DRAFT: &'static str = "git.pull_request.draft";
+
+    // Cloud/Sync
+    pub const CLOUD_UPLOAD: &'static str = "cloud.upload";
+    pub const CLOUD_DOWNLOAD: &'static str = "cloud.download";
+    pub const REFRESH: &'static str = "refresh";
+
     pub const FOLD: &'static str = "fold";
     pub const FOLD_UP: &'static str = "fold.up";
     pub const FOLD_DOWN: &'static str = "fold.down";
