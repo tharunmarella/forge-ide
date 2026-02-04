@@ -1,0 +1,253 @@
+#:schema ../extra/schemas/color-theme.json
+
+[color-theme]
+name = "Lapce Dark"
+
+[ui]
+font-family = ""
+font-size = 13
+header-height = 35
+status-height = 25
+tab-min-width = 100
+activity-width = 50
+scroll-width = 10
+drop-shadow-width = 0
+
+[color-theme.base]
+# IntelliJ Gray Scale (from expUI_dark.theme.json)
+gray1 = "#1E1F22"
+gray2 = "#2B2D30"
+gray3 = "#393B40"
+gray4 = "#43454A"
+gray5 = "#4E5157"
+gray6 = "#5A5D63"
+gray7 = "#6F737A"
+gray8 = "#868A91"
+gray9 = "#9DA0A8"
+gray10 = "#B4B8BF"
+gray11 = "#CED0D6"
+gray12 = "#DFE1E5"
+gray13 = "#F0F1F2"
+gray14 = "#FFFFFF"
+
+# IntelliJ Blue Accent
+blue1 = "#25324D"
+blue2 = "#2E436E"
+blue3 = "#35538F"
+blue4 = "#375FAD"
+blue5 = "#366ACE"
+blue6 = "#3574F0"
+blue7 = "#467FF2"
+blue8 = "#548AF7"
+blue9 = "#6B9BFA"
+
+# IntelliJ Green
+green1 = "#253627"
+green2 = "#273828"
+green3 = "#375239"
+green5 = "#4E8052"
+green6 = "#57965C"
+green7 = "#5FAD65"
+
+# IntelliJ Yellow
+yellow1 = "#3D3223"
+yellow5 = "#BA9752"
+yellow6 = "#D6AE58"
+yellow7 = "#F2C55C"
+
+# IntelliJ Red
+red1 = "#402929"
+red3 = "#5E3838"
+red5 = "#9C4E4E"
+red6 = "#BD5757"
+red7 = "#DB5C5C"
+
+# IntelliJ Purple
+purple7 = "#955AE0"
+
+# IntelliJ Teal/Cyan
+teal7 = "#24A394"
+
+# Semantic colors
+primary-background = "$gray1"
+secondary-background = "$gray2"
+current-background = "$blue2"
+hover-background = "$gray3"
+text = "$gray12"
+dim-text = "$gray7"
+
+[color-theme.syntax]
+"comment" = "$gray7"
+"constant" = "$yellow6"
+"type" = "$yellow6"
+"typeAlias" = "$yellow6"
+"number" = "$yellow6"
+"enum" = "$yellow6"
+"struct" = "$yellow6"
+"structure" = "$yellow6"
+"interface" = "$yellow6"
+"attribute" = "$yellow6"
+"constructor" = "$yellow6"
+"function" = "$blue9"
+"method" = "$blue9"
+"function.method" = "$blue9"
+"keyword" = "$purple7"
+"selfKeyword" = "$purple7"
+"field" = "$red7"
+"property" = "$red7"
+"enumMember" = "$red7"
+"enum-member" = "$red7"
+"string" = "$green7"
+"type.builtin" = "$teal7"
+"builtinType" = "$teal7"
+"escape" = "$teal7"
+"string.escape" = "$teal7"
+"embedded" = "$teal7"
+"punctuation.delimiter" = "$gray12"
+"text.title" = "$yellow6"
+"text.uri" = "$blue9"
+"text.reference" = "$yellow6"
+"variable" = "$gray12"
+"variable.other.member" = "$red7"
+"tag" = "$blue9"
+
+"markup.heading" = "$red7"
+"markup.bold" = "$yellow6"
+"markup.italic" = "$yellow6"
+"markup.list" = "$yellow6"
+"markup.link.url" = "$blue9"
+"markup.link.label" = "$purple7"
+"markup.link.text" = "$purple7"
+
+"bracket.color.1" = "$blue9"
+"bracket.color.2" = "$yellow6"
+"bracket.color.3" = "$purple7"
+"bracket.unpaired" = "$red7"
+
+[color-theme.ui]
+"lapce.error" = "$red7"
+"lapce.warn" = "$yellow6"
+"lapce.dropdown_shadow" = "#00000040"
+"lapce.border" = "$gray1"
+"lapce.scroll_bar" = "#4E515766"
+
+"lapce.button.primary.background" = "$blue6"
+"lapce.button.primary.foreground" = "$gray14"
+
+# tab
+"lapce.tab.active.background" = "$gray1"
+"lapce.tab.active.foreground" = "$gray12"
+"lapce.tab.active.underline" = "$blue6"
+
+"lapce.tab.inactive.background" = "$gray1"
+"lapce.tab.inactive.foreground" = "$gray9"
+"lapce.tab.inactive.underline" = "#3574F044"
+
+"lapce.tab.separator" = "$gray3"
+
+"lapce.icon.active" = "$gray12"
+"lapce.icon.inactive" = "$gray7"
+
+"lapce.remote.icon" = "$gray1"
+"lapce.remote.local" = "$blue6"
+"lapce.remote.connected" = "$green7"
+"lapce.remote.connecting" = "$yellow6"
+"lapce.remote.disconnected" = "$red7"
+
+"lapce.plugin.name" = "$gray12"
+"lapce.plugin.description" = "$gray10"
+"lapce.plugin.author" = "$gray9"
+
+"editor.background" = "$gray1"
+"editor.foreground" = "$gray12"
+"editor.dim" = "$gray7"
+"editor.focus" = "$gray12"
+"editor.caret" = "$blue6"
+"editor.selection" = "$blue2"
+"editor.current_line" = "#2B2D3080"
+"editor.debug_break_line" = "#3574F037"
+"editor.link" = "$blue9"
+"editor.visible_whitespace" = "$gray5"
+"editor.indent_guide" = "$gray4"
+"editor.drag_drop_background" = "#3574F055"
+"editor.drag_drop_tab_background" = "#1E1F2255"
+"editor.sticky_header_background" = "$gray1"
+
+"inlay_hint.foreground" = "$gray9"
+"inlay_hint.background" = "#3574F020"
+
+"error_lens.error.foreground" = "$red7"
+"error_lens.error.background" = "#DB5C5C20"
+"error_lens.warning.foreground" = "$yellow6"
+"error_lens.warning.background" = "#D6AE5820"
+"error_lens.other.foreground" = "$gray7"
+"error_lens.other.background" = "#6F737A20"
+
+"completion_lens.foreground" = "$gray7"
+
+"source_control.added" = "#5FAD65CC"
+"source_control.removed" = "#DB5C5CCC"
+"source_control.modified" = "#3574F0CC"
+
+"tooltip.background" = "$gray3"
+"tooltip.foreground" = "$gray12"
+
+"palette.background" = "$gray2"
+"palette.foreground" = "$gray12"
+"palette.current.background" = "$blue2"
+"palette.current.foreground" = "$gray12"
+
+"completion.background" = "$gray2"
+"completion.current" = "$blue2"
+
+"hover.background" = "$gray3"
+
+"activity.background" = "$gray2"
+"activity.current" = "$blue6"
+
+"debug.breakpoint" = "$red7"
+"debug.breakpoint.hover" = "#DB5C5C66"
+
+"panel.background" = "$gray2"
+"panel.foreground" = "$gray12"
+"panel.foreground.dim" = "$gray7"
+"panel.current.background" = "$blue2"
+"panel.current.foreground" = "$gray12"
+"panel.current.foreground.dim" = "$gray9"
+"panel.hovered.background" = "$gray3"
+"panel.hovered.active.background" = "$gray4"
+"panel.hovered.foreground" = "$gray12"
+"panel.hovered.foreground.dim" = "$gray9"
+
+"status.background" = "$gray2"
+"status.foreground" = "$gray9"
+"status.modal.normal.background" = "$blue6"
+"status.modal.normal.foreground" = "$gray14"
+"status.modal.insert.background" = "$green7"
+"status.modal.insert.foreground" = "$gray14"
+"status.modal.visual.background" = "$purple7"
+"status.modal.visual.foreground" = "$gray14"
+"status.modal.terminal.background" = "$teal7"
+"status.modal.terminal.foreground" = "$gray14"
+
+"markdown.blockquote" = "$gray8"
+
+"terminal.cursor" = "$gray12"
+"terminal.foreground" = "$gray12"
+"terminal.background" = "$gray1"
+"terminal.white" = "$gray12"
+"terminal.black" = "$gray1"
+"terminal.red" = "$red7"
+"terminal.blue" = "$blue9"
+"terminal.green" = "$green7"
+"terminal.yellow" = "$yellow7"
+"terminal.cyan" = "$teal7"
+"terminal.magenta" = "$purple7"
+"terminal.bright_white" = "$gray14"
+"terminal.bright_red" = "$red7"
+"terminal.bright_blue" = "$blue9"
+"terminal.bright_green" = "$green7"
+"terminal.bright_yellow" = "$yellow7"
+"terminal.bright_cyan" = "$teal7"
+"terminal.bright_magenta" = "$purple7"
+"terminal.bright_black" = "$gray6"
