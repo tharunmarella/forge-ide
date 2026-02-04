@@ -6,7 +6,7 @@ use floem::{
 };
 use indexmap::IndexMap;
 use lapce_core::mode::Mode;
-use lapce_rpc::source_control::FileDiff;
+use lapce_rpc::source_control::{FileDiff, GitCommitInfo};
 
 use crate::{
     command::{CommandExecuted, CommandKind},
@@ -25,6 +25,11 @@ pub struct SourceControlData {
     pub tags: RwSignal<im::Vector<String>>,
     pub editor: EditorData,
     pub common: Rc<CommonData>,
+    
+    // Git log/commit history
+    pub commits: RwSignal<im::Vector<GitCommitInfo>>,
+    pub commits_loading: RwSignal<bool>,
+    pub commits_total_count: RwSignal<usize>,
 }
 
 impl KeyPressFocus for SourceControlData {
@@ -68,6 +73,9 @@ impl SourceControlData {
             branches: cx.create_rw_signal(im::Vector::new()),
             tags: cx.create_rw_signal(im::Vector::new()),
             editor: editors.make_local(cx, common.clone()),
+            commits: cx.create_rw_signal(im::Vector::new()),
+            commits_loading: cx.create_rw_signal(false),
+            commits_total_count: cx.create_rw_signal(0),
             common,
         }
     }

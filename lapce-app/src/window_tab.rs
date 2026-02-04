@@ -81,7 +81,7 @@ use crate::{
         call_hierarchy_view::{CallHierarchyData, CallHierarchyItemData},
         data::{PanelData, PanelSection, default_panel_order},
         kind::PanelKind,
-        position::PanelContainerPosition,
+        position::{PanelContainerPosition, PanelPosition},
     },
     plugin::PluginData,
     proxy::{ProxyData, new_proxy},
@@ -456,9 +456,17 @@ impl WindowTabData {
                 let panel_order = db
                     .get_panel_orders()
                     .unwrap_or_else(|_| default_panel_order());
+                // Override: ensure bottom panel starts hidden
+                let mut styles = i.panel.styles.clone();
+                if let Some(style) = styles.get_mut(&PanelPosition::BottomLeft) {
+                    style.shown = false;
+                }
+                if let Some(style) = styles.get_mut(&PanelPosition::BottomRight) {
+                    style.shown = false;
+                }
                 PanelData {
                     panels: cx.create_rw_signal(panel_order),
-                    styles: cx.create_rw_signal(i.panel.styles.clone()),
+                    styles: cx.create_rw_signal(styles),
                     size: cx.create_rw_signal(i.panel.size.clone()),
                     available_size: panel_available_size,
                     sections: cx.create_rw_signal(
@@ -1578,6 +1586,97 @@ impl WindowTabData {
                 {
                     editor_data.receive_char(DEFAULT_RUN_TOML);
                 }
+            }
+            
+            // Git Operations - TODO: Implement UI dialogs for these
+            GitPush => {
+                // For now, show a message that push requires terminal
+                // TODO: Implement push dialog with remote/branch selection
+            }
+            GitPull => {
+                // TODO: Implement pull dialog
+            }
+            GitFetch => {
+                // TODO: Implement fetch
+            }
+            GitFetchAll => {
+                // TODO: Implement fetch all
+            }
+            GitCreateBranch => {
+                // TODO: Implement create branch dialog
+            }
+            GitDeleteBranch => {
+                // TODO: Implement delete branch dialog
+            }
+            GitRenameBranch => {
+                // TODO: Implement rename branch dialog
+            }
+            GitMerge => {
+                // TODO: Implement merge dialog
+            }
+            GitMergeAbort => {
+                // TODO: Implement merge abort
+            }
+            GitRebase => {
+                // TODO: Implement rebase dialog
+            }
+            GitRebaseContinue => {
+                // TODO: Implement rebase continue
+            }
+            GitRebaseAbort => {
+                // TODO: Implement rebase abort
+            }
+            GitStash => {
+                // TODO: Implement stash dialog
+            }
+            GitStashPop => {
+                // TODO: Implement stash pop
+            }
+            GitStashApply => {
+                // TODO: Implement stash apply
+            }
+            GitStashDrop => {
+                // TODO: Implement stash drop
+            }
+            GitCherryPick => {
+                // TODO: Implement cherry-pick dialog
+            }
+            GitResetSoft => {
+                // TODO: Implement reset soft dialog
+            }
+            GitResetMixed => {
+                // TODO: Implement reset mixed dialog
+            }
+            GitResetHard => {
+                // TODO: Implement reset hard dialog (with confirmation)
+            }
+            GitRevert => {
+                // TODO: Implement revert dialog
+            }
+            GitCreateTag => {
+                // TODO: Implement create tag dialog
+            }
+            GitDeleteTag => {
+                // TODO: Implement delete tag dialog
+            }
+            GitStageAll => {
+                // TODO: Implement stage all
+            }
+            GitUnstageAll => {
+                // TODO: Implement unstage all
+            }
+            GitToggleBlame => {
+                // TODO: Implement blame toggle in editor
+            }
+            GitShowLog => {
+                // Open source control panel on Log tab
+                self.panel.show_panel(&PanelKind::SourceControl);
+            }
+            GitShowStashes => {
+                // TODO: Show stashes panel/dialog
+            }
+            GitManageRemotes => {
+                // TODO: Show remotes management dialog
             }
 
         }

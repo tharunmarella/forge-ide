@@ -516,6 +516,126 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "source_control_discard_workspace_changes")]
     SourceControlDiscardWorkspaceChanges,
 
+    // ========================================================================
+    // Git Operations
+    // ========================================================================
+    
+    #[strum(message = "Git: Push")]
+    #[strum(serialize = "git_push")]
+    GitPush,
+    
+    #[strum(message = "Git: Pull")]
+    #[strum(serialize = "git_pull")]
+    GitPull,
+    
+    #[strum(message = "Git: Fetch")]
+    #[strum(serialize = "git_fetch")]
+    GitFetch,
+    
+    #[strum(message = "Git: Fetch All")]
+    #[strum(serialize = "git_fetch_all")]
+    GitFetchAll,
+    
+    #[strum(message = "Git: Create Branch")]
+    #[strum(serialize = "git_create_branch")]
+    GitCreateBranch,
+    
+    #[strum(message = "Git: Delete Branch")]
+    #[strum(serialize = "git_delete_branch")]
+    GitDeleteBranch,
+    
+    #[strum(message = "Git: Rename Branch")]
+    #[strum(serialize = "git_rename_branch")]
+    GitRenameBranch,
+    
+    #[strum(message = "Git: Merge")]
+    #[strum(serialize = "git_merge")]
+    GitMerge,
+    
+    #[strum(message = "Git: Merge Abort")]
+    #[strum(serialize = "git_merge_abort")]
+    GitMergeAbort,
+    
+    #[strum(message = "Git: Rebase")]
+    #[strum(serialize = "git_rebase")]
+    GitRebase,
+    
+    #[strum(message = "Git: Rebase Continue")]
+    #[strum(serialize = "git_rebase_continue")]
+    GitRebaseContinue,
+    
+    #[strum(message = "Git: Rebase Abort")]
+    #[strum(serialize = "git_rebase_abort")]
+    GitRebaseAbort,
+    
+    #[strum(message = "Git: Stash")]
+    #[strum(serialize = "git_stash")]
+    GitStash,
+    
+    #[strum(message = "Git: Stash Pop")]
+    #[strum(serialize = "git_stash_pop")]
+    GitStashPop,
+    
+    #[strum(message = "Git: Stash Apply")]
+    #[strum(serialize = "git_stash_apply")]
+    GitStashApply,
+    
+    #[strum(message = "Git: Stash Drop")]
+    #[strum(serialize = "git_stash_drop")]
+    GitStashDrop,
+    
+    #[strum(message = "Git: Cherry Pick")]
+    #[strum(serialize = "git_cherry_pick")]
+    GitCherryPick,
+    
+    #[strum(message = "Git: Reset Soft")]
+    #[strum(serialize = "git_reset_soft")]
+    GitResetSoft,
+    
+    #[strum(message = "Git: Reset Mixed")]
+    #[strum(serialize = "git_reset_mixed")]
+    GitResetMixed,
+    
+    #[strum(message = "Git: Reset Hard")]
+    #[strum(serialize = "git_reset_hard")]
+    GitResetHard,
+    
+    #[strum(message = "Git: Revert Commit")]
+    #[strum(serialize = "git_revert")]
+    GitRevert,
+    
+    #[strum(message = "Git: Create Tag")]
+    #[strum(serialize = "git_create_tag")]
+    GitCreateTag,
+    
+    #[strum(message = "Git: Delete Tag")]
+    #[strum(serialize = "git_delete_tag")]
+    GitDeleteTag,
+    
+    #[strum(message = "Git: Stage All")]
+    #[strum(serialize = "git_stage_all")]
+    GitStageAll,
+    
+    #[strum(message = "Git: Unstage All")]
+    #[strum(serialize = "git_unstage_all")]
+    GitUnstageAll,
+    
+    #[strum(message = "Git: Toggle Blame")]
+    #[strum(serialize = "git_toggle_blame")]
+    GitToggleBlame,
+    
+    #[strum(message = "Git: Show Log")]
+    #[strum(serialize = "git_show_log")]
+    GitShowLog,
+    
+    #[strum(message = "Git: Show Stashes")]
+    #[strum(serialize = "git_show_stashes")]
+    GitShowStashes,
+    
+    #[strum(message = "Git: Manage Remotes")]
+    #[strum(serialize = "git_manage_remotes")]
+    GitManageRemotes,
+
     #[strum(serialize = "export_current_theme_settings")]
     #[strum(message = "Export current settings to a theme file")]
     ExportCurrentThemeSettings,

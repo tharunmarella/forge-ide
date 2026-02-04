@@ -97,6 +97,137 @@ pub enum ProxyRequest {
     GitGetRemoteFileUrl {
         file: PathBuf,
     },
+    GitLog {
+        /// Maximum number of commits to return
+        limit: usize,
+        /// Skip this many commits (for pagination)
+        skip: usize,
+        /// Optional branch to filter by
+        branch: Option<String>,
+        /// Optional author filter
+        author: Option<String>,
+        /// Optional search text for commit messages
+        search: Option<String>,
+    },
+    // Git Branch Operations
+    GitListBranches {
+        include_remote: bool,
+    },
+    GitCreateBranch {
+        name: String,
+        start_point: Option<String>,
+        checkout: bool,
+    },
+    GitDeleteBranch {
+        name: String,
+        force: bool,
+        delete_remote: bool,
+    },
+    GitRenameBranch {
+        old_name: String,
+        new_name: String,
+    },
+    // Git Push/Pull/Fetch
+    GitPush {
+        options: crate::source_control::GitPushOptions,
+    },
+    GitPull {
+        options: crate::source_control::GitPullOptions,
+    },
+    GitFetch {
+        options: crate::source_control::GitFetchOptions,
+    },
+    // Git Stash
+    GitStashList {},
+    GitStashSave {
+        message: Option<String>,
+        include_untracked: bool,
+        keep_index: bool,
+    },
+    GitStashPop {
+        index: usize,
+    },
+    GitStashApply {
+        index: usize,
+    },
+    GitStashDrop {
+        index: usize,
+    },
+    // Git Merge
+    GitMerge {
+        options: crate::source_control::GitMergeOptions,
+    },
+    GitMergeAbort {},
+    // Git Rebase
+    GitRebase {
+        options: crate::source_control::GitRebaseOptions,
+    },
+    GitRebaseAction {
+        action: crate::source_control::GitRebaseAction,
+    },
+    // Git Cherry-pick
+    GitCherryPick {
+        options: crate::source_control::GitCherryPickOptions,
+    },
+    GitCherryPickAction {
+        action: crate::source_control::GitRebaseAction, // Continue/Abort/Skip
+    },
+    // Git Reset
+    GitReset {
+        options: crate::source_control::GitResetOptions,
+    },
+    // Git Revert
+    GitRevert {
+        options: crate::source_control::GitRevertOptions,
+    },
+    GitRevertAction {
+        action: crate::source_control::GitRebaseAction, // Continue/Abort
+    },
+    // Git Blame
+    GitBlame {
+        path: PathBuf,
+        commit: Option<String>,
+    },
+    // Git Tags
+    GitListTags {},
+    GitCreateTag {
+        name: String,
+        target: Option<String>,
+        message: Option<String>,
+        annotated: bool,
+    },
+    GitDeleteTag {
+        name: String,
+        delete_remote: bool,
+    },
+    // Git Remotes
+    GitListRemotes {},
+    GitAddRemote {
+        name: String,
+        url: String,
+    },
+    GitRemoveRemote {
+        name: String,
+    },
+    // Git Status (detailed)
+    GitGetStatus {},
+    // Git Diff (detailed)
+    GitGetCommitDiff {
+        commit: String,
+    },
+    GitGetFileDiff {
+        path: PathBuf,
+        staged: bool,
+    },
+    // Git Stage/Unstage
+    GitStageFiles {
+        paths: Vec<PathBuf>,
+    },
+    GitUnstageFiles {
+        paths: Vec<PathBuf>,
+    },
+    GitStageAll {},
+    GitUnstageAll {},
     GetReferences {
         path: PathBuf,
         position: Position,
@@ -359,6 +490,78 @@ pub enum ProxyNotification {
 pub enum ProxyResponse {
     GitGetRemoteFileUrl {
         file_url: String,
+    },
+    GitLogResponse {
+        result: crate::source_control::GitLogResult,
+    },
+    // Git Branch responses
+    GitBranchListResponse {
+        branches: Vec<crate::source_control::GitBranchInfo>,
+    },
+    GitBranchResponse {
+        result: crate::source_control::GitBranchResult,
+    },
+    // Git Push/Pull/Fetch responses
+    GitRemoteOpResponse {
+        result: crate::source_control::GitRemoteResult,
+    },
+    // Git Stash responses
+    GitStashListResponse {
+        result: crate::source_control::GitStashList,
+    },
+    GitStashOpResponse {
+        result: crate::source_control::GitStashResult,
+    },
+    // Git Merge response
+    GitMergeResponse {
+        result: crate::source_control::GitMergeResult,
+    },
+    // Git Rebase response
+    GitRebaseResponse {
+        result: crate::source_control::GitRebaseResult,
+    },
+    // Git Cherry-pick response
+    GitCherryPickResponse {
+        result: crate::source_control::GitCherryPickResult,
+    },
+    // Git Reset response
+    GitResetResponse {
+        result: crate::source_control::GitResetResult,
+    },
+    // Git Revert response
+    GitRevertResponse {
+        result: crate::source_control::GitRevertResult,
+    },
+    // Git Blame response
+    GitBlameResponse {
+        result: crate::source_control::GitBlameResult,
+    },
+    // Git Tag responses
+    GitTagListResponse {
+        tags: Vec<crate::source_control::GitTagInfo>,
+    },
+    GitTagOpResponse {
+        result: crate::source_control::GitTagResult,
+    },
+    // Git Remote responses
+    GitRemoteListResponse {
+        result: crate::source_control::GitRemoteList,
+    },
+    // Git Status response
+    GitStatusResponse {
+        result: crate::source_control::GitStatus,
+    },
+    // Git Diff responses
+    GitCommitDiffResponse {
+        result: crate::source_control::GitCommitDiff,
+    },
+    GitFileDiffResponse {
+        result: crate::source_control::GitFileDiff,
+    },
+    // Git Stage response
+    GitStageResponse {
+        success: bool,
+        message: String,
     },
     NewBufferResponse {
         content: String,
@@ -1050,6 +1253,312 @@ impl ProxyRpcHandler {
         f: impl ProxyCallback + 'static,
     ) {
         self.request_async(ProxyRequest::GitGetRemoteFileUrl { file }, f);
+    }
+
+    pub fn git_log(
+        &self,
+        limit: usize,
+        skip: usize,
+        branch: Option<String>,
+        author: Option<String>,
+        search: Option<String>,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(
+            ProxyRequest::GitLog {
+                limit,
+                skip,
+                branch,
+                author,
+                search,
+            },
+            f,
+        );
+    }
+
+    // ========================================================================
+    // Git Branch Operations
+    // ========================================================================
+    
+    pub fn git_list_branches(&self, include_remote: bool, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitListBranches { include_remote }, f);
+    }
+    
+    pub fn git_create_branch(
+        &self,
+        name: String,
+        start_point: Option<String>,
+        checkout: bool,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitCreateBranch { name, start_point, checkout }, f);
+    }
+    
+    pub fn git_delete_branch(
+        &self,
+        name: String,
+        force: bool,
+        delete_remote: bool,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitDeleteBranch { name, force, delete_remote }, f);
+    }
+    
+    pub fn git_rename_branch(
+        &self,
+        old_name: String,
+        new_name: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitRenameBranch { old_name, new_name }, f);
+    }
+    
+    // ========================================================================
+    // Git Push/Pull/Fetch Operations
+    // ========================================================================
+    
+    pub fn git_push(
+        &self,
+        options: crate::source_control::GitPushOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitPush { options }, f);
+    }
+    
+    pub fn git_pull(
+        &self,
+        options: crate::source_control::GitPullOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitPull { options }, f);
+    }
+    
+    pub fn git_fetch(
+        &self,
+        options: crate::source_control::GitFetchOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitFetch { options }, f);
+    }
+    
+    // ========================================================================
+    // Git Stash Operations
+    // ========================================================================
+    
+    pub fn git_stash_list(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitStashList {}, f);
+    }
+    
+    pub fn git_stash_save(
+        &self,
+        message: Option<String>,
+        include_untracked: bool,
+        keep_index: bool,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitStashSave { message, include_untracked, keep_index }, f);
+    }
+    
+    pub fn git_stash_pop(&self, index: usize, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitStashPop { index }, f);
+    }
+    
+    pub fn git_stash_apply(&self, index: usize, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitStashApply { index }, f);
+    }
+    
+    pub fn git_stash_drop(&self, index: usize, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitStashDrop { index }, f);
+    }
+    
+    // ========================================================================
+    // Git Merge Operations
+    // ========================================================================
+    
+    pub fn git_merge(
+        &self,
+        options: crate::source_control::GitMergeOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitMerge { options }, f);
+    }
+    
+    pub fn git_merge_abort(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitMergeAbort {}, f);
+    }
+    
+    // ========================================================================
+    // Git Rebase Operations
+    // ========================================================================
+    
+    pub fn git_rebase(
+        &self,
+        options: crate::source_control::GitRebaseOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitRebase { options }, f);
+    }
+    
+    pub fn git_rebase_action(
+        &self,
+        action: crate::source_control::GitRebaseAction,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitRebaseAction { action }, f);
+    }
+    
+    // ========================================================================
+    // Git Cherry-pick Operations
+    // ========================================================================
+    
+    pub fn git_cherry_pick(
+        &self,
+        options: crate::source_control::GitCherryPickOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitCherryPick { options }, f);
+    }
+    
+    pub fn git_cherry_pick_action(
+        &self,
+        action: crate::source_control::GitRebaseAction,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitCherryPickAction { action }, f);
+    }
+    
+    // ========================================================================
+    // Git Reset Operations
+    // ========================================================================
+    
+    pub fn git_reset(
+        &self,
+        options: crate::source_control::GitResetOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitReset { options }, f);
+    }
+    
+    // ========================================================================
+    // Git Revert Operations
+    // ========================================================================
+    
+    pub fn git_revert(
+        &self,
+        options: crate::source_control::GitRevertOptions,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitRevert { options }, f);
+    }
+    
+    pub fn git_revert_action(
+        &self,
+        action: crate::source_control::GitRebaseAction,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitRevertAction { action }, f);
+    }
+    
+    // ========================================================================
+    // Git Blame Operations
+    // ========================================================================
+    
+    pub fn git_blame(
+        &self,
+        path: PathBuf,
+        commit: Option<String>,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitBlame { path, commit }, f);
+    }
+    
+    // ========================================================================
+    // Git Tag Operations
+    // ========================================================================
+    
+    pub fn git_list_tags(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitListTags {}, f);
+    }
+    
+    pub fn git_create_tag(
+        &self,
+        name: String,
+        target: Option<String>,
+        message: Option<String>,
+        annotated: bool,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitCreateTag { name, target, message, annotated }, f);
+    }
+    
+    pub fn git_delete_tag(
+        &self,
+        name: String,
+        delete_remote: bool,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitDeleteTag { name, delete_remote }, f);
+    }
+    
+    // ========================================================================
+    // Git Remote Operations
+    // ========================================================================
+    
+    pub fn git_list_remotes(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitListRemotes {}, f);
+    }
+    
+    pub fn git_add_remote(
+        &self,
+        name: String,
+        url: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::GitAddRemote { name, url }, f);
+    }
+    
+    pub fn git_remove_remote(&self, name: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitRemoveRemote { name }, f);
+    }
+    
+    // ========================================================================
+    // Git Status Operations
+    // ========================================================================
+    
+    pub fn git_get_status(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitGetStatus {}, f);
+    }
+    
+    // ========================================================================
+    // Git Diff Operations
+    // ========================================================================
+    
+    pub fn git_get_commit_diff(&self, commit: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitGetCommitDiff { commit }, f);
+    }
+    
+    pub fn git_get_file_diff(&self, path: PathBuf, staged: bool, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitGetFileDiff { path, staged }, f);
+    }
+    
+    // ========================================================================
+    // Git Stage Operations
+    // ========================================================================
+    
+    pub fn git_stage_files(&self, paths: Vec<PathBuf>, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitStageFiles { paths }, f);
+    }
+    
+    pub fn git_unstage_files(&self, paths: Vec<PathBuf>, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitUnstageFiles { paths }, f);
+    }
+    
+    pub fn git_stage_all(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitStageAll {}, f);
+    }
+    
+    pub fn git_unstage_all(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitUnstageAll {}, f);
     }
 
     pub fn rename(

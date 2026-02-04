@@ -52,7 +52,7 @@ impl PanelKind {
         match self {
             PanelKind::Terminal => PanelPosition::BottomLeft,
             PanelKind::FileExplorer => PanelPosition::LeftTop,
-            PanelKind::SourceControl => PanelPosition::LeftTop,
+            PanelKind::SourceControl => PanelPosition::BottomLeft,
             PanelKind::Plugin => PanelPosition::LeftTop,
             PanelKind::Search => PanelPosition::BottomLeft,
             PanelKind::Problem => PanelPosition::BottomLeft,

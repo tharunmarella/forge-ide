@@ -5,12 +5,12 @@ use floem::{
     action::{add_overlay, remove_overlay},
     event::EventListener,
     menu::{Menu, MenuItem},
-    peniko::{kurbo::{Point, Size}, Color},
+    peniko::kurbo::{Point, Size},
     reactive::{
         Memo, ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
         create_memo, create_rw_signal,
     },
-    style::{AlignItems, CursorStyle, JustifyContent, Style},
+    style::{AlignItems, CursorStyle, JustifyContent, Position},
     views::{Decorators, clip, container, drag_window_area, dyn_stack, empty, label, scroll, stack, svg},
 };
 use lapce_core::meta;
@@ -29,7 +29,6 @@ use crate::{
     update::ReleaseInfo,
     window_tab::WindowTabData,
     workspace::LapceWorkspace,
-    text_input::TextInputBuilder,
 };
 
 /// Overlay content for project dropdown — rendered at window level so clicks work.
@@ -46,9 +45,10 @@ fn project_dropdown_overlay(
                 label(|| "Open Folder...".to_string())
                     .style(move |s| {
                         let config = config.get();
-                        s.padding_horiz(12.0)
-                            .padding_vert(8.0)
+                        s.padding_horiz(10.0)
+                            .padding_vert(6.0)
                             .width_full()
+                            .font_size(12.0)
                             .color(config.color(LapceColor::PANEL_FOREGROUND))
                     }),
             )
@@ -73,9 +73,9 @@ fn project_dropdown_overlay(
             }),
             label(|| "Recent Projects".to_string()).style(move |s| {
                 let config = config.get();
-                s.padding_horiz(12.0)
-                    .padding_vert(6.0)
-                    .font_size(11.0)
+                s.padding_horiz(10.0)
+                    .padding_vert(4.0)
+                    .font_size(10.0)
                     .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
             }),
             clip(
@@ -100,7 +100,7 @@ fn project_dropdown_overlay(
                                     svg(move || config.get().ui_svg(LapceIcons::FILE_EXPLORER))
                                         .style(move |s| {
                                             let config = config.get();
-                                            s.size(14.0, 14.0)
+                                            s.size(12.0, 12.0)
                                                 .margin_right(8.0)
                                                 .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
                                         }),
@@ -108,12 +108,13 @@ fn project_dropdown_overlay(
                                         label(move || display_name.clone())
                                             .style(move |s| {
                                                 let config = config.get();
-                                                s.color(config.color(LapceColor::PANEL_FOREGROUND))
+                                                s.font_size(12.0)
+                                                    .color(config.color(LapceColor::PANEL_FOREGROUND))
                                             }),
                                         label(move || path_str.clone()).style(move |s| {
                                             let config = config.get();
-                                            s.font_size(11.0)
-                                                .margin_top(2.0)
+                                            s.font_size(10.0)
+                                                .margin_top(1.0)
                                                 .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
                                         }),
                                     ))
@@ -131,8 +132,8 @@ fn project_dropdown_overlay(
                             .style(move |s| {
                                 let config = config.get();
                                 s.width_full()
-                                    .padding_horiz(12.0)
-                                    .padding_vert(8.0)
+                                    .padding_horiz(10.0)
+                                    .padding_vert(6.0)
                                     .hover(|s| {
                                         s.cursor(CursorStyle::Pointer).background(
                                             config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
@@ -157,8 +158,8 @@ fn project_dropdown_overlay(
     })
     .style(move |s| {
         let config = config.get();
-        s.min_width(320.0)
-            .max_width(450.0)
+        s.min_width(240.0)
+            .max_width(350.0)
             .background(config.color(LapceColor::PANEL_BACKGROUND))
             .border(1.0)
             .border_radius(6.0)
@@ -178,38 +179,11 @@ fn branch_dropdown_overlay(
 ) -> impl View {
     let branches = source_control.branches;
     let current_branch = source_control.branch;
-    let selected_branch = create_rw_signal(None::<String>);
-
-    let search_query = create_rw_signal("".to_string());
-    let text_input_view = TextInputBuilder::new()
-        .build(
-            window_tab_data.common.scope,
-            window_tab_data.main_split.editors.clone(),
-            window_tab_data.common.clone(),
-        )
-        .placeholder(|| "Filter branches...".to_string());
-    let doc = text_input_view.doc_signal();
-    let text_input_id = text_input_view.id();
-    create_effect(move |_| {
-        text_input_id.request_focus();
-    });
-    create_effect(move |_| {
-        let query = doc.get().buffer.with(|b| b.to_string());
-        search_query.set(query);
-    });
-
-    let filtered_branches = create_memo(move |_| {
-        let query = search_query.get().to_lowercase();
-        let branches = branches.get();
-        if query.is_empty() {
-            branches
-        } else {
-            branches
-                .into_iter()
-                .filter(|b| b.to_lowercase().contains(&query))
-                .collect::<im::Vector<_>>()
-        }
-    });
+    
+    // Track which branch is selected (clicked) to show the sub-menu
+    let selected_branch: RwSignal<Option<String>> = create_rw_signal(None);
+    let selected_branch_index: RwSignal<Option<usize>> = create_rw_signal(None);
+    let submenu_visible = create_memo(move |_| selected_branch.get().is_some());
 
     let window_tab_data_for_alert = window_tab_data.clone();
     let show_info: Rc<dyn Fn(&str, &str)> = Rc::new(move |title, msg| {
@@ -220,354 +194,376 @@ fn branch_dropdown_overlay(
         );
     });
 
-    let action_item = move |text: String, on_click: Rc<dyn Fn()>| {
-        container(label(move || text.clone()))
-            .on_click_stop(move |_| {
-                on_click();
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding_horiz(12.0)
-                    .padding_vert(8.0)
-                    .width_full()
-                    .color(config.color(LapceColor::PANEL_FOREGROUND))
-                    .border_radius(4.0)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-                    .active(|s| {
-                        s.background(config.color(LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND))
-                    })
-            })
+    // Menu item helper - full width clickable row
+    let menu_item = move |icon: &'static str, text: String, on_click: Rc<dyn Fn()>| {
+        container(
+            stack((
+                svg(move || config.get().ui_svg(icon))
+                    .style(move |s| {
+                        let config = config.get();
+                        s.size(12.0, 12.0)
+                            .margin_right(8.0)
+                            .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                    }),
+                label(move || text.clone())
+                    .style(move |s| {
+                        let config = config.get();
+                        s.flex_grow(1.0)
+                            .font_size(12.0)
+                            .color(config.color(LapceColor::PANEL_FOREGROUND))
+                    }),
+            ))
+            .style(|s| s.items_center().width_full()),
+        )
+        .on_click_stop(move |_| {
+            on_click();
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.padding_horiz(10.0)
+                .padding_vert(6.0)
+                .width_full()
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                })
+        })
+    };
+
+    // Separator helper
+    let separator = move || {
+        empty().style(move |s| {
+            let config = config.get();
+            s.width_full()
+                .height(1.0)
+                .margin_vert(4.0)
+                .background(config.color(LapceColor::LAPCE_BORDER))
+        })
     };
 
     let commit_action = {
         let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
             branch_dropdown_visible.set(false);
             workbench_command.send(LapceWorkbenchCommand::SourceControlCommit);
         })
     };
-    let update_action = {
-        let show_info = show_info.clone();
+    let push_action = {
+        let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
             branch_dropdown_visible.set(false);
-            show_info("Not implemented", "Update Project is not implemented yet.");
+            workbench_command.send(LapceWorkbenchCommand::GitPush);
         })
     };
-    let push_action = {
-        let show_info = show_info.clone();
+    let pull_action = {
+        let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
             branch_dropdown_visible.set(false);
-            show_info("Not implemented", "Push is not implemented yet.");
+            workbench_command.send(LapceWorkbenchCommand::GitPull);
+        })
+    };
+    let fetch_action = {
+        let workbench_command = window_tab_data.common.workbench_command;
+        Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
+            branch_dropdown_visible.set(false);
+            workbench_command.send(LapceWorkbenchCommand::GitFetch);
         })
     };
     let new_branch_action = {
-        let show_info = show_info.clone();
+        let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
             branch_dropdown_visible.set(false);
-            show_info("Not implemented", "New Branch is not implemented yet.");
+            workbench_command.send(LapceWorkbenchCommand::GitCreateBranch);
         })
     };
-    let checkout_tag_action = {
-        let show_info = show_info.clone();
+    let stash_action = {
+        let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
             branch_dropdown_visible.set(false);
-            show_info("Not implemented", "Checkout Tag/Revision is not implemented yet.");
+            workbench_command.send(LapceWorkbenchCommand::GitStash);
+        })
+    };
+    let stash_pop_action = {
+        let workbench_command = window_tab_data.common.workbench_command;
+        Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
+            branch_dropdown_visible.set(false);
+            workbench_command.send(LapceWorkbenchCommand::GitStashPop);
         })
     };
 
-    container(
+    // Main menu column
+    let main_menu = container(
         stack((
-            // Search bar at the top with subtle background
-            container(
-                stack((
-                    svg(move || config.get().ui_svg(LapceIcons::SEARCH))
-                        .style(move |s| {
-                            let config = config.get();
-                            s.size(14.0, 14.0)
-                                .margin_right(8.0)
-                                .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
-                        }),
-                    text_input_view.style(move |s: Style| {
-                        let config = config.get();
-                        s.width_full()
-                            .color(config.color(LapceColor::PANEL_FOREGROUND))
-                            .background(Color::TRANSPARENT)
-                            .border(0.0)
-                            .padding_horiz(0.0)
-                    }),
-                ))
-                .style(move |s| {
-                    let config = config.get();
-                    s.items_center()
-                        .width_full()
-                        .padding_horiz(10.0)
-                        .padding_vert(6.0)
-                        .background(config.color(LapceColor::PANEL_BACKGROUND))
-                        .border(1.0)
-                        .border_radius(6.0)
-                        .border_color(config.color(LapceColor::LAPCE_BORDER))
-                }),
-            )
-            .style(move |s| {
-                let config = config.get();
-                s.padding(12.0)
-                    .width_full()
-                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
-            }),
-
-            // Global Actions Row (Primary)
-            container(
-                stack((
-                    action_item("Commit".to_string(), commit_action.clone()),
-                    action_item("Push".to_string(), push_action.clone()),
-                    action_item("Update".to_string(), update_action.clone()),
-                    action_item("New Branch".to_string(), new_branch_action.clone()),
-                ))
-                .style(|s| s.flex_row().gap(4.0).width_full()),
-            )
-            .style(move |s| {
-                let config = config.get();
-                s.padding_horiz(12.0)
-                    .padding_bottom(8.0)
-                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
-            }),
-
-            empty().style(move |s| {
-                let config = config.get();
-                s.width_full()
-                    .height(1.0)
-                    .background(config.color(LapceColor::LAPCE_BORDER))
-            }),
-
-            // Main area: Branches + Branch Actions
-            stack((
-                // Left side: Branch list
-                stack((
-                    label(|| "BRANCHES".to_string()).style(move |s| {
-                        let config = config.get();
-                        s.padding_horiz(12.0)
-                            .padding_top(12.0)
-                            .padding_bottom(6.0)
-                            .font_size(10.0)
-                            .font_bold()
-                            .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
-                    }),
-                    clip(
-                        scroll(
-                            dyn_stack(
-                                move || filtered_branches.get().into_iter().take(100).enumerate().collect::<Vec<_>>(),
-                                move |(i, _)| *i,
-                                move |(_, branch_name)| {
-                                    let is_current = branch_name == current_branch.get_untracked();
-                                    let branch_clone = branch_name.clone();
-                                    let branch_for_hover = branch_clone.clone();
-                                    let branch_for_click = branch_clone.clone();
-                                    let branch_display = branch_name.clone();
-                                    container(
-                                        stack((
-                                            svg(move || config.get().ui_svg(LapceIcons::SCM))
-                                                .style(move |s| {
-                                                    let config = config.get();
-                                                    s.size(14.0, 14.0)
-                                                        .margin_right(10.0)
-                                                        .color(if is_current {
-                                                            config.color(LapceColor::EDITOR_CARET)
-                                                        } else {
-                                                            config.color(LapceColor::LAPCE_ICON_ACTIVE)
-                                                        })
-                                                }),
-                                            label(move || branch_display.clone())
-                                                .style(move |s| {
-                                                    let config = config.get();
-                                                    s.flex_grow(1.0)
-                                                        .color(config.color(LapceColor::PANEL_FOREGROUND))
-                                                }),
-                                            label(move || if is_current { "✓" } else { "" }.to_string())
-                                                .style(move |s| {
-                                                    let config = config.get();
-                                                    s.margin_left(8.0)
-                                                        .color(config.color(LapceColor::EDITOR_CARET))
-                                                }),
-                                        ))
-                                        .style(|s| s.items_center().width_full()),
-                                    )
-                                    .on_event_stop(EventListener::PointerMove, move |_| {
-                                        selected_branch.set(Some(branch_for_hover.clone()));
-                                    })
-                                    .on_click_stop(move |_| {
-                                        selected_branch.set(Some(branch_for_click.clone()));
-                                    })
-                                    .style(move |s| {
-                                        let config = config.get();
-                                        s.width_full()
-                                            .padding_horiz(12.0)
-                                            .padding_vert(8.0)
-                                            .hover(|s| {
-                                                s.cursor(CursorStyle::Pointer).background(
-                                                    config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                                                )
-                                            })
-                                    })
-                                },
+            // Commit
+            menu_item(LapceIcons::SCM, "Commit".to_string(), commit_action),
+            // Push
+            menu_item(LapceIcons::SCM, "Push".to_string(), push_action),
+            // Pull
+            menu_item(LapceIcons::SCM, "Pull".to_string(), pull_action),
+            // Fetch
+            menu_item(LapceIcons::SCM, "Fetch".to_string(), fetch_action),
+            // Separator
+            separator(),
+            // Stash
+            menu_item(LapceIcons::SCM, "Stash Changes".to_string(), stash_action),
+            // Stash Pop
+            menu_item(LapceIcons::SCM, "Unstash Changes".to_string(), stash_pop_action),
+            // Separator
+            separator(),
+            // New Branch
+            menu_item(LapceIcons::SCM, "New Branch...".to_string(), new_branch_action),
+            // Separator
+            separator(),
+            // Branches list
+            clip(
+                scroll(
+                    dyn_stack(
+                        move || branches.get().into_iter().take(50).enumerate().collect::<Vec<_>>(),
+                        move |(i, _)| *i,
+                        move |(idx, branch_name)| {
+                            let is_current = branch_name == current_branch.get_untracked();
+                            let branch_for_click = branch_name.clone();
+                            let branch_display = branch_name.clone();
+                            let branch_for_style = branch_name.clone();
+                            container(
+                                stack((
+                                    svg(move || config.get().ui_svg(LapceIcons::SCM))
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            s.size(12.0, 12.0)
+                                                .margin_right(8.0)
+                                                .color(if is_current {
+                                                    config.color(LapceColor::EDITOR_CARET)
+                                                } else {
+                                                    config.color(LapceColor::LAPCE_ICON_ACTIVE)
+                                                })
+                                        }),
+                                    label(move || branch_display.clone())
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            s.flex_grow(1.0)
+                                                .font_size(12.0)
+                                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                        }),
+                                    // Checkmark for current branch
+                                    label(move || if is_current { "✓" } else { "" }.to_string())
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            s.margin_right(6.0)
+                                                .font_size(11.0)
+                                                .color(config.color(LapceColor::EDITOR_CARET))
+                                        }),
+                                    // Chevron arrow
+                                    svg(move || config.get().ui_svg(LapceIcons::ITEM_OPENED))
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            s.size(10.0, 10.0)
+                                                .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
+                                        }),
+                                ))
+                                .style(|s| s.items_center().width_full()),
                             )
-                            .style(|s| s.flex_col().width_full()),
-                        )
-                        .style(|s| s.width_full().max_height(400.0)),
-                    ),
-                ))
-                .style(move |s| {
-                    s.flex_col()
-                        .width(260.0)
-                }),
-
-                // Right side: Selected branch actions (refined detail pane)
-                container(
-                    stack((
-                        label(|| "BRANCH ACTIONS".to_string()).style(move |s| {
-                            let config = config.get();
-                            s.padding_horiz(16.0)
-                                .padding_top(12.0)
-                                .padding_bottom(6.0)
-                                .font_size(10.0)
-                                .font_bold()
-                                .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
-                        }),
-                        container(
-                            label(move || {
-                                selected_branch
-                                    .get()
-                                    .unwrap_or_else(|| "Select a branch".to_string())
+                            .on_click_stop(move |_| {
+                                // Toggle: if already selected, deselect; otherwise select
+                                if selected_branch.get_untracked() == Some(branch_for_click.clone()) {
+                                    selected_branch.set(None);
+                                    selected_branch_index.set(None);
+                                } else {
+                                    selected_branch.set(Some(branch_for_click.clone()));
+                                    selected_branch_index.set(Some(idx));
+                                }
                             })
                             .style(move |s| {
                                 let config = config.get();
-                                s.font_bold()
-                                    .font_size(13.0)
-                                    .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                let is_selected = selected_branch.get() == Some(branch_for_style.clone());
+                                s.padding_horiz(10.0)
+                                    .padding_vert(6.0)
+                                    .width_full()
+                                    .apply_if(is_selected, |s| {
+                                        s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                                    })
+                                    .hover(|s| {
+                                        s.cursor(CursorStyle::Pointer)
+                                            .background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                                    })
                             })
-                        )
-                        .style(|s| s.padding_horiz(16.0).padding_vert(8.0)),
-                        
-                        container(empty()).style(move |s| {
-                            let config = config.get();
-                            s.width_full()
-                                .height(1.0)
-                                .margin_horiz(16.0)
-                                .margin_bottom(8.0)
-                                .background(config.color(LapceColor::LAPCE_BORDER))
-                        }),
-                        
-                        container(
-                            stack((
-                                action_item(
-                                    "Checkout Branch".to_string(),
-                                    Rc::new({
-                                        let branch_dropdown_visible = branch_dropdown_visible;
-                                        let lapce_command = lapce_command.clone();
-                                        let selected_branch = selected_branch;
-                                        move || {
-                                            if let Some(branch) = selected_branch.get_untracked() {
-                                                branch_dropdown_visible.set(false);
-                                                lapce_command.send(LapceCommand {
-                                                    kind: CommandKind::Workbench(
-                                                        LapceWorkbenchCommand::CheckoutReference,
-                                                    ),
-                                                    data: Some(serde_json::json!(branch)),
-                                                });
-                                            }
-                                        }
-                                    }),
-                                ),
-                                action_item(
-                                    "New Branch from...".to_string(),
-                                    Rc::new({
-                                        let show_info = show_info.clone();
-                                        move || {
-                                            show_info(
-                                                "Not implemented",
-                                                "New Branch from... is not implemented yet.",
-                                            );
-                                        }
-                                    }),
-                                ),
-                                action_item(
-                                    "Compare with...".to_string(),
-                                    Rc::new({
-                                        let show_info = show_info.clone();
-                                        move || {
-                                            show_info(
-                                                "Not implemented",
-                                                "Compare is not implemented yet.",
-                                            );
-                                        }
-                                    }),
-                                ),
-                                action_item(
-                                    "Show Diff".to_string(),
-                                    Rc::new({
-                                        let show_info = show_info.clone();
-                                        move || {
-                                            show_info(
-                                                "Not implemented",
-                                                "Show Diff is not implemented yet.",
-                                            );
-                                        }
-                                    }),
-                                ),
-                            ))
-                            .style(|s| s.flex_col().width_full().padding_horiz(8.0))
-                        )
-                        .style(|s| s.width_full())
-                    ))
-                    .style(|s| s.flex_col().width_full())
-                )
-                .style(move |s| {
-                    let config = config.get();
-                    s.width(220.0)
-                        .background(config.color(LapceColor::PANEL_BACKGROUND))
-                        .border_left(1.0)
-                        .border_color(config.color(LapceColor::LAPCE_BORDER))
-                }),
-            ))
-            .style(|s| s.flex_row().width_full()),
-            
-            // Subtle footer for secondary actions
-            container(
-                stack((
-                    empty().style(move |s| {
-                        let config = config.get();
-                        s.width_full()
-                            .height(1.0)
-                            .background(config.color(LapceColor::LAPCE_BORDER))
-                    }),
-                    container(
-                        action_item("Checkout Tag or Revision...".to_string(), checkout_tag_action.clone())
+                        },
                     )
-                    .style(|s| s.padding(8.0).width_full()),
-                ))
-                .style(|s| s.flex_col().width_full())
-            )
+                    .style(|s| s.flex_col().width_full()),
+                )
+                .style(|s| s.width_full().max_height(300.0)),
+            ),
         ))
-        .style(|s| s.flex_col().width_full()),
+        .style(|s| s.flex_col().width_full().padding_vert(4.0)),
     )
+    .style(move |s| {
+        s.width(180.0)
+    });
+
+    // Sub-menu for branch actions (appears on the right when a branch is clicked)
+    let submenu = {
+        let show_info = show_info.clone();
+        container(
+            stack((
+                // Branch name header
+                container(
+                    label(move || {
+                        selected_branch.get().unwrap_or_else(|| "".to_string())
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.font_bold()
+                            .font_size(12.0)
+                            .padding_horiz(10.0)
+                            .padding_vert(6.0)
+                            .color(config.color(LapceColor::PANEL_FOREGROUND))
+                    })
+                ),
+                separator(),
+                // Checkout
+                menu_item(
+                    LapceIcons::SCM,
+                    "Checkout".to_string(),
+                    Rc::new({
+                        let lapce_command = lapce_command.clone();
+                        let selected_branch = selected_branch;
+                        let branch_dropdown_visible = branch_dropdown_visible;
+                        move || {
+                            if let Some(branch) = selected_branch.get_untracked() {
+                                branch_dropdown_visible.set(false);
+                                lapce_command.send(LapceCommand {
+                                    kind: CommandKind::Workbench(
+                                        LapceWorkbenchCommand::CheckoutReference,
+                                    ),
+                                    data: Some(serde_json::json!(branch)),
+                                });
+                            }
+                        }
+                    }),
+                ),
+                // New Branch from
+                menu_item(
+                    LapceIcons::SCM,
+                    "New Branch from...".to_string(),
+                    Rc::new({
+                        let show_info = show_info.clone();
+                        move || {
+                            show_info("Not implemented", "New Branch from... is not implemented yet.");
+                        }
+                    }),
+                ),
+                // Compare with
+                menu_item(
+                    LapceIcons::SCM,
+                    "Compare with...".to_string(),
+                    Rc::new({
+                        let show_info = show_info.clone();
+                        move || {
+                            show_info("Not implemented", "Compare is not implemented yet.");
+                        }
+                    }),
+                ),
+                // Show Diff
+                menu_item(
+                    LapceIcons::SCM,
+                    "Show Diff".to_string(),
+                    Rc::new({
+                        let show_info = show_info.clone();
+                        move || {
+                            show_info("Not implemented", "Show Diff is not implemented yet.");
+                        }
+                    }),
+                ),
+                // Merge into current
+                menu_item(
+                    LapceIcons::SCM,
+                    "Merge into current".to_string(),
+                    Rc::new({
+                        let show_info = show_info.clone();
+                        move || {
+                            show_info("Not implemented", "Merge is not implemented yet.");
+                        }
+                    }),
+                ),
+                // Delete branch
+                menu_item(
+                    LapceIcons::CLOSE,
+                    "Delete".to_string(),
+                    Rc::new({
+                        let show_info = show_info.clone();
+                        move || {
+                            show_info("Not implemented", "Delete branch is not implemented yet.");
+                        }
+                    }),
+                ),
+            ))
+            .style(|s| s.flex_col().width_full().padding_vert(4.0)),
+        )
+        .on_click_stop(move |_| {
+            // Clicking inside submenu shouldn't close it
+        })
+        .style(move |s| {
+            let config = config.get();
+            let visible = submenu_visible.get();
+            // Calculate top offset based on selected branch index
+            // Each item is approximately 24px (6px padding top + 12px font + 6px padding bottom)
+            // Plus we need to account for the top menu items (Commit, Push, Update, separators, New Branch)
+            // Top section is roughly: 3 items * 24px + 2 separators * 9px + 1 item * 24px = 114px
+            let idx = selected_branch_index.get().unwrap_or(0);
+            let item_height = 24.0_f32;
+            let top_offset = 114.0_f32; // Offset for top menu items
+            let inset_top = top_offset + (idx as f32 * item_height);
+            
+            s.width(160.0)
+                .position(Position::Absolute)
+                .inset_left(180.0) // Position to the right of main menu (180px width)
+                .inset_top(inset_top)
+                .background(config.color(LapceColor::PANEL_BACKGROUND))
+                .border(1.0)
+                .border_radius(6.0)
+                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                .box_shadow_blur(10.0)
+                .box_shadow_color(config.color(LapceColor::LAPCE_DROPDOWN_SHADOW))
+                .apply_if(!visible, |s| s.hide())
+        })
+    };
+
+    // Container with main menu + absolutely positioned submenu
+    stack((
+        main_menu,
+        submenu,
+    ))
+    .style(|s| s.position(Position::Relative))
     .keyboard_navigable()
+    .request_focus(|| {})
     .on_event_stop(EventListener::FocusLost, move |_| {
         debug!("branch dropdown: focus lost -> close");
+        selected_branch.set(None);
+        selected_branch_index.set(None);
         branch_dropdown_visible.set(false);
     })
     .style(move |s| {
         let config = config.get();
-        s.min_width(480.0)
-            .background(config.color(LapceColor::PANEL_BACKGROUND))
+        s.background(config.color(LapceColor::PANEL_BACKGROUND))
             .border(1.0)
-            .border_radius(8.0)
+            .border_radius(6.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER))
-            .box_shadow_blur(15.0)
-            .box_shadow_spread(2.0)
-            .box_shadow_color(config.color(LapceColor::LAPCE_DROPDOWN_SHADOW).multiply_alpha(0.5))
+            .box_shadow_blur(12.0)
+            .box_shadow_color(config.color(LapceColor::LAPCE_DROPDOWN_SHADOW))
     })
 }
 

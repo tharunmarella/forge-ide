@@ -149,20 +149,13 @@ pub fn status(
                     )
                 })
             })
-            .on_event_cont(floem::event::EventListener::PointerDown, move |_| {
-                pointer_down.set(true);
-            })
-            .on_event(
-                floem::event::EventListener::PointerUp,
+            .on_click_stop({
+                let panel = panel.clone();
                 move |_| {
-                    if pointer_down.get() {
-                        workbench_command
-                            .send(LapceWorkbenchCommand::PaletteSCMReferences);
-                    }
-                    pointer_down.set(false);
-                    EventPropagation::Continue
-                },
-            ),
+                    // Open Source Control panel to show Git UI
+                    panel.show_panel(&PanelKind::SourceControl);
+                }
+            }),
             {
                 let panel = panel.clone();
                 stack((

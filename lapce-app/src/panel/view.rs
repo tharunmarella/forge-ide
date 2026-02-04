@@ -393,22 +393,46 @@ pub fn panel_container_view(
     };
 
     let is_bottom = position.is_bottom();
-    stack((
-        panel_picker(window_tab_data.clone(), position.first()),
-        panel_view(window_tab_data.clone(), position.first()),
-        panel_view(window_tab_data.clone(), position.second()),
-        panel_picker(window_tab_data.clone(), position.second()),
-        resize_drag_view(position),
-        stack((drop_view(position.first()), drop_view(position.second()))).style(
-            move |s| {
-                let is_dragging_panel = is_dragging_panel();
-                s.absolute()
-                    .size_pct(100.0, 100.0)
-                    .apply_if(!is_bottom, |s| s.flex_col())
-                    .apply_if(!is_dragging_panel, |s| s.pointer_events_none())
-            },
-        ),
-    ))
+    
+    // For left/right panels: icons on the edge, content fills the rest
+    // For bottom panel: original stacked layout
+    if !is_bottom {
+        // Left/Right panels: horizontal layout [icons | content]
+        stack((
+            panel_picker(window_tab_data.clone(), position.first()),
+            stack((
+                panel_view(window_tab_data.clone(), position.first()),
+                panel_view(window_tab_data.clone(), position.second()),
+            )).style(|s| s.flex_col().flex_grow(1.0).height_pct(100.0)),
+            resize_drag_view(position),
+            stack((drop_view(position.first()), drop_view(position.second()))).style(
+                move |s| {
+                    let is_dragging_panel = is_dragging_panel();
+                    s.absolute()
+                        .size_pct(100.0, 100.0)
+                        .flex_col()
+                        .apply_if(!is_dragging_panel, |s| s.pointer_events_none())
+                },
+            ),
+        ))
+    } else {
+        // Bottom panel: original layout
+        stack((
+            panel_picker(window_tab_data.clone(), position.first()),
+            panel_view(window_tab_data.clone(), position.first()),
+            panel_view(window_tab_data.clone(), position.second()),
+            panel_picker(window_tab_data.clone(), position.second()),
+            resize_drag_view(position),
+            stack((drop_view(position.first()), drop_view(position.second()))).style(
+                move |s| {
+                    let is_dragging_panel = is_dragging_panel();
+                    s.absolute()
+                        .size_pct(100.0, 100.0)
+                        .apply_if(!is_dragging_panel, |s| s.pointer_events_none())
+                },
+            ),
+        ))
+    }
     .on_resize(move |rect| {
         let size = rect.size();
         if size != current_size.get_untracked() {
@@ -426,8 +450,9 @@ pub fn panel_container_view(
         s.apply_if(!panel.is_container_shown(&position, true), |s| s.hide())
             .apply_if(position == PanelContainerPosition::Bottom, |s| {
                 s.width_pct(100.0)
+                    .background(config.color(LapceColor::PANEL_BACKGROUND))
                     .apply_if(!is_maximized, |s| {
-                        s.border_top(1.0).height(size as f32)
+                        s.border_top(2.0).height(size as f32)
                     })
                     .apply_if(is_maximized, |s| s.flex_grow(1.0))
             })
@@ -443,7 +468,6 @@ pub fn panel_container_view(
                     .height_pct(100.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
             })
-            .apply_if(!is_bottom, |s| s.flex_col())
             .border_color(config.color(LapceColor::LAPCE_BORDER))
             .color(config.color(LapceColor::PANEL_FOREGROUND))
     })
@@ -532,6 +556,105 @@ pub fn panel_header(
     })
 }
 
+/// Helper to create a panel icon button
+fn panel_icon_button(
+    window_tab_data: Rc<WindowTabData>,
+    p: PanelKind,
+    position: PanelPosition,
+    config: ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    dragging: RwSignal<Option<DragContent>>,
+) -> impl View {
+    let is_bottom = position.is_bottom();
+    let is_first = position.is_first();
+    let tooltip = match p {
+        PanelKind::Terminal => "Terminal",
+        PanelKind::FileExplorer => "File Explorer",
+        PanelKind::SourceControl => "Source Control",
+        PanelKind::Plugin => "Plugins",
+        PanelKind::Search => "Search",
+        PanelKind::Problem => "Problems",
+        PanelKind::Debug => "Debug",
+        PanelKind::CallHierarchy => "Call Hierarchy",
+        PanelKind::DocumentSymbol => "Document Symbol",
+        PanelKind::References => "References",
+        PanelKind::Implementation => "Implementation",
+    };
+    let icon = p.svg_name();
+    let is_active = {
+        let window_tab_data = window_tab_data.clone();
+        move || {
+            // Check if this panel is active at its actual position
+            let actual_position = p.default_position();
+            if let Some((active_panel, shown)) = window_tab_data
+                .panel
+                .active_panel_at_position(&actual_position, true)
+            {
+                shown && active_panel == p
+            } else {
+                false
+            }
+        }
+    };
+    container(stack((
+        clickable_icon(
+            || icon,
+            move || {
+                window_tab_data.toggle_panel_visual(p);
+            },
+            || false,
+            || false,
+            move || tooltip,
+            config,
+        )
+        .draggable()
+        .on_event_stop(EventListener::DragStart, move |_| {
+            dragging.set(Some(DragContent::Panel(p)));
+        })
+        .on_event_stop(EventListener::DragEnd, move |_| {
+            dragging.set(None);
+        })
+        .dragging_style(move |s| {
+            let config = config.get();
+            s.border(1.0)
+                .border_radius(6.0)
+                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                .padding(6.0)
+                .background(
+                    config
+                        .color(LapceColor::PANEL_BACKGROUND)
+                        .multiply_alpha(0.7),
+                )
+        })
+        .style(|s| s.padding(1.0)),
+        label(|| "".to_string()).style(move |s| {
+            s.selectable(false)
+                .pointer_events_none()
+                .absolute()
+                .size_pct(100.0, 100.0)
+                .apply_if(!is_bottom && is_first, |s| s.margin_top(2.0))
+                .apply_if(!is_bottom && !is_first, |s| s.margin_top(-2.0))
+                .apply_if(is_bottom && is_first, |s| s.margin_left(-2.0))
+                .apply_if(is_bottom && !is_first, |s| s.margin_left(2.0))
+                .apply_if(is_active(), |s| {
+                    s.apply_if(!is_bottom && is_first, |s| {
+                        s.border_bottom(2.0)
+                    })
+                    .apply_if(!is_bottom && !is_first, |s| s.border_top(2.0))
+                    .apply_if(is_bottom && is_first, |s| s.border_left(2.0))
+                    .apply_if(is_bottom && !is_first, |s| {
+                        s.border_right(2.0)
+                    })
+                })
+                .border_color(
+                    config
+                        .get()
+                        .color(LapceColor::LAPCE_TAB_ACTIVE_UNDERLINE),
+                )
+        }),
+    )))
+    .style(|s| s.padding(6.0))
+}
+
 fn panel_picker(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
@@ -542,111 +665,95 @@ fn panel_picker(
     let dragging = window_tab_data.common.dragging;
     let is_bottom = position.is_bottom();
     let is_first = position.is_first();
-    dyn_stack(
-        move || {
-            panel
-                .panels
-                .with(|panels| panels.get(&position).cloned().unwrap_or_default())
-        },
-        |p| *p,
-        move |p| {
-            let window_tab_data = window_tab_data.clone();
-            let tooltip = match p {
-                PanelKind::Terminal => "Terminal",
-                PanelKind::FileExplorer => "File Explorer",
-                PanelKind::SourceControl => "Source Control",
-                PanelKind::Plugin => "Plugins",
-                PanelKind::Search => "Search",
-                PanelKind::Problem => "Problems",
-                PanelKind::Debug => "Debug",
-                PanelKind::CallHierarchy => "Call Hierarchy",
-                PanelKind::DocumentSymbol => "Document Symbol",
-                PanelKind::References => "References",
-                PanelKind::Implementation => "Implementation",
-            };
-            let icon = p.svg_name();
-            let is_active = {
-                let window_tab_data = window_tab_data.clone();
-                move || {
-                    if let Some((active_panel, shown)) = window_tab_data
-                        .panel
-                        .active_panel_at_position(&position, true)
-                    {
-                        shown && active_panel == p
-                    } else {
-                        false
-                    }
+    
+    // For LeftTop position, we add quick-access icons for Terminal and SourceControl
+    let is_left_top = position == PanelPosition::LeftTop;
+    
+    // Clone for use in closures
+    let window_tab_data_for_dyn = window_tab_data.clone();
+    let window_tab_data_for_quick = window_tab_data.clone();
+    
+    stack((
+        // Regular panel icons for this position
+        // Filter out Terminal and SourceControl from bottom positions (they have quick-access in left sidebar)
+        dyn_stack(
+            move || {
+                let mut panels_list = panel
+                    .panels
+                    .with(|panels| panels.get(&position).cloned().unwrap_or_default());
+                
+                // For bottom positions, filter out Terminal and SourceControl
+                // since they're accessed from the left sidebar quick-access icons
+                if is_bottom {
+                    panels_list.retain(|p| {
+                        *p != PanelKind::Terminal && *p != PanelKind::SourceControl
+                    });
                 }
-            };
-            container(stack((
-                clickable_icon(
-                    || icon,
-                    move || {
-                        window_tab_data.toggle_panel_visual(p);
-                    },
-                    || false,
-                    || false,
-                    move || tooltip,
+                panels_list
+            },
+            |p| *p,
+            move |p| {
+                panel_icon_button(
+                    window_tab_data_for_dyn.clone(),
+                    p,
+                    position,
                     config,
+                    dragging,
                 )
-                .draggable()
-                .on_event_stop(EventListener::DragStart, move |_| {
-                    dragging.set(Some(DragContent::Panel(p)));
-                })
-                .on_event_stop(EventListener::DragEnd, move |_| {
-                    dragging.set(None);
-                })
-                .dragging_style(move |s| {
-                    let config = config.get();
-                    s.border(1.0)
-                        .border_radius(6.0)
-                        .border_color(config.color(LapceColor::LAPCE_BORDER))
-                        .padding(6.0)
-                        .background(
-                            config
-                                .color(LapceColor::PANEL_BACKGROUND)
-                                .multiply_alpha(0.7),
-                        )
-                })
-                .style(|s| s.padding(1.0)),
-                label(|| "".to_string()).style(move |s| {
-                    s.selectable(false)
-                        .pointer_events_none()
-                        .absolute()
-                        .size_pct(100.0, 100.0)
-                        .apply_if(!is_bottom && is_first, |s| s.margin_top(2.0))
-                        .apply_if(!is_bottom && !is_first, |s| s.margin_top(-2.0))
-                        .apply_if(is_bottom && is_first, |s| s.margin_left(-2.0))
-                        .apply_if(is_bottom && !is_first, |s| s.margin_left(2.0))
-                        .apply_if(is_active(), |s| {
-                            s.apply_if(!is_bottom && is_first, |s| {
-                                s.border_bottom(2.0)
-                            })
-                            .apply_if(!is_bottom && !is_first, |s| s.border_top(2.0))
-                            .apply_if(is_bottom && is_first, |s| s.border_left(2.0))
-                            .apply_if(is_bottom && !is_first, |s| {
-                                s.border_right(2.0)
-                            })
-                        })
-                        .border_color(
-                            config
-                                .get()
-                                .color(LapceColor::LAPCE_TAB_ACTIVE_UNDERLINE),
-                        )
-                }),
-            )))
-            .style(|s| s.padding(6.0))
-        },
-    )
+            },
+        )
+        .style(|s| s.flex_col()),
+        
+        // Spacer to push quick-access icons to bottom (only for LeftTop)
+        empty().style(move |s| {
+            s.flex_grow(1.0)
+                .apply_if(!is_left_top, |s| s.hide())
+        }),
+        
+        // Separator line before quick-access icons (only for LeftTop)
+        empty().style(move |s| {
+            let config = config.get();
+            s.width(24.0)
+                .height(1.0)
+                .margin_vert(4.0)
+                .margin_horiz(4.0)
+                .background(config.color(LapceColor::LAPCE_BORDER))
+                .apply_if(!is_left_top, |s| s.hide())
+        }),
+        
+        // Quick-access icons for bottom panels (Terminal, SourceControl)
+        // Only shown in LeftTop position
+        stack((
+            panel_icon_button(
+                window_tab_data_for_quick.clone(),
+                PanelKind::Terminal,
+                position,
+                config,
+                dragging,
+            ),
+            panel_icon_button(
+                window_tab_data_for_quick.clone(),
+                PanelKind::SourceControl,
+                position,
+                config,
+                dragging,
+            ),
+        ))
+        .style(move |s| {
+            s.flex_col()
+                .apply_if(!is_left_top, |s| s.hide())
+        }),
+    ))
     .style(move |s| {
         s.border_color(config.get().color(LapceColor::LAPCE_BORDER))
             .apply_if(
                 panels.with(|p| {
                     p.get(&position).map(|p| p.is_empty()).unwrap_or(true)
-                }),
+                }) && !is_left_top,
                 |s| s.hide(),
             )
-            .apply_if(is_bottom, |s| s.flex_col())
+            // All panel pickers use vertical icon layout
+            .flex_col()
             .apply_if(is_bottom && is_first, |s| s.border_right(1.0))
             .apply_if(is_bottom && !is_first, |s| s.border_left(1.0))
             .apply_if(!is_bottom && is_first, |s| s.border_bottom(1.0))

@@ -27,7 +27,6 @@ pub fn default_panel_order() -> PanelOrder {
         im::vector![
             PanelKind::FileExplorer,
             PanelKind::Plugin,
-            PanelKind::SourceControl,
             PanelKind::Debug,
         ],
     );
@@ -35,6 +34,7 @@ pub fn default_panel_order() -> PanelOrder {
         PanelPosition::BottomLeft,
         im::vector![
             PanelKind::Terminal,
+            PanelKind::SourceControl,
             PanelKind::Search,
             PanelKind::Problem,
             PanelKind::CallHierarchy,
@@ -124,7 +124,7 @@ impl PanelData {
             PanelPosition::BottomLeft,
             PanelStyle {
                 active: 0,
-                shown: true,
+                shown: false,  // Don't show bottom panel by default
                 maximized: false,
             },
         );
