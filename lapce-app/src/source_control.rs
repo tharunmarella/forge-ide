@@ -30,6 +30,9 @@ pub struct SourceControlData {
     pub commits: RwSignal<im::Vector<GitCommitInfo>>,
     pub commits_loading: RwSignal<bool>,
     pub commits_total_count: RwSignal<usize>,
+    
+    // Loading indicator for git operations (push/pull/fetch)
+    pub git_operation_loading: RwSignal<bool>,
 }
 
 impl KeyPressFocus for SourceControlData {
@@ -68,7 +71,8 @@ impl KeyPressFocus for SourceControlData {
 impl SourceControlData {
     pub fn new(cx: Scope, editors: Editors, common: Rc<CommonData>) -> Self {
         Self {
-            file_diffs: cx.create_rw_signal(IndexMap::new()),
+            // Use the shared file_diffs from CommonData
+            file_diffs: common.file_diffs,
             branch: cx.create_rw_signal("".to_string()),
             branches: cx.create_rw_signal(im::Vector::new()),
             tags: cx.create_rw_signal(im::Vector::new()),
@@ -76,6 +80,7 @@ impl SourceControlData {
             commits: cx.create_rw_signal(im::Vector::new()),
             commits_loading: cx.create_rw_signal(false),
             commits_total_count: cx.create_rw_signal(0),
+            git_operation_loading: cx.create_rw_signal(false),
             common,
         }
     }

@@ -241,6 +241,18 @@ fn branch_dropdown_overlay(
         })
     };
 
+    // Update Project action (git pull)
+    let update_project_action = {
+        let workbench_command = window_tab_data.common.workbench_command;
+        Rc::new(move || {
+            selected_branch.set(None);
+            selected_branch_index.set(None);
+            branch_dropdown_visible.set(false);
+            workbench_command.send(LapceWorkbenchCommand::GitPull);
+        })
+    };
+    
+    // Commit action
     let commit_action = {
         let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
@@ -250,6 +262,8 @@ fn branch_dropdown_overlay(
             workbench_command.send(LapceWorkbenchCommand::SourceControlCommit);
         })
     };
+    
+    // Push action
     let push_action = {
         let workbench_command = window_tab_data.common.workbench_command;
         Rc::new(move || {
@@ -259,73 +273,16 @@ fn branch_dropdown_overlay(
             workbench_command.send(LapceWorkbenchCommand::GitPush);
         })
     };
-    let pull_action = {
-        let workbench_command = window_tab_data.common.workbench_command;
-        Rc::new(move || {
-            selected_branch.set(None);
-            selected_branch_index.set(None);
-            branch_dropdown_visible.set(false);
-            workbench_command.send(LapceWorkbenchCommand::GitPull);
-        })
-    };
-    let fetch_action = {
-        let workbench_command = window_tab_data.common.workbench_command;
-        Rc::new(move || {
-            selected_branch.set(None);
-            selected_branch_index.set(None);
-            branch_dropdown_visible.set(false);
-            workbench_command.send(LapceWorkbenchCommand::GitFetch);
-        })
-    };
-    let new_branch_action = {
-        let workbench_command = window_tab_data.common.workbench_command;
-        Rc::new(move || {
-            selected_branch.set(None);
-            selected_branch_index.set(None);
-            branch_dropdown_visible.set(false);
-            workbench_command.send(LapceWorkbenchCommand::GitCreateBranch);
-        })
-    };
-    let stash_action = {
-        let workbench_command = window_tab_data.common.workbench_command;
-        Rc::new(move || {
-            selected_branch.set(None);
-            selected_branch_index.set(None);
-            branch_dropdown_visible.set(false);
-            workbench_command.send(LapceWorkbenchCommand::GitStash);
-        })
-    };
-    let stash_pop_action = {
-        let workbench_command = window_tab_data.common.workbench_command;
-        Rc::new(move || {
-            selected_branch.set(None);
-            selected_branch_index.set(None);
-            branch_dropdown_visible.set(false);
-            workbench_command.send(LapceWorkbenchCommand::GitStashPop);
-        })
-    };
 
-    // Main menu column
+    // Main menu column - simplified to 3 main actions
     let main_menu = container(
         stack((
+            // Update Project (git pull)
+            menu_item(LapceIcons::SCM, "Update Project".to_string(), update_project_action),
             // Commit
             menu_item(LapceIcons::SCM, "Commit".to_string(), commit_action),
             // Push
             menu_item(LapceIcons::SCM, "Push".to_string(), push_action),
-            // Pull
-            menu_item(LapceIcons::SCM, "Pull".to_string(), pull_action),
-            // Fetch
-            menu_item(LapceIcons::SCM, "Fetch".to_string(), fetch_action),
-            // Separator
-            separator(),
-            // Stash
-            menu_item(LapceIcons::SCM, "Stash Changes".to_string(), stash_action),
-            // Stash Pop
-            menu_item(LapceIcons::SCM, "Unstash Changes".to_string(), stash_pop_action),
-            // Separator
-            separator(),
-            // New Branch
-            menu_item(LapceIcons::SCM, "New Branch...".to_string(), new_branch_action),
             // Separator
             separator(),
             // Branches list
@@ -681,36 +638,50 @@ fn left(
             project_button_size.set(rect.size());
         }),
         // Branch button wrapper — capture position/size for overlay
-        stack((
-            svg(move || config.get().ui_svg(LapceIcons::SCM)).style(move |s| {
-                let config = config.get();
-                let icon_size = config.ui.icon_size() as f32;
-                s.size(icon_size, icon_size)
-                    .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-            }),
-            label(move || {
-                let b = branch.get();
-                if b.is_empty() {
-                    "main".to_string()
-                } else {
-                    b
-                }
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.margin_left(6.0)
-                    .color(config.color(LapceColor::PANEL_FOREGROUND))
-                    .selectable(false)
-            }),
-            svg(move || config.get().ui_svg(LapceIcons::DROPDOWN_ARROW)).style(
-                move |s| {
+        {
+            let git_loading = source_control.git_operation_loading;
+            stack((
+                svg(move || config.get().ui_svg(LapceIcons::SCM)).style(move |s| {
                     let config = config.get();
-                    s.size(10.0, 10.0)
-                        .margin_left(4.0)
-                        .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
-                },
-            ),
-        ))
+                    let icon_size = config.ui.icon_size() as f32;
+                    s.size(icon_size, icon_size)
+                        .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                }),
+                label(move || {
+                    let b = branch.get();
+                    if b.is_empty() {
+                        "main".to_string()
+                    } else {
+                        b
+                    }
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.margin_left(6.0)
+                        .color(config.color(LapceColor::PANEL_FOREGROUND))
+                        .selectable(false)
+                }),
+                // Loading spinner - shown when git operation is in progress
+                svg(move || config.get().ui_svg(LapceIcons::DEBUG_RESTART)).style(
+                    move |s| {
+                        let config = config.get();
+                        s.size(12.0, 12.0)
+                            .margin_left(6.0)
+                            .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                            .apply_if(!git_loading.get(), |s| s.hide())
+                    },
+                ),
+                svg(move || config.get().ui_svg(LapceIcons::DROPDOWN_ARROW)).style(
+                    move |s| {
+                        let config = config.get();
+                        s.size(10.0, 10.0)
+                            .margin_left(4.0)
+                            .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
+                            .apply_if(git_loading.get(), |s| s.hide())
+                    },
+                ),
+            ))
+        }
         .style(move |s| {
             let config = config.get();
             s.items_center()

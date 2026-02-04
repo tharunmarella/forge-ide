@@ -155,6 +155,8 @@ pub struct CommonData {
     // the current focused view which will receive keyboard events
     pub keyboard_focus: RwSignal<Option<ViewId>>,
     pub window_common: Rc<WindowCommonData>,
+    /// Source control file diffs with checked state (for diff highlighting)
+    pub file_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
 }
 
 impl std::fmt::Debug for CommonData {
@@ -362,6 +364,10 @@ impl WindowTabData {
             text_layout.size().height
         });
 
+        // Create file_diffs signal shared between CommonData and SourceControlData
+        let file_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>> = 
+            cx.create_rw_signal(IndexMap::new());
+
         let common = Rc::new(CommonData {
             workspace: workspace.clone(),
             scope: cx,
@@ -389,6 +395,7 @@ impl WindowTabData {
             breakpoints: cx.create_rw_signal(BTreeMap::new()),
             keyboard_focus: cx.create_rw_signal(None),
             window_common: window_common.clone(),
+            file_diffs,
         });
 
         let main_split = MainSplitData::new(cx, common.clone());
@@ -1588,19 +1595,111 @@ impl WindowTabData {
                 }
             }
             
-            // Git Operations - TODO: Implement UI dialogs for these
+            // Git Operations
             GitPush => {
-                // For now, show a message that push requires terminal
-                // TODO: Implement push dialog with remote/branch selection
+                if let Some(workspace_path) = self.workspace.path.as_ref() {
+                    let path = workspace_path.clone();
+                    let git_loading = self.source_control.git_operation_loading;
+                    git_loading.set(true);
+                    let send = create_ext_action(self.scope, {
+                        let messages = self.messages;
+                        move |(title, msg): (String, ShowMessageParams)| {
+                            git_loading.set(false);
+                            messages.update(|m| m.push((title, msg)));
+                        }
+                    });
+                    std::thread::spawn(move || {
+                        let result = std::process::Command::new("git")
+                            .arg("push")
+                            .current_dir(&path)
+                            .output();
+                        
+                        let (title, msg) = match result {
+                            Ok(output) => {
+                                if output.status.success() {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    let message = if stdout.is_empty() && stderr.is_empty() {
+                                        "Push completed successfully".to_string()
+                                    } else if !stderr.is_empty() {
+                                        stderr.to_string()
+                                    } else {
+                                        stdout.to_string()
+                                    };
+                                    ("Git Push".to_string(), ShowMessageParams {
+                                        typ: lsp_types::MessageType::INFO,
+                                        message,
+                                    })
+                                } else {
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    ("Git Push Failed".to_string(), ShowMessageParams {
+                                        typ: lsp_types::MessageType::ERROR,
+                                        message: stderr.to_string(),
+                                    })
+                                }
+                            }
+                            Err(e) => ("Git Push Error".to_string(), ShowMessageParams {
+                                typ: lsp_types::MessageType::ERROR,
+                                message: e.to_string(),
+                            }),
+                        };
+                        send((title, msg));
+                    });
+                }
             }
             GitPull => {
-                // TODO: Implement pull dialog
+                if let Some(workspace_path) = self.workspace.path.as_ref() {
+                    let path = workspace_path.clone();
+                    let git_loading = self.source_control.git_operation_loading;
+                    git_loading.set(true);
+                    let send = create_ext_action(self.scope, {
+                        let messages = self.messages;
+                        move |(title, msg): (String, ShowMessageParams)| {
+                            git_loading.set(false);
+                            messages.update(|m| m.push((title, msg)));
+                        }
+                    });
+                    std::thread::spawn(move || {
+                        let result = std::process::Command::new("git")
+                            .arg("pull")
+                            .current_dir(&path)
+                            .output();
+                        
+                        let (title, msg) = match result {
+                            Ok(output) => {
+                                if output.status.success() {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    let message = if stdout.trim().is_empty() {
+                                        "Already up to date".to_string()
+                                    } else {
+                                        stdout.to_string()
+                                    };
+                                    ("Git Update".to_string(), ShowMessageParams {
+                                        typ: lsp_types::MessageType::INFO,
+                                        message,
+                                    })
+                                } else {
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    ("Git Update Failed".to_string(), ShowMessageParams {
+                                        typ: lsp_types::MessageType::ERROR,
+                                        message: stderr.to_string(),
+                                    })
+                                }
+                            }
+                            Err(e) => ("Git Update Error".to_string(), ShowMessageParams {
+                                typ: lsp_types::MessageType::ERROR,
+                                message: e.to_string(),
+                            }),
+                        };
+                        send((title, msg));
+                    });
+                }
             }
             GitFetch => {
-                // TODO: Implement fetch
+                // Not used in simplified menu
             }
             GitFetchAll => {
-                // TODO: Implement fetch all
+                // Not used in simplified menu
             }
             GitCreateBranch => {
                 // TODO: Implement create branch dialog

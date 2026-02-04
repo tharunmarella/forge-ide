@@ -50,13 +50,13 @@ impl PanelKind {
 
     pub fn default_position(&self) -> PanelPosition {
         match self {
-            PanelKind::Terminal => PanelPosition::BottomLeft,
+            PanelKind::Terminal => PanelPosition::LeftTop,
             PanelKind::FileExplorer => PanelPosition::LeftTop,
-            PanelKind::SourceControl => PanelPosition::BottomLeft,
-            PanelKind::Plugin => PanelPosition::LeftTop,
-            PanelKind::Search => PanelPosition::BottomLeft,
+            PanelKind::SourceControl => PanelPosition::LeftTop,
+            PanelKind::Plugin => PanelPosition::BottomLeft,
+            PanelKind::Search => PanelPosition::LeftTop,
             PanelKind::Problem => PanelPosition::BottomLeft,
-            PanelKind::Debug => PanelPosition::LeftTop,
+            PanelKind::Debug => PanelPosition::BottomLeft,
             PanelKind::CallHierarchy => PanelPosition::BottomLeft,
             PanelKind::DocumentSymbol => PanelPosition::RightTop,
             PanelKind::References => PanelPosition::BottomLeft,

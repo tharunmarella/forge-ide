@@ -80,7 +80,7 @@ use crate::{
     db::LapceDb,
     debug::RunDebugMode,
     editor::{
-        diff::diff_show_more_section_view,
+        diff::{diff_gutter_view, diff_show_more_section_view},
         location::{EditorLocation, EditorPosition},
         view::editor_container_view,
     },
@@ -1357,11 +1357,13 @@ fn editor_tab_content(
                             s.height_full()
                                 .flex_grow(1.0)
                                 .flex_basis(0.0)
-                                .border_right(1.0)
-                                .border_color(
-                                    config.get().color(LapceColor::LAPCE_BORDER),
-                                )
                         }),
+                        // Gutter with checkboxes in the middle (linked to file's checked state)
+                        diff_gutter_view(
+                            &diff_editor_data.left,
+                            &diff_editor_data.right,
+                            window_tab_data.source_control.file_diffs,
+                        ),
                         container(
                             editor_container_view(
                                 window_tab_data.clone(),

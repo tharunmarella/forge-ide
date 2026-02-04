@@ -583,11 +583,10 @@ fn panel_icon_button(
     let is_active = {
         let window_tab_data = window_tab_data.clone();
         move || {
-            // Check if this panel is active at its actual position
-            let actual_position = p.default_position();
+            // Check if this panel is active at its position
             if let Some((active_panel, shown)) = window_tab_data
                 .panel
-                .active_panel_at_position(&actual_position, true)
+                .active_panel_at_position(&position, true)
             {
                 shown && active_panel == p
             } else {
@@ -666,94 +665,35 @@ fn panel_picker(
     let is_bottom = position.is_bottom();
     let is_first = position.is_first();
     
-    // For LeftTop position, we add quick-access icons for Terminal and SourceControl
-    let is_left_top = position == PanelPosition::LeftTop;
-    
     // Clone for use in closures
     let window_tab_data_for_dyn = window_tab_data.clone();
-    let window_tab_data_for_quick = window_tab_data.clone();
     
-    stack((
-        // Regular panel icons for this position
-        // Filter out Terminal and SourceControl from bottom positions (they have quick-access in left sidebar)
-        dyn_stack(
-            move || {
-                let mut panels_list = panel
-                    .panels
-                    .with(|panels| panels.get(&position).cloned().unwrap_or_default());
-                
-                // For bottom positions, filter out Terminal and SourceControl
-                // since they're accessed from the left sidebar quick-access icons
-                if is_bottom {
-                    panels_list.retain(|p| {
-                        *p != PanelKind::Terminal && *p != PanelKind::SourceControl
-                    });
-                }
-                panels_list
-            },
-            |p| *p,
-            move |p| {
-                panel_icon_button(
-                    window_tab_data_for_dyn.clone(),
-                    p,
-                    position,
-                    config,
-                    dragging,
-                )
-            },
-        )
-        .style(|s| s.flex_col()),
-        
-        // Spacer to push quick-access icons to bottom (only for LeftTop)
-        empty().style(move |s| {
-            s.flex_grow(1.0)
-                .apply_if(!is_left_top, |s| s.hide())
-        }),
-        
-        // Separator line before quick-access icons (only for LeftTop)
-        empty().style(move |s| {
-            let config = config.get();
-            s.width(24.0)
-                .height(1.0)
-                .margin_vert(4.0)
-                .margin_horiz(4.0)
-                .background(config.color(LapceColor::LAPCE_BORDER))
-                .apply_if(!is_left_top, |s| s.hide())
-        }),
-        
-        // Quick-access icons for bottom panels (Terminal, SourceControl)
-        // Only shown in LeftTop position
-        stack((
+    dyn_stack(
+        move || {
+            panel
+                .panels
+                .with(|panels| panels.get(&position).cloned().unwrap_or_default())
+        },
+        |p| *p,
+        move |p| {
             panel_icon_button(
-                window_tab_data_for_quick.clone(),
-                PanelKind::Terminal,
+                window_tab_data_for_dyn.clone(),
+                p,
                 position,
                 config,
                 dragging,
-            ),
-            panel_icon_button(
-                window_tab_data_for_quick.clone(),
-                PanelKind::SourceControl,
-                position,
-                config,
-                dragging,
-            ),
-        ))
-        .style(move |s| {
-            s.flex_col()
-                .apply_if(!is_left_top, |s| s.hide())
-        }),
-    ))
+            )
+        },
+    )
     .style(move |s| {
-        s.border_color(config.get().color(LapceColor::LAPCE_BORDER))
+        s.flex_col()
+            .border_color(config.get().color(LapceColor::LAPCE_BORDER))
             .apply_if(
                 panels.with(|p| {
                     p.get(&position).map(|p| p.is_empty()).unwrap_or(true)
-                }) && !is_left_top,
+                }),
                 |s| s.hide(),
             )
-            // All panel pickers use vertical icon layout
-            .flex_col()
             .apply_if(is_bottom && is_first, |s| s.border_right(1.0))
             .apply_if(is_bottom && !is_first, |s| s.border_left(1.0))
             .apply_if(!is_bottom && is_first, |s| s.border_bottom(1.0))

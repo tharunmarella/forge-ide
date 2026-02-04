@@ -217,6 +217,7 @@ pub struct EditorConfig {
     #[field_names(
         desc = "Set the auto save delay (in milliseconds), Set to 0 to completely disable"
     )]
+    #[serde(default = "default_autosave_interval")]
     pub autosave_interval: u64,
     #[field_names(
         desc = "Whether the document should be formatted when an autosave is triggered (required Format on Save)"
@@ -303,4 +304,9 @@ impl EditorConfig {
         }
         self.blink_interval.max(200)
     }
+}
+
+/// Default autosave interval in milliseconds (1 second, like IntelliJ)
+fn default_autosave_interval() -> u64 {
+    1000
 }

@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::atomic};
+use std::{path::PathBuf, rc::Rc, sync::atomic};
 
 use floem::{
     View,
@@ -10,11 +10,12 @@ use floem::{
         Decorators, clip, dyn_stack, editor::id::EditorId, empty, label, stack, svg,
     },
 };
+use indexmap::IndexMap;
 use lapce_core::buffer::{
     diff::{DiffExpand, DiffLines, expand_diff_lines, rope_diff},
     rope_text::RopeText,
 };
-use lapce_rpc::{buffer::BufferId, proxy::ProxyResponse};
+use lapce_rpc::{buffer::BufferId, proxy::ProxyResponse, source_control::FileDiff};
 use lapce_xi_rope::Rope;
 use serde::{Deserialize, Serialize};
 
@@ -549,4 +550,217 @@ pub fn diff_show_more_section_view(
             .pointer_events_none()
     })
     .debug_name("Diff Show More Section")
+}
+
+/// Represents a change block for the diff gutter with checkbox
+#[derive(Clone, PartialEq)]
+struct DiffHunkBlock {
+    /// The actual line number in the right document where change starts
+    right_actual_line: usize,
+    /// Number of lines in this change on the right side
+    right_lines: usize,
+    /// Unique index for this hunk
+    index: usize,
+}
+
+/// SVG checkmark for checkbox (same as settings.rs)
+const CHECKBOX_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 16 16"><polygon points="5.19,11.83 0.18,7.44 1.82,5.56 4.81,8.17 10,1.25 12,2.75" /></svg>"#;
+
+/// Gutter view in the middle of the diff editor with checkboxes for each hunk
+/// The checkboxes are linked to the file's checked state in file_diffs
+pub fn diff_gutter_view(
+    _left_editor: &EditorData,
+    right_editor: &EditorData,
+    file_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
+) -> impl View + use<> {
+    let right_editor_view = right_editor.kind;
+    let right_screen_lines = right_editor.screen_lines();
+    let right_scroll_delta = right_editor.editor.scroll_delta;
+    let viewport = right_editor.viewport();
+    let config = right_editor.common.config;
+    
+    // Get the file path from the right editor's doc
+    let doc = right_editor.doc();
+    let file_path: Option<PathBuf> = match doc.content.get_untracked() {
+        DocContent::File { path, .. } => Some(path),
+        DocContent::History(h) => Some(h.path),
+        _ => None,
+    };
+
+    // Collect hunk blocks from diff changes
+    let each_fn = move || {
+        let editor_view = right_editor_view.get();
+
+        if let EditorViewKind::Diff(diff_info) = editor_view {
+            let mut blocks = Vec::new();
+            let mut index = 0;
+
+            for change in diff_info.changes.iter() {
+                match change {
+                    DiffLines::Left(range) => {
+                        // Lines only on left (deleted from right)
+                        blocks.push(DiffHunkBlock {
+                            right_actual_line: range.start,
+                            right_lines: 0,
+                            index,
+                        });
+                        index += 1;
+                    }
+                    DiffLines::Right(range) => {
+                        // Lines only on right (added)
+                        blocks.push(DiffHunkBlock {
+                            right_actual_line: range.start,
+                            right_lines: range.len(),
+                            index,
+                        });
+                        index += 1;
+                    }
+                    DiffLines::Both(_) => {
+                        // Same lines - no checkbox needed
+                    }
+                }
+            }
+
+            blocks
+        } else {
+            Vec::new()
+        }
+    };
+
+    let key_fn = move |block: &DiffHunkBlock| {
+        (block.right_actual_line, block.right_lines, block.index)
+    };
+
+    let view_fn = move |block: DiffHunkBlock| {
+        let file_path_for_check = file_path.clone();
+        let file_path_for_toggle = file_path.clone();
+        let block_for_arrow = block.clone();
+        
+        // Read the file's checked state from file_diffs
+        let is_checked = move || {
+            if let Some(ref path) = file_path_for_check {
+                file_diffs.with(|diffs| {
+                    diffs.get(path).map(|(_, c)| *c).unwrap_or(false)
+                })
+            } else {
+                false
+            }
+        };
+        
+        // SVG checkbox - same style as commit panel
+        let svg_str = move || if is_checked() { CHECKBOX_SVG } else { "" }.to_string();
+        
+        // Checkbox for selecting the hunk
+        let checkbox_view = svg(svg_str)
+            .on_click_stop(move |_| {
+                eprintln!("DEBUG: Checkbox clicked for hunk at line {}", block.right_actual_line);
+                // Toggle the file's checked state (affects all hunks)
+                if let Some(ref path) = file_path_for_toggle {
+                    let path = path.clone();
+                    eprintln!("DEBUG: Toggling file: {:?}", path);
+                    file_diffs.update(|diffs| {
+                        if let Some((_, checked)) = diffs.get_mut(&path) {
+                            eprintln!("DEBUG: {} -> {}", *checked, !*checked);
+                            *checked = !*checked;
+                        }
+                    });
+                }
+            })
+            .style(move |s| {
+                let right_screen_lines = right_screen_lines.get();
+                
+                // Use the line where the hunk starts
+                let line = block.right_actual_line;
+                
+                let Some(line_info) = right_screen_lines.info_for_line(line) else {
+                    return s.hide();
+                };
+
+                let config_val = config.get();
+                let line_height = config_val.editor.line_height() as f64;
+                let size = config_val.ui.font_size() as f64;
+                let color = config_val.color(LapceColor::EDITOR_FOREGROUND);
+
+                let y = line_info.y - viewport.get().y0;
+
+                s.absolute()
+                    .margin_top(y + (line_height - size) / 2.0)
+                    .margin_left((24.0 - size) / 2.0)
+                    .min_width(size as f32)
+                    .size(size as f32, size as f32)
+                    .color(color)
+                    .border_color(color)
+                    .border(1.0)
+                    .border_radius(2.0)
+                    .cursor(CursorStyle::Pointer)
+                    .hover(|s| s.background(config_val.color(LapceColor::PANEL_HOVERED_BACKGROUND)))
+            });
+        
+        // Arrow button for reverting this hunk (appears below checkbox)
+        let arrow_view = label(|| "→".to_string())
+            .on_click_stop(move |_| {
+                eprintln!("DEBUG: Arrow clicked for hunk at line {}", block_for_arrow.right_actual_line);
+                eprintln!("DEBUG: This would revert the change (copy from left/HEAD to right/working)");
+                // TODO: Implement actual revert logic
+            })
+            .style(move |s| {
+                let right_screen_lines = right_screen_lines.get();
+                
+                let line = block_for_arrow.right_actual_line;
+                
+                let Some(line_info) = right_screen_lines.info_for_line(line) else {
+                    return s.hide();
+                };
+
+                let config_val = config.get();
+                let line_height = config_val.editor.line_height() as f64;
+                let size = config_val.ui.font_size() as f64;
+
+                // Position arrow below the checkbox (next line)
+                let y = line_info.y - viewport.get().y0 + line_height;
+
+                s.absolute()
+                    .margin_top(y + (line_height - size) / 2.0)
+                    .margin_left((24.0 - size) / 2.0)
+                    .min_width(size as f32)
+                    .height(size as f32)
+                    .items_center()
+                    .justify_center()
+                    .font_size(size as f32)
+                    .cursor(CursorStyle::Pointer)
+                    .color(config_val.color(LapceColor::EDITOR_FOREGROUND))
+                    .hover(|s| s.background(config_val.color(LapceColor::PANEL_HOVERED_BACKGROUND)).border_radius(4.0))
+            });
+        
+        // Return both checkbox and arrow
+        stack((checkbox_view, arrow_view))
+            .style(|s| s.size_pct(100.0, 100.0))
+    };
+
+    stack((
+        empty().style(move |s| {
+            s.height(config.get().editor.line_height() as f32 + 1.0)
+        }),
+        clip(
+            dyn_stack(each_fn, key_fn, view_fn)
+                .style(|s| s.flex_col().size_pct(100.0, 100.0)),
+        )
+        .on_event_cont(EventListener::PointerWheel, move |event| {
+            if let Event::PointerWheel(event) = event {
+                right_scroll_delta.set(event.delta);
+            }
+        })
+        .style(|s| s.size_pct(100.0, 100.0)),
+    ))
+    .style(move |s| {
+        let config = config.get();
+        s.flex_col()
+            .width(24.0)
+            .height_pct(100.0)
+            .background(config.color(LapceColor::PANEL_BACKGROUND))
+            .border_left(1.0)
+            .border_right(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER))
+    })
+    .debug_name("Diff Gutter")
 }

@@ -22,24 +22,26 @@ pub type PanelOrder = im::HashMap<PanelPosition, im::Vector<PanelKind>>;
 
 pub fn default_panel_order() -> PanelOrder {
     let mut order = PanelOrder::new();
+    // Left sidebar: main navigation icons
     order.insert(
         PanelPosition::LeftTop,
         im::vector![
             PanelKind::FileExplorer,
-            PanelKind::Plugin,
-            PanelKind::Debug,
+            PanelKind::SourceControl,  // Commit / Git
+            PanelKind::Terminal,
+            PanelKind::Search,
         ],
     );
+    // Bottom panel: auxiliary panels (no icons in bottom picker for these)
     order.insert(
         PanelPosition::BottomLeft,
         im::vector![
-            PanelKind::Terminal,
-            PanelKind::SourceControl,
-            PanelKind::Search,
             PanelKind::Problem,
             PanelKind::CallHierarchy,
             PanelKind::References,
-            PanelKind::Implementation
+            PanelKind::Implementation,
+            PanelKind::Debug,
+            PanelKind::Plugin,
         ],
     );
     order.insert(
@@ -154,7 +156,7 @@ impl PanelData {
         );
         let styles = cx.create_rw_signal(styles);
         let size = cx.create_rw_signal(PanelSize {
-            left: 250.0,
+            left: 320.0,
             left_split: 0.5,
             bottom: 300.0,
             bottom_split: 0.5,
