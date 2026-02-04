@@ -22,17 +22,17 @@ pub type PanelOrder = im::HashMap<PanelPosition, im::Vector<PanelKind>>;
 
 pub fn default_panel_order() -> PanelOrder {
     let mut order = PanelOrder::new();
-    // Left sidebar: main navigation icons
+    // Left sidebar: main navigation icons (Terminal icon here, but opens at bottom)
     order.insert(
         PanelPosition::LeftTop,
         im::vector![
             PanelKind::FileExplorer,
             PanelKind::SourceControl,  // Commit / Git
-            PanelKind::Terminal,
+            PanelKind::Terminal,       // Icon in left, but opens at bottom
             PanelKind::Search,
         ],
     );
-    // Bottom panel: auxiliary panels (no icons in bottom picker for these)
+    // Bottom panel: Terminal content and auxiliary panels
     order.insert(
         PanelPosition::BottomLeft,
         im::vector![

@@ -50,7 +50,7 @@ impl PanelKind {
 
     pub fn default_position(&self) -> PanelPosition {
         match self {
-            PanelKind::Terminal => PanelPosition::LeftTop,
+            PanelKind::Terminal => PanelPosition::BottomLeft,  // Terminal opens at bottom
             PanelKind::FileExplorer => PanelPosition::LeftTop,
             PanelKind::SourceControl => PanelPosition::LeftTop,
             PanelKind::Plugin => PanelPosition::BottomLeft,

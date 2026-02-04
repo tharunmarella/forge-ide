@@ -598,7 +598,12 @@ fn panel_icon_button(
         clickable_icon(
             || icon,
             move || {
-                window_tab_data.toggle_panel_visual(p);
+                if p == PanelKind::Terminal {
+                    // Terminal opens at bottom, not in left panel
+                    window_tab_data.toggle_panel_visual_at_position(p, PanelPosition::BottomLeft);
+                } else {
+                    window_tab_data.toggle_panel_visual(p);
+                }
             },
             || false,
             || false,

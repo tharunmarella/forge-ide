@@ -2824,6 +2824,36 @@ impl WindowTabData {
         }
     }
 
+    /// Toggle a panel at a specific position (e.g., Terminal icon in left opens at bottom)
+    pub fn toggle_panel_visual_at_position(&self, kind: PanelKind, position: PanelPosition) {
+        // Check if Terminal is visible at the bottom position
+        let is_visible = self.panel.styles.with_untracked(|styles| {
+            styles.get(&position).map(|s| s.shown).unwrap_or(false)
+        }) && self.panel.active_panel_at_position(&position, false)
+            .map(|(p, _)| p == kind)
+            .unwrap_or(false);
+        
+        if is_visible {
+            self.panel.hide_panel(&kind);
+        } else {
+            // Make sure the panel is in the target position's panel list
+            self.panel.panels.update(|panels| {
+                // Add to target position if not there
+                if let Some(kinds) = panels.get_mut(&position) {
+                    if !kinds.contains(&kind) {
+                        kinds.push_front(kind);
+                    }
+                } else {
+                    panels.insert(position, im::vector![kind]);
+                }
+            });
+            
+            // Show it at the position
+            self.panel.show_panel(&kind);
+            self.common.focus.set(Focus::Panel(kind));
+        }
+    }
+
     /// Toggle a specific kind of panel.
     fn toggle_panel_focus(&self, kind: PanelKind) {
         let should_hide = match kind {
