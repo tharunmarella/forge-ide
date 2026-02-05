@@ -25,9 +25,10 @@ use crate::{
     config::{LapceConfig, color::LapceColor, icon::LapceIcons},
     listener::Listener,
     main_split::MainSplitData,
+    panel::kind::PanelKind,
     source_control::SourceControlData,
     update::ReleaseInfo,
-    window_tab::WindowTabData,
+    window_tab::{Focus, WindowTabData},
     workspace::LapceWorkspace,
 };
 
@@ -45,10 +46,10 @@ fn project_dropdown_overlay(
                 label(|| "Open Folder...".to_string())
                     .style(move |s| {
                         let config = config.get();
-                        s.padding_horiz(10.0)
-                            .padding_vert(6.0)
+                        s.padding_horiz(12.0)
+                            .padding_vert(8.0)
                             .width_full()
-                            .font_size(12.0)
+                            .font_size(config.ui.font_size() as f32)
                             .color(config.color(LapceColor::PANEL_FOREGROUND))
                     }),
             )
@@ -73,9 +74,9 @@ fn project_dropdown_overlay(
             }),
             label(|| "Recent Projects".to_string()).style(move |s| {
                 let config = config.get();
-                s.padding_horiz(10.0)
-                    .padding_vert(4.0)
-                    .font_size(10.0)
+                s.padding_horiz(12.0)
+                    .padding_vert(6.0)
+                    .font_size((config.ui.font_size() - 2) as f32)
                     .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
             }),
             clip(
@@ -100,7 +101,8 @@ fn project_dropdown_overlay(
                                     svg(move || config.get().ui_svg(LapceIcons::FILE_EXPLORER))
                                         .style(move |s| {
                                             let config = config.get();
-                                            s.size(12.0, 12.0)
+                                            let icon_size = config.ui.icon_size() as f32;
+                                            s.size(icon_size, icon_size)
                                                 .margin_right(8.0)
                                                 .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
                                         }),
@@ -108,12 +110,12 @@ fn project_dropdown_overlay(
                                         label(move || display_name.clone())
                                             .style(move |s| {
                                                 let config = config.get();
-                                                s.font_size(12.0)
+                                                s.font_size(config.ui.font_size() as f32)
                                                     .color(config.color(LapceColor::PANEL_FOREGROUND))
                                             }),
                                         label(move || path_str.clone()).style(move |s| {
                                             let config = config.get();
-                                            s.font_size(10.0)
+                                            s.font_size((config.ui.font_size() - 2) as f32)
                                                 .margin_top(1.0)
                                                 .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
                                         }),
@@ -132,8 +134,8 @@ fn project_dropdown_overlay(
                             .style(move |s| {
                                 let config = config.get();
                                 s.width_full()
-                                    .padding_horiz(10.0)
-                                    .padding_vert(6.0)
+                                    .padding_horiz(12.0)
+                                    .padding_vert(8.0)
                                     .hover(|s| {
                                         s.cursor(CursorStyle::Pointer).background(
                                             config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
@@ -201,15 +203,16 @@ fn branch_dropdown_overlay(
                 svg(move || config.get().ui_svg(icon))
                     .style(move |s| {
                         let config = config.get();
-                        s.size(12.0, 12.0)
-                            .margin_right(8.0)
+                        let icon_size = config.ui.icon_size() as f32;
+                        s.size(icon_size, icon_size)
+                            .margin_right(10.0)
                             .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
                     }),
                 label(move || text.clone())
                     .style(move |s| {
                         let config = config.get();
                         s.flex_grow(1.0)
-                            .font_size(12.0)
+                            .font_size(config.ui.font_size() as f32)
                             .color(config.color(LapceColor::PANEL_FOREGROUND))
                     }),
             ))
@@ -220,8 +223,8 @@ fn branch_dropdown_overlay(
         })
         .style(move |s| {
             let config = config.get();
-            s.padding_horiz(10.0)
-                .padding_vert(6.0)
+            s.padding_horiz(12.0)
+                .padding_vert(8.0)
                 .width_full()
                 .hover(|s| {
                     s.cursor(CursorStyle::Pointer)
@@ -252,14 +255,16 @@ fn branch_dropdown_overlay(
         })
     };
     
-    // Commit action
+    // Commit action - opens source control panel and focuses commit
     let commit_action = {
-        let workbench_command = window_tab_data.common.workbench_command;
+        let window_tab_data = window_tab_data.clone();
         Rc::new(move || {
             selected_branch.set(None);
             selected_branch_index.set(None);
             branch_dropdown_visible.set(false);
-            workbench_command.send(LapceWorkbenchCommand::SourceControlCommit);
+            // Show the Source Control panel on the left
+            window_tab_data.panel.show_panel(&PanelKind::SourceControl);
+            window_tab_data.common.focus.set(Focus::Panel(PanelKind::SourceControl));
         })
     };
     
@@ -278,11 +283,11 @@ fn branch_dropdown_overlay(
     let main_menu = container(
         stack((
             // Update Project (git pull)
-            menu_item(LapceIcons::SCM, "Update Project".to_string(), update_project_action),
+            menu_item(LapceIcons::GIT_PULL, "Update Project".to_string(), update_project_action),
             // Commit
-            menu_item(LapceIcons::SCM, "Commit".to_string(), commit_action),
+            menu_item(LapceIcons::GIT_COMMIT, "Commit".to_string(), commit_action),
             // Push
-            menu_item(LapceIcons::SCM, "Push".to_string(), push_action),
+            menu_item(LapceIcons::GIT_PUSH, "Push".to_string(), push_action),
             // Separator
             separator(),
             // Branches list
@@ -298,10 +303,11 @@ fn branch_dropdown_overlay(
                             let branch_for_style = branch_name.clone();
                             container(
                                 stack((
-                                    svg(move || config.get().ui_svg(LapceIcons::SCM))
+                                    svg(move || config.get().ui_svg(LapceIcons::GIT_BRANCH))
                                         .style(move |s| {
                                             let config = config.get();
-                                            s.size(12.0, 12.0)
+                                            let icon_size = config.ui.icon_size() as f32;
+                                            s.size(icon_size, icon_size)
                                                 .margin_right(8.0)
                                                 .color(if is_current {
                                                     config.color(LapceColor::EDITOR_CARET)
@@ -313,7 +319,7 @@ fn branch_dropdown_overlay(
                                         .style(move |s| {
                                             let config = config.get();
                                             s.flex_grow(1.0)
-                                                .font_size(12.0)
+                                                .font_size(config.ui.font_size() as f32)
                                                 .color(config.color(LapceColor::PANEL_FOREGROUND))
                                         }),
                                     // Checkmark for current branch
@@ -321,14 +327,15 @@ fn branch_dropdown_overlay(
                                         .style(move |s| {
                                             let config = config.get();
                                             s.margin_right(6.0)
-                                                .font_size(11.0)
+                                                .font_size(config.ui.font_size() as f32)
                                                 .color(config.color(LapceColor::EDITOR_CARET))
                                         }),
                                     // Chevron arrow
                                     svg(move || config.get().ui_svg(LapceIcons::ITEM_OPENED))
                                         .style(move |s| {
                                             let config = config.get();
-                                            s.size(10.0, 10.0)
+                                            let icon_size = (config.ui.icon_size() - 4) as f32;
+                                            s.size(icon_size, icon_size)
                                                 .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
                                         }),
                                 ))
@@ -347,8 +354,8 @@ fn branch_dropdown_overlay(
                             .style(move |s| {
                                 let config = config.get();
                                 let is_selected = selected_branch.get() == Some(branch_for_style.clone());
-                                s.padding_horiz(10.0)
-                                    .padding_vert(6.0)
+                                s.padding_horiz(12.0)
+                                    .padding_vert(8.0)
                                     .width_full()
                                     .apply_if(is_selected, |s| {
                                         s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
@@ -384,16 +391,16 @@ fn branch_dropdown_overlay(
                     .style(move |s| {
                         let config = config.get();
                         s.font_bold()
-                            .font_size(12.0)
-                            .padding_horiz(10.0)
-                            .padding_vert(6.0)
+                            .font_size(config.ui.font_size() as f32)
+                            .padding_horiz(12.0)
+                            .padding_vert(8.0)
                             .color(config.color(LapceColor::PANEL_FOREGROUND))
                     })
                 ),
                 separator(),
                 // Checkout
                 menu_item(
-                    LapceIcons::SCM,
+                    LapceIcons::GIT_BRANCH,
                     "Checkout".to_string(),
                     Rc::new({
                         let lapce_command = lapce_command.clone();
@@ -414,7 +421,7 @@ fn branch_dropdown_overlay(
                 ),
                 // New Branch from
                 menu_item(
-                    LapceIcons::SCM,
+                    LapceIcons::GIT_BRANCH,
                     "New Branch from...".to_string(),
                     Rc::new({
                         let show_info = show_info.clone();
@@ -425,7 +432,7 @@ fn branch_dropdown_overlay(
                 ),
                 // Compare with
                 menu_item(
-                    LapceIcons::SCM,
+                    LapceIcons::GIT_COMPARE,
                     "Compare with...".to_string(),
                     Rc::new({
                         let show_info = show_info.clone();
@@ -436,7 +443,7 @@ fn branch_dropdown_overlay(
                 ),
                 // Show Diff
                 menu_item(
-                    LapceIcons::SCM,
+                    LapceIcons::GIT_COMPARE,
                     "Show Diff".to_string(),
                     Rc::new({
                         let show_info = show_info.clone();
@@ -447,7 +454,7 @@ fn branch_dropdown_overlay(
                 ),
                 // Merge into current
                 menu_item(
-                    LapceIcons::SCM,
+                    LapceIcons::GIT_MERGE,
                     "Merge into current".to_string(),
                     Rc::new({
                         let show_info = show_info.clone();
@@ -641,7 +648,7 @@ fn left(
         {
             let git_loading = source_control.git_operation_loading;
             stack((
-                svg(move || config.get().ui_svg(LapceIcons::SCM)).style(move |s| {
+                svg(move || config.get().ui_svg(LapceIcons::GIT_BRANCH)).style(move |s| {
                     let config = config.get();
                     let icon_size = config.ui.icon_size() as f32;
                     s.size(icon_size, icon_size)
@@ -665,7 +672,8 @@ fn left(
                 svg(move || config.get().ui_svg(LapceIcons::DEBUG_RESTART)).style(
                     move |s| {
                         let config = config.get();
-                        s.size(12.0, 12.0)
+                        let icon_size = config.ui.icon_size() as f32;
+                        s.size(icon_size, icon_size)
                             .margin_left(6.0)
                             .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
                             .apply_if(!git_loading.get(), |s| s.hide())
@@ -674,7 +682,8 @@ fn left(
                 svg(move || config.get().ui_svg(LapceIcons::DROPDOWN_ARROW)).style(
                     move |s| {
                         let config = config.get();
-                        s.size(10.0, 10.0)
+                        let icon_size = (config.ui.icon_size() - 6) as f32;
+                        s.size(icon_size, icon_size)
                             .margin_left(4.0)
                             .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
                             .apply_if(git_loading.get(), |s| s.hide())

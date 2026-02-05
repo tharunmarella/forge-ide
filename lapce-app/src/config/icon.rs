@@ -55,11 +55,15 @@ impl LapceIcons {
     pub const SCM_CHANGE_ADD: &'static str = "scm.change.add";
     pub const SCM_CHANGE_REMOVE: &'static str = "scm.change.remove";
 
+    // Git Log / History
+    pub const HISTORY: &'static str = "history";
+    
     // Git Operations
     pub const GIT_COMMIT: &'static str = "git.commit";
     pub const GIT_PUSH: &'static str = "git.push";
     pub const GIT_PULL: &'static str = "git.pull";
     pub const GIT_FETCH: &'static str = "git.fetch";
+    pub const GIT_LOG: &'static str = "git.log";
     pub const GIT_MERGE: &'static str = "git.merge";
     pub const GIT_SYNC: &'static str = "git.sync";
     pub const GIT_STASH: &'static str = "git.stash";
@@ -67,6 +71,7 @@ impl LapceIcons {
     pub const GIT_STASH_POP: &'static str = "git.stash.pop";
     pub const GIT_COMPARE: &'static str = "git.compare";
     pub const GIT_REVERT: &'static str = "git.revert";
+    pub const DIFF_REVERT: &'static str = "diff.revert";
     pub const GIT_CLONE: &'static str = "git.clone";
     pub const GIT_FORCE_PUSH: &'static str = "git.force_push";
 

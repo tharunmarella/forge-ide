@@ -303,34 +303,6 @@ impl EditorView {
         let Some(diff_sections) = &screen_lines.diff_sections else {
             return;
         };
-        
-        // Check if this file is "checked" in source control
-        let is_file_checked = {
-            let doc = self.editor.doc();
-            let file_path = match doc.content.get_untracked() {
-                crate::doc::DocContent::File { path, .. } => Some(path),
-                crate::doc::DocContent::History(h) => Some(h.path),
-                _ => None,
-            };
-            
-            if let Some(path) = file_path {
-                self.editor.common.file_diffs.with_untracked(|diffs| {
-                    diffs.get(&path).map(|(_, c)| *c).unwrap_or(false)
-                })
-            } else {
-                false
-            }
-        };
-        
-        // Colors: green when checked, gray when unchecked
-        let highlight_color = if is_file_checked {
-            // Green for checked/staged changes
-            Color::from_rgba8(60, 120, 60, 80)
-        } else {
-            // Gray for unchecked changes
-            Color::from_rgba8(100, 110, 120, 60)
-        };
-        
         for section in diff_sections.iter() {
             match section.kind {
                 DiffSectionKind::NoCode => self.paint_diff_no_code(
@@ -340,7 +312,7 @@ impl EditorView {
                     section.height,
                     config,
                 ),
-                DiffSectionKind::Added | DiffSectionKind::Removed => {
+                DiffSectionKind::Added => {
                     cx.fill(
                         &Rect::ZERO
                             .with_size(Size::new(
@@ -352,7 +324,27 @@ impl EditorView {
                                 viewport.x0,
                                 (section.y_idx * config.editor.line_height()) as f64,
                             )),
-                        highlight_color,
+                        config
+                            .color(LapceColor::SOURCE_CONTROL_ADDED)
+                            .multiply_alpha(0.2),
+                        0.0,
+                    );
+                }
+                DiffSectionKind::Removed => {
+                    cx.fill(
+                        &Rect::ZERO
+                            .with_size(Size::new(
+                                viewport.width(),
+                                (config.editor.line_height() * section.height)
+                                    as f64,
+                            ))
+                            .with_origin(Point::new(
+                                viewport.x0,
+                                (section.y_idx * config.editor.line_height()) as f64,
+                            )),
+                        config
+                            .color(LapceColor::SOURCE_CONTROL_REMOVED)
+                            .multiply_alpha(0.2),
                         0.0,
                     );
                 }

@@ -46,6 +46,9 @@ pub fn terminal_panel(window_tab_data: Rc<WindowTabData>) -> impl View {
 
 fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
     let terminal = window_tab_data.terminal.clone();
+    let panel = window_tab_data.panel.clone();
+    let panel_for_header_close = window_tab_data.panel.clone();
+    let common_focus = window_tab_data.common.focus;
     let config = window_tab_data.common.config;
     let focus = window_tab_data.common.focus;
     let active_index = move || terminal.tab_info.with(|info| info.active);
@@ -71,6 +74,8 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
             move |(index, tab)| {
                 let terminal = terminal.clone();
                 let local_terminal = terminal.clone();
+                let terminal_for_close = terminal.clone();
+                let panel_for_close = panel.clone();
                 let terminal_tab_id = tab.terminal_tab_id;
 
                 let title = {
@@ -119,7 +124,8 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                 svg(move || config.get().ui_svg(svg_string()))
                                     .style(move |s| {
                                         let config = config.get();
-                                        let size = config.ui.icon_size() as f32;
+                                        // Use smaller icon size for bottom panels
+                                        let size = (config.ui.icon_size() as f32 - 2.0).max(12.0);
                                         s.size(size, size).color(
                                             config.color(
                                                 LapceColor::LAPCE_ICON_ACTIVE,
@@ -127,18 +133,27 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                         )
                                     }),
                             )
-                            .style(|s| s.padding_horiz(10.0).padding_vert(12.0)),
-                            label(title).style(|s| {
+                            .style(|s| s.padding_horiz(8.0).padding_vert(8.0)),
+                            label(title).style(move |s| {
+                                let config = config.get();
+                                // Use smaller font for bottom panel tabs
+                                let font_size = (config.ui.font_size() as f32 - 1.0).max(11.0);
                                 s.min_width(0.0)
                                     .flex_basis(0.0)
                                     .flex_grow(1.0)
+                                    .font_size(font_size)
                                     .text_ellipsis()
                                     .selectable(false)
                             }),
                             clickable_icon(
                                 || LapceIcons::CLOSE,
                                 move || {
-                                    terminal.close_tab(Some(terminal_tab_id));
+                                    terminal_for_close.close_tab(Some(terminal_tab_id));
+                                    // Auto-hide panel if no tabs left
+                                    if terminal_for_close.tab_info.with_untracked(|info| info.tabs.is_empty()) {
+                                        panel_for_close.hide_panel(&PanelKind::Terminal);
+                                        common_focus.set(crate::window_tab::Focus::Workbench);
+                                    }
                                 },
                                 || false,
                                 || false,
@@ -158,7 +173,8 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                             }),
                         ))
                         .style(move |s| {
-                            s.items_center().width(200.0).border_color(
+                            // Narrower tabs for bottom panel
+                            s.items_center().width(160.0).border_color(
                                 config.get().color(LapceColor::LAPCE_BORDER),
                             )
                         })
@@ -223,16 +239,34 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
             let size = scroll_size.get();
             s.size(size.width, size.height).pointer_events_none()
         }),
-        container(clickable_icon(
-            || LapceIcons::ADD,
-            move || {
-                workbench_command.send(LapceWorkbenchCommand::NewTerminalTab);
-            },
-            || false,
-            || false,
-            || "New Terminal",
-            config,
-        ))
+        container(
+            stack((
+                clickable_icon(
+                    || LapceIcons::ADD,
+                    move || {
+                        workbench_command.send(LapceWorkbenchCommand::NewTerminalTab);
+                    },
+                    || false,
+                    || false,
+                    || "New Terminal",
+                    config,
+                ),
+                // Close button to close entire terminal panel
+                clickable_icon(
+                    || LapceIcons::CLOSE,
+                    move || {
+                        panel_for_header_close.hide_panel(&PanelKind::Terminal);
+                        common_focus.set(Focus::Workbench);
+                    },
+                    || false,
+                    || false,
+                    || "Close Terminal Panel",
+                    config,
+                )
+                .style(|s| s.margin_left(4.0)),
+            ))
+            .style(|s| s.items_center()),
+        )
         .on_resize(move |rect| {
             let width = rect.size().width;
             if icon_width.get_untracked() != width {

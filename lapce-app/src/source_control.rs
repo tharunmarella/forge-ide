@@ -1,8 +1,9 @@
 use std::{path::PathBuf, rc::Rc};
 
 use floem::{
+    ext_event::create_ext_action,
     keyboard::Modifiers,
-    reactive::{RwSignal, Scope, SignalWith},
+    reactive::{RwSignal, Scope, SignalUpdate, SignalWith},
 };
 use indexmap::IndexMap;
 use lapce_core::mode::Mode;
@@ -113,5 +114,49 @@ impl SourceControlData {
 
         self.editor.reset();
         self.common.proxy.git_commit(message.to_string(), diffs);
+    }
+    
+    /// Load git log commits from the repository
+    pub fn load_git_log(&self) {
+        eprintln!("DEBUG: load_git_log() called - fetching commits...");
+        
+        let commits = self.commits;
+        let commits_loading = self.commits_loading;
+        let commits_total_count = self.commits_total_count;
+        
+        // Set loading state
+        commits_loading.set(true);
+        
+        // Create ext action to handle response on UI thread
+        let send = create_ext_action(self.common.scope, move |result: Result<lapce_rpc::proxy::ProxyResponse, lapce_rpc::RpcError>| {
+            eprintln!("DEBUG: git_log callback received on UI thread");
+            commits_loading.set(false);
+            
+            match result {
+                Ok(response) => {
+                    eprintln!("DEBUG: git_log response received");
+                    if let lapce_rpc::proxy::ProxyResponse::GitLogResponse { result } = response {
+                        eprintln!("DEBUG: Loaded {} commits, total: {}", result.commits.len(), result.total_count);
+                        commits.set(result.commits.into_iter().collect());
+                        commits_total_count.set(result.total_count);
+                    } else {
+                        eprintln!("DEBUG: Unexpected response type: {:?}", response);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("DEBUG: git_log error: {:?}", e);
+                }
+            }
+        });
+        
+        // Fetch git log with limit of 100 commits, no skip, current branch
+        self.common.proxy.git_log(
+            100,  // limit
+            0,    // skip
+            None, // branch (None = current branch)
+            None, // author filter
+            None, // search filter
+            send,
+        );
     }
 }

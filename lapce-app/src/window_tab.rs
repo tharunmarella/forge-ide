@@ -1768,8 +1768,9 @@ impl WindowTabData {
                 // TODO: Implement blame toggle in editor
             }
             GitShowLog => {
-                // Open source control panel on Log tab
-                self.panel.show_panel(&PanelKind::SourceControl);
+                // Open Git Log panel at bottom
+                self.toggle_panel_visual_at_position(PanelKind::GitLog, PanelPosition::BottomLeft);
+                self.common.focus.set(Focus::Panel(PanelKind::GitLog));
             }
             GitShowStashes => {
                 // TODO: Show stashes panel/dialog
@@ -2826,31 +2827,66 @@ impl WindowTabData {
 
     /// Toggle a panel at a specific position (e.g., Terminal icon in left opens at bottom)
     pub fn toggle_panel_visual_at_position(&self, kind: PanelKind, position: PanelPosition) {
-        // Check if Terminal is visible at the bottom position
+        eprintln!("DEBUG: toggle_panel_visual_at_position called for {:?} at {:?}", kind, position);
+        
+        // Check if the panel is visible at the target position
         let is_visible = self.panel.styles.with_untracked(|styles| {
             styles.get(&position).map(|s| s.shown).unwrap_or(false)
         }) && self.panel.active_panel_at_position(&position, false)
             .map(|(p, _)| p == kind)
             .unwrap_or(false);
         
+        eprintln!("DEBUG: is_visible = {}", is_visible);
+        
         if is_visible {
+            eprintln!("DEBUG: Hiding panel {:?}", kind);
             self.panel.hide_panel(&kind);
         } else {
-            // Make sure the panel is in the target position's panel list
-            self.panel.panels.update(|panels| {
-                // Add to target position if not there
-                if let Some(kinds) = panels.get_mut(&position) {
-                    if !kinds.contains(&kind) {
-                        kinds.push_front(kind);
-                    }
+            eprintln!("DEBUG: Showing panel {:?} at {:?}", kind, position);
+            
+            // First, find the index of the panel in the target position
+            let panel_index = self.panel.panels.with_untracked(|panels| {
+                if let Some(kinds) = panels.get(&position) {
+                    kinds.iter().position(|k| *k == kind)
                 } else {
-                    panels.insert(position, im::vector![kind]);
+                    None
                 }
             });
             
-            // Show it at the position
-            self.panel.show_panel(&kind);
+            eprintln!("DEBUG: Panel index at target position: {:?}", panel_index);
+            
+            // If the panel exists at the target position, show it there
+            if let Some(index) = panel_index {
+                self.panel.styles.update(|styles| {
+                    if let Some(style) = styles.get_mut(&position) {
+                        style.shown = true;
+                        style.active = index;
+                        eprintln!("DEBUG: Set active index to {} at {:?}", index, position);
+                    }
+                });
+            } else {
+                // Add it to the target position first
+                self.panel.panels.update(|panels| {
+                    if let Some(kinds) = panels.get_mut(&position) {
+                        kinds.push_front(kind);
+                        eprintln!("DEBUG: Added {:?} to front of {:?}", kind, position);
+                    } else {
+                        panels.insert(position, im::vector![kind]);
+                        eprintln!("DEBUG: Created new list at {:?} with {:?}", position, kind);
+                    }
+                });
+                
+                // Now show it (it should be at index 0)
+                self.panel.styles.update(|styles| {
+                    if let Some(style) = styles.get_mut(&position) {
+                        style.shown = true;
+                        style.active = 0;
+                    }
+                });
+            }
+            
             self.common.focus.set(Focus::Panel(kind));
+            eprintln!("DEBUG: Panel {:?} should now be visible at bottom", kind);
         }
     }
 
@@ -2869,7 +2905,7 @@ impl WindowTabData {
                 // in those cases.
                 self.panel.is_panel_visible(&kind)
             }
-            PanelKind::Terminal | PanelKind::SourceControl | PanelKind::Search => {
+            PanelKind::Terminal | PanelKind::SourceControl | PanelKind::Search | PanelKind::GitLog => {
                 self.is_panel_focused(kind)
             }
         };

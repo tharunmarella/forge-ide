@@ -10,9 +10,9 @@ auto-reload-plugin = false
 
 [editor]
 font-family = "monospace"
-font-size = 13
-code-glance-font-size = 2
-line-height = 1.5
+font-size = 14
+code-glance-font-size = 3
+line-height = 1.6
 smart-tab = true
 tab-width = 4
 show-tab = true
@@ -68,8 +68,8 @@ files-exclude = "**/{.git,.svn,.hg,CVS,.DS_Store,Thumbs.db}" # Glob patterns
 
 [terminal]
 font-family = ""
-font-size = 0
-line-height = 0
+font-size = 14
+line-height = 1.5
 
 [terminal.default-profile]
 macos = "default"
@@ -89,17 +89,17 @@ default = {}
 scale = +1.0
 font-family = ""
 font-size = 13
-icon-size = 0
-header-height = 36
-status-height = 25
-tab-min-width = 100
+icon-size = 16
+header-height = 38
+status-height = 26
+tab-min-width = 120
 tab-separator-height = "Content"
-scroll-width = 10
+scroll-width = 12
 drop-shadow-width = 0
-palette-width = 500
+palette-width = 600
 hover-font-family = ""
-hover-font-size = 0
+hover-font-size = 13
 trim-search-results-whitespace = true
-list-line-height = 25
+list-line-height = 24
 tab-close-button = "Right"
 open-editors-visible = true

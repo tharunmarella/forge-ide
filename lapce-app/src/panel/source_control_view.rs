@@ -152,7 +152,8 @@ pub fn source_control_panel(
             .style(move |s| {
                 let config = config.get();
                 s.width_pct(100.0)
-                    .height(80.0)
+                    .min_height(120.0)
+                    .height(120.0)
                     .border(1.0)
                     .padding(-1.0)
                     .border_radius(6.0)
@@ -172,6 +173,8 @@ pub fn source_control_panel(
                             s.line_height(1.6)
                                 .flex_grow(1.0)
                                 .justify_center()
+                                .padding_vert(10.0)
+                                .font_size(config.ui.font_size() as f32)
                                 .border(1.0)
                                 .border_radius(6.0)
                                 .border_color(config.color(LapceColor::LAPCE_BORDER))
@@ -203,6 +206,8 @@ pub fn source_control_panel(
                                 .line_height(1.6)
                                 .flex_grow(1.0)
                                 .justify_center()
+                                .padding_vert(10.0)
+                                .font_size(config.ui.font_size() as f32)
                                 .border(1.0)
                                 .border_radius(6.0)
                                 .border_color(config.color(LapceColor::LAPCE_BORDER))
@@ -223,9 +228,9 @@ pub fn source_control_panel(
                         })
                 },
             ))
-            .style(|s| s.margin_top(10.0).width_pct(100.0)),
+            .style(|s| s.margin_top(12.0).width_pct(100.0)),
         ))
-        .style(|s| s.flex_col().width_pct(100.0).padding(10.0)),
+        .style(|s| s.flex_col().width_pct(100.0).padding(12.0)),
     ))
     .on_event_stop(EventListener::PointerDown, move |_| {
         if focus.get_untracked() != Focus::Panel(PanelKind::SourceControl) {

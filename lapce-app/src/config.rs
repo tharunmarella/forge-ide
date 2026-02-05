@@ -607,6 +607,7 @@ impl LapceConfig {
     }
 
     pub fn files_svg(&self, paths: &[&Path]) -> (String, Option<Color>) {
+        // First try the current icon theme (external/on-disk)
         let svg = self
             .icon_theme
             .resolve_path_to_icon(paths)
@@ -618,13 +619,32 @@ impl LapceConfig {
             } else {
                 None
             };
-            (svg, color)
-        } else {
-            (
-                self.ui_svg(LapceIcons::FILE),
-                Some(self.color(LapceColor::LAPCE_ICON_ACTIVE)),
-            )
+            return (svg, color);
         }
+
+        // Try the default icon theme's extension mappings (embedded icons)
+        if let Some(path) = paths.first() {
+            // Check by filename first
+            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(icon_name) = DEFAULT_ICON_THEME_ICON_CONFIG.filename.get(file_name) {
+                    let svg = self.svg_store.write().get_default_svg(icon_name);
+                    return (svg, None);
+                }
+            }
+            // Then check by extension
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if let Some(icon_name) = DEFAULT_ICON_THEME_ICON_CONFIG.extension.get(ext) {
+                    let svg = self.svg_store.write().get_default_svg(icon_name);
+                    return (svg, None);
+                }
+            }
+        }
+
+        // Fall back to generic file icon
+        (
+            self.ui_svg(LapceIcons::FILE),
+            Some(self.color(LapceColor::LAPCE_ICON_ACTIVE)),
+        )
     }
 
     pub fn file_svg(&self, path: &Path) -> (String, Option<Color>) {

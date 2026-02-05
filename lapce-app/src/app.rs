@@ -80,7 +80,7 @@ use crate::{
     db::LapceDb,
     debug::RunDebugMode,
     editor::{
-        diff::{diff_gutter_view, diff_show_more_section_view},
+        diff::{diff_revert_gutter_view, diff_show_more_section_view},
         location::{EditorLocation, EditorPosition},
         view::editor_container_view,
     },
@@ -1358,11 +1358,10 @@ fn editor_tab_content(
                                 .flex_grow(1.0)
                                 .flex_basis(0.0)
                         }),
-                        // Gutter with checkboxes in the middle (linked to file's checked state)
-                        diff_gutter_view(
+                        // Revert gutter with ">>" arrows
+                        diff_revert_gutter_view(
                             &diff_editor_data.left,
                             &diff_editor_data.right,
-                            window_tab_data.source_control.file_diffs,
                         ),
                         container(
                             editor_container_view(

@@ -12,12 +12,13 @@ use floem::{
     unit::PxPctAuto,
     views::{
         Decorators, container, dyn_stack, empty, h_stack, label, stack,
-        stack_from_iter, tab, text,
+        stack_from_iter, svg, tab, text,
     },
 };
 
 use super::{
     debug_view::debug_panel,
+    git_log_view::git_log_panel,
     global_search_view::global_search_panel,
     kind::PanelKind,
     plugin_view::plugin_panel,
@@ -416,12 +417,29 @@ pub fn panel_container_view(
             ),
         ))
     } else {
-        // Bottom panel: original layout
+        // Bottom panel: hide panel pickers when GitLog is active
+        let panel_for_check1 = panel.clone();
+        let panel_for_check2 = panel.clone();
+        
         stack((
-            panel_picker(window_tab_data.clone(), position.first()),
+            container(panel_picker(window_tab_data.clone(), position.first()))
+                .style(move |s| {
+                    let is_git_log = panel_for_check1
+                        .active_panel_at_position(&PanelPosition::BottomLeft, true)
+                        .map(|(kind, shown)| shown && kind == PanelKind::GitLog)
+                        .unwrap_or(false);
+                    s.apply_if(is_git_log, |s| s.hide())
+                }),
             panel_view(window_tab_data.clone(), position.first()),
             panel_view(window_tab_data.clone(), position.second()),
-            panel_picker(window_tab_data.clone(), position.second()),
+            container(panel_picker(window_tab_data.clone(), position.second()))
+                .style(move |s| {
+                    let is_git_log = panel_for_check2
+                        .active_panel_at_position(&PanelPosition::BottomLeft, true)
+                        .map(|(kind, shown)| shown && kind == PanelKind::GitLog)
+                        .unwrap_or(false);
+                    s.apply_if(is_git_log, |s| s.hide())
+                }),
             resize_drag_view(position),
             stack((drop_view(position.first()), drop_view(position.second()))).style(
                 move |s| {
@@ -479,6 +497,7 @@ fn panel_view(
     position: PanelPosition,
 ) -> impl View {
     let panel = window_tab_data.panel.clone();
+    let is_bottom = position.is_bottom();
     let panels = move || {
         panel
             .panels
@@ -495,9 +514,15 @@ fn panel_view(
         |p| *p,
         move |kind| {
             let view = match kind {
+                // Terminal and GitLog have their own headers, don't wrap them
                 PanelKind::Terminal => {
                     terminal_panel(window_tab_data.clone()).into_any()
                 }
+                PanelKind::GitLog => {
+                    git_log_panel(window_tab_data.clone(), position)
+                        .into_any()
+                }
+                // Left sidebar panels - no header needed
                 PanelKind::FileExplorer => {
                     file_explorer_panel(window_tab_data.clone(), position).into_any()
                 }
@@ -508,28 +533,75 @@ fn panel_view(
                 PanelKind::Plugin => {
                     plugin_panel(window_tab_data.clone(), position).into_any()
                 }
-                PanelKind::Search => {
-                    global_search_panel(window_tab_data.clone(), position).into_any()
-                }
-                PanelKind::Problem => {
-                    problem_panel(window_tab_data.clone(), position).into_any()
-                }
-                PanelKind::Debug => {
-                    debug_panel(window_tab_data.clone(), position).into_any()
-                }
-                PanelKind::CallHierarchy => {
-                    show_hierarchy_panel(window_tab_data.clone(), position)
-                        .into_any()
-                }
                 PanelKind::DocumentSymbol => {
                     symbol_panel(window_tab_data.clone(), position).into_any()
                 }
+                // Bottom panels that need headers with close buttons
+                PanelKind::Search => {
+                    if is_bottom {
+                        bottom_panel_with_header(
+                            window_tab_data.clone(),
+                            kind,
+                            global_search_panel(window_tab_data.clone(), position),
+                        ).into_any()
+                    } else {
+                        global_search_panel(window_tab_data.clone(), position).into_any()
+                    }
+                }
+                PanelKind::Problem => {
+                    if is_bottom {
+                        bottom_panel_with_header(
+                            window_tab_data.clone(),
+                            kind,
+                            problem_panel(window_tab_data.clone(), position),
+                        ).into_any()
+                    } else {
+                        problem_panel(window_tab_data.clone(), position).into_any()
+                    }
+                }
+                PanelKind::Debug => {
+                    if is_bottom {
+                        bottom_panel_with_header(
+                            window_tab_data.clone(),
+                            kind,
+                            debug_panel(window_tab_data.clone(), position),
+                        ).into_any()
+                    } else {
+                        debug_panel(window_tab_data.clone(), position).into_any()
+                    }
+                }
+                PanelKind::CallHierarchy => {
+                    if is_bottom {
+                        bottom_panel_with_header(
+                            window_tab_data.clone(),
+                            kind,
+                            show_hierarchy_panel(window_tab_data.clone(), position),
+                        ).into_any()
+                    } else {
+                        show_hierarchy_panel(window_tab_data.clone(), position).into_any()
+                    }
+                }
                 PanelKind::References => {
-                    references_panel(window_tab_data.clone(), position).into_any()
+                    if is_bottom {
+                        bottom_panel_with_header(
+                            window_tab_data.clone(),
+                            kind,
+                            references_panel(window_tab_data.clone(), position),
+                        ).into_any()
+                    } else {
+                        references_panel(window_tab_data.clone(), position).into_any()
+                    }
                 }
                 PanelKind::Implementation => {
-                    implementation_panel(window_tab_data.clone(), position)
-                        .into_any()
+                    if is_bottom {
+                        bottom_panel_with_header(
+                            window_tab_data.clone(),
+                            kind,
+                            implementation_panel(window_tab_data.clone(), position),
+                        ).into_any()
+                    } else {
+                        implementation_panel(window_tab_data.clone(), position).into_any()
+                    }
                 }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
@@ -556,6 +628,86 @@ pub fn panel_header(
     })
 }
 
+/// Creates a bottom panel with a header containing title and close button
+fn bottom_panel_with_header(
+    window_tab_data: Rc<WindowTabData>,
+    kind: PanelKind,
+    content: impl View + 'static,
+) -> impl View {
+    let config = window_tab_data.common.config;
+    let panel = window_tab_data.panel.clone();
+    let focus = window_tab_data.common.focus;
+    
+    let title = match kind {
+        PanelKind::Terminal => "Terminal",
+        PanelKind::Problem => "Problems",
+        PanelKind::Debug => "Debug",
+        PanelKind::Search => "Search",
+        PanelKind::CallHierarchy => "Call Hierarchy",
+        PanelKind::References => "References",
+        PanelKind::Implementation => "Implementation",
+        _ => "Panel",
+    };
+    let icon = kind.svg_name();
+    
+    // Smaller sizes for bottom panel
+    let bottom_icon_size = move || (config.get().ui.icon_size() as f32 - 2.0).max(12.0);
+    let bottom_font_size = move || (config.get().ui.font_size() as f32 - 1.0).max(11.0);
+    
+    stack((
+        // Header with title and close button
+        container(
+            stack((
+                // Title with icon
+                stack((
+                    svg(move || config.get().ui_svg(icon))
+                        .style(move |s| {
+                            let config = config.get();
+                            let icon_size = bottom_icon_size();
+                            s.size(icon_size, icon_size)
+                                .margin_right(6.0)
+                                .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                        }),
+                    label(move || title.to_string())
+                        .style(move |s| {
+                            let config = config.get();
+                            s.font_size(bottom_font_size())
+                                .font_bold()
+                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                        }),
+                ))
+                .style(|s| s.items_center().flex_grow(1.0)),
+                // Close button
+                clickable_icon(
+                    || LapceIcons::CLOSE,
+                    move || {
+                        panel.hide_panel(&kind);
+                        focus.set(crate::window_tab::Focus::Workbench);
+                    },
+                    || false,
+                    || false,
+                    || "Close",
+                    config,
+                )
+                .style(|s| s.margin_right(4.0)),
+            ))
+            .style(|s| s.items_center().width_pct(100.0)),
+        )
+        .style(move |s| {
+            let config = config.get();
+            s.padding_horiz(8.0)
+                .padding_vert(4.0)
+                .width_pct(100.0)
+                .border_bottom(1.0)
+                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                .background(config.color(LapceColor::PANEL_BACKGROUND))
+        }),
+        // Content
+        content,
+    ))
+    .style(|s| s.flex_col().size_pct(100.0, 100.0))
+}
+
 /// Helper to create a panel icon button
 fn panel_icon_button(
     window_tab_data: Rc<WindowTabData>,
@@ -570,6 +722,7 @@ fn panel_icon_button(
         PanelKind::Terminal => "Terminal",
         PanelKind::FileExplorer => "File Explorer",
         PanelKind::SourceControl => "Source Control",
+        PanelKind::GitLog => "Git Log",
         PanelKind::Plugin => "Plugins",
         PanelKind::Search => "Search",
         PanelKind::Problem => "Problems",

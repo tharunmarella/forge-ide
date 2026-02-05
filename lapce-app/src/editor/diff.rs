@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc, sync::atomic};
+use std::{ops::Range, rc::Rc, sync::atomic};
 
 use floem::{
     View,
@@ -7,15 +7,15 @@ use floem::{
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
     views::{
-        Decorators, clip, dyn_stack, editor::id::EditorId, empty, label, stack, svg,
+        Decorators, clip, container, dyn_stack, editor::id::EditorId, empty, label, stack, svg,
+        editor::text::Document,
     },
 };
-use indexmap::IndexMap;
 use lapce_core::buffer::{
     diff::{DiffExpand, DiffLines, expand_diff_lines, rope_diff},
     rope_text::RopeText,
 };
-use lapce_rpc::{buffer::BufferId, proxy::ProxyResponse, source_control::FileDiff};
+use lapce_rpc::{buffer::BufferId, proxy::ProxyResponse};
 use lapce_xi_rope::Rope;
 use serde::{Deserialize, Serialize};
 
@@ -552,192 +552,184 @@ pub fn diff_show_more_section_view(
     .debug_name("Diff Show More Section")
 }
 
-/// Represents a change block for the diff gutter with checkbox
+/// Represents a diff hunk that can be reverted
 #[derive(Clone, PartialEq)]
-struct DiffHunkBlock {
-    /// The actual line number in the right document where change starts
-    right_actual_line: usize,
-    /// Number of lines in this change on the right side
-    right_lines: usize,
-    /// Unique index for this hunk
-    index: usize,
+struct DiffHunk {
+    /// The y position (in visual lines) for this hunk in the right editor
+    y_line: usize,
+    /// Height of this hunk in lines
+    height: usize,
+    /// The range of lines in the left document
+    left_range: Range<usize>,
+    /// The range of lines in the right document
+    right_range: Range<usize>,
+    /// Whether this is a removal (left only), addition (right only), or modification
+    is_removal: bool,
 }
 
-/// SVG checkmark for checkbox (same as settings.rs)
-const CHECKBOX_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 16 16"><polygon points="5.19,11.83 0.18,7.44 1.82,5.56 4.81,8.17 10,1.25 12,2.75" /></svg>"#;
-
-/// Gutter view in the middle of the diff editor with checkboxes for each hunk
-/// The checkboxes are linked to the file's checked state in file_diffs
-pub fn diff_gutter_view(
-    _left_editor: &EditorData,
+/// Creates the middle gutter view between left and right diff editors
+/// with ">>" arrows to revert changes from left (HEAD) to right (working copy)
+pub fn diff_revert_gutter_view(
+    left_editor: &EditorData,
     right_editor: &EditorData,
-    file_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
 ) -> impl View + use<> {
+    let left_editor_view = left_editor.kind;
     let right_editor_view = right_editor.kind;
+    let left_doc = left_editor.doc_signal();
+    let right_doc = right_editor.doc_signal();
     let right_screen_lines = right_editor.screen_lines();
     let right_scroll_delta = right_editor.editor.scroll_delta;
     let viewport = right_editor.viewport();
     let config = right_editor.common.config;
-    
-    // Get the file path from the right editor's doc
-    let doc = right_editor.doc();
-    let file_path: Option<PathBuf> = match doc.content.get_untracked() {
-        DocContent::File { path, .. } => Some(path),
-        DocContent::History(h) => Some(h.path),
-        _ => None,
-    };
 
-    // Collect hunk blocks from diff changes
+    // Collect hunks from the diff changes
     let each_fn = move || {
         let editor_view = right_editor_view.get();
 
         if let EditorViewKind::Diff(diff_info) = editor_view {
-            let mut blocks = Vec::new();
-            let mut index = 0;
+            let mut hunks = Vec::new();
+            let mut left_line = 0usize;
+            let mut right_line = 0usize;
+            let mut last_was_left = false;
 
             for change in diff_info.changes.iter() {
                 match change {
                     DiffLines::Left(range) => {
-                        // Lines only on left (deleted from right)
-                        blocks.push(DiffHunkBlock {
-                            right_actual_line: range.start,
-                            right_lines: 0,
-                            index,
-                        });
-                        index += 1;
+                        // Lines only in left (removed lines)
+                        let hunk = DiffHunk {
+                            y_line: right_line,
+                            height: 0, // Will show at the position but with no height
+                            left_range: left_line..left_line + range.len(),
+                            right_range: right_line..right_line,
+                            is_removal: true,
+                        };
+                        hunks.push(hunk);
+                        left_line += range.len();
+                        last_was_left = true;
                     }
                     DiffLines::Right(range) => {
-                        // Lines only on right (added)
-                        blocks.push(DiffHunkBlock {
-                            right_actual_line: range.start,
-                            right_lines: range.len(),
-                            index,
-                        });
-                        index += 1;
+                        // Lines only in right (added lines) - this is a modification if preceded by Left
+                        if last_was_left {
+                            // Merge with previous hunk as a modification
+                            if let Some(last_hunk) = hunks.last_mut() {
+                                last_hunk.height = range.len();
+                                last_hunk.right_range = right_line..right_line + range.len();
+                                last_hunk.is_removal = false;
+                            }
+                        } else {
+                            // Pure addition
+                            let hunk = DiffHunk {
+                                y_line: right_line,
+                                height: range.len(),
+                                left_range: left_line..left_line,
+                                right_range: right_line..right_line + range.len(),
+                                is_removal: false,
+                            };
+                            hunks.push(hunk);
+                        }
+                        right_line += range.len();
+                        last_was_left = false;
                     }
-                    DiffLines::Both(_) => {
-                        // Same lines - no checkbox needed
+                    DiffLines::Both(info) => {
+                        // Lines in both - no change, just advance
+                        left_line += info.left.len();
+                        right_line += info.right.len();
+                        last_was_left = false;
                     }
                 }
             }
-
-            blocks
+            hunks
         } else {
             Vec::new()
         }
     };
 
-    let key_fn = move |block: &DiffHunkBlock| {
-        (block.right_actual_line, block.right_lines, block.index)
+    let key_fn = move |hunk: &DiffHunk| {
+        (hunk.y_line, hunk.left_range.start, hunk.right_range.start)
     };
 
-    let view_fn = move |block: DiffHunkBlock| {
-        let file_path_for_check = file_path.clone();
-        let file_path_for_toggle = file_path.clone();
-        let block_for_arrow = block.clone();
-        
-        // Read the file's checked state from file_diffs
-        let is_checked = move || {
-            if let Some(ref path) = file_path_for_check {
-                file_diffs.with(|diffs| {
-                    diffs.get(path).map(|(_, c)| *c).unwrap_or(false)
+    let view_fn = move |hunk: DiffHunk| {
+        let left_range = hunk.left_range.clone();
+        let right_range = hunk.right_range.clone();
+        let left_doc = left_doc;
+        let right_doc = right_doc;
+        let _left_editor_view = left_editor_view;
+        let _right_editor_view = right_editor_view;
+
+        container(
+            svg(move || config.get().ui_svg(LapceIcons::DIFF_REVERT))
+                .style(move |s| {
+                    let config = config.get();
+                    let icon_size = (config.ui.icon_size() as i32 - 2).max(12) as f32;
+                    s.size(icon_size, icon_size)
+                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
                 })
-            } else {
-                false
-            }
-        };
-        
-        // SVG checkbox - same style as commit panel
-        let svg_str = move || if is_checked() { CHECKBOX_SVG } else { "" }.to_string();
-        
-        // Checkbox for selecting the hunk
-        let checkbox_view = svg(svg_str)
-            .on_click_stop(move |_| {
-                eprintln!("DEBUG: Checkbox clicked for hunk at line {}", block.right_actual_line);
-                // Toggle the file's checked state (affects all hunks)
-                if let Some(ref path) = file_path_for_toggle {
-                    let path = path.clone();
-                    eprintln!("DEBUG: Toggling file: {:?}", path);
-                    file_diffs.update(|diffs| {
-                        if let Some((_, checked)) = diffs.get_mut(&path) {
-                            eprintln!("DEBUG: {} -> {}", *checked, !*checked);
-                            *checked = !*checked;
-                        }
-                    });
+        )
+        .on_event_stop(EventListener::PointerDown, move |_| {})
+        .on_click_stop(move |_event| {
+            // Revert the hunk: copy content from left to right
+            let left_content = left_doc.with_untracked(|doc| {
+                let buffer = doc.buffer.with_untracked(|b| b.clone());
+                if left_range.is_empty() {
+                    String::new()
+                } else {
+                    let start = buffer.offset_of_line(left_range.start);
+                    let end = buffer.offset_of_line(left_range.end);
+                    buffer.slice_to_cow(start..end).to_string()
                 }
-            })
-            .style(move |s| {
-                let right_screen_lines = right_screen_lines.get();
-                
-                // Use the line where the hunk starts
-                let line = block.right_actual_line;
-                
-                let Some(line_info) = right_screen_lines.info_for_line(line) else {
-                    return s.hide();
-                };
-
-                let config_val = config.get();
-                let line_height = config_val.editor.line_height() as f64;
-                let size = config_val.ui.font_size() as f64;
-                let color = config_val.color(LapceColor::EDITOR_FOREGROUND);
-
-                let y = line_info.y - viewport.get().y0;
-
-                s.absolute()
-                    .margin_top(y + (line_height - size) / 2.0)
-                    .margin_left((24.0 - size) / 2.0)
-                    .min_width(size as f32)
-                    .size(size as f32, size as f32)
-                    .color(color)
-                    .border_color(color)
-                    .border(1.0)
-                    .border_radius(2.0)
-                    .cursor(CursorStyle::Pointer)
-                    .hover(|s| s.background(config_val.color(LapceColor::PANEL_HOVERED_BACKGROUND)))
             });
-        
-        // Arrow button for reverting this hunk (appears below checkbox)
-        let arrow_view = label(|| "→".to_string())
-            .on_click_stop(move |_| {
-                eprintln!("DEBUG: Arrow clicked for hunk at line {}", block_for_arrow.right_actual_line);
-                eprintln!("DEBUG: This would revert the change (copy from left/HEAD to right/working)");
-                // TODO: Implement actual revert logic
-            })
-            .style(move |s| {
-                let right_screen_lines = right_screen_lines.get();
-                
-                let line = block_for_arrow.right_actual_line;
-                
-                let Some(line_info) = right_screen_lines.info_for_line(line) else {
-                    return s.hide();
-                };
 
-                let config_val = config.get();
-                let line_height = config_val.editor.line_height() as f64;
-                let size = config_val.ui.font_size() as f64;
+            right_doc.with_untracked(|doc| {
+                let (start, end) = doc.buffer.with_untracked(|b| {
+                    let start = b.offset_of_line(right_range.start);
+                    let end = b.offset_of_line(right_range.end);
+                    (start, end)
+                });
 
-                // Position arrow below the checkbox (next line)
-                let y = line_info.y - viewport.get().y0 + line_height;
-
-                s.absolute()
-                    .margin_top(y + (line_height - size) / 2.0)
-                    .margin_left((24.0 - size) / 2.0)
-                    .min_width(size as f32)
-                    .height(size as f32)
-                    .items_center()
-                    .justify_center()
-                    .font_size(size as f32)
-                    .cursor(CursorStyle::Pointer)
-                    .color(config_val.color(LapceColor::EDITOR_FOREGROUND))
-                    .hover(|s| s.background(config_val.color(LapceColor::PANEL_HOVERED_BACKGROUND)).border_radius(4.0))
+                // Edit the right document using Document trait
+                doc.edit_single(
+                    lapce_core::selection::Selection::region(start, end),
+                    &left_content,
+                    lapce_core::editor::EditType::DeleteSelection,
+                );
             });
-        
-        // Return both checkbox and arrow
-        stack((checkbox_view, arrow_view))
-            .style(|s| s.size_pct(100.0, 100.0))
+        })
+        .style(move |s| {
+            let right_screen_lines = right_screen_lines.get();
+            let config = config.get();
+            let line_height = config.editor.line_height();
+
+            // Calculate the y position for this hunk
+            let y_line = hunk.y_line;
+            let height = hunk.height.max(1); // At least 1 line height for removals
+
+            // Find the screen position for this line
+            let Some(line_info) = right_screen_lines.info_for_line(y_line) else {
+                return s.hide();
+            };
+
+            let y = line_info.y - viewport.get().y0;
+            
+            // Center the icon vertically within the hunk
+            let center_offset = if height > 1 {
+                ((height - 1) as f64 * line_height as f64) / 2.0
+            } else {
+                0.0
+            };
+
+            s.absolute()
+                .margin_top(y + center_offset)
+                .width_pct(100.0)
+                .height(line_height as f32)
+                .justify_center()
+                .items_center()
+                .pointer_events_auto()
+                .hover(|s| s.cursor(CursorStyle::Pointer).background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND)))
+        })
     };
 
     stack((
+        // Top offset to match editor header
         empty().style(move |s| {
             s.height(config.get().editor.line_height() as f32 + 1.0)
         }),
@@ -745,22 +737,22 @@ pub fn diff_gutter_view(
             dyn_stack(each_fn, key_fn, view_fn)
                 .style(|s| s.flex_col().size_pct(100.0, 100.0)),
         )
-        .on_event_cont(EventListener::PointerWheel, move |event| {
-            if let Event::PointerWheel(event) = event {
-                right_scroll_delta.set(event.delta);
-            }
-        })
         .style(|s| s.size_pct(100.0, 100.0)),
     ))
+    .on_event_cont(EventListener::PointerWheel, move |event| {
+        if let Event::PointerWheel(event) = event {
+            right_scroll_delta.set(event.delta);
+        }
+    })
     .style(move |s| {
         let config = config.get();
         s.flex_col()
-            .width(24.0)
+            .width(28.0)
             .height_pct(100.0)
             .background(config.color(LapceColor::PANEL_BACKGROUND))
             .border_left(1.0)
             .border_right(1.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER))
     })
-    .debug_name("Diff Gutter")
+    .debug_name("Diff Revert Gutter")
 }

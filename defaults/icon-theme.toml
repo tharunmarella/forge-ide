@@ -58,35 +58,40 @@ name = "Lapce Codicons"
 "scm.change.add" = "add.svg"
 "scm.change.remove" = "remove.svg"
 
+# Git Log / History
+"history" = "history.svg"
+
 # Git Operations
 "git.commit" = "git-commit.svg"
 "git.push" = "repo-push.svg"
 "git.pull" = "repo-pull.svg"
 "git.fetch" = "repo-clone.svg"
+"git.log" = "git-log.svg"
 "git.merge" = "git-merge.svg"
 "git.sync" = "refresh.svg"
-"git.stash" = "history.svg"
-"git.stash.apply" = "history.svg"
-"git.stash.pop" = "history.svg"
+"git.stash" = "archive.svg"
+"git.stash.apply" = "archive.svg"
+"git.stash.pop" = "archive.svg"
 "git.compare" = "git-compare.svg"
 "git.revert" = "discard.svg"
+"diff.revert" = "diff-revert.svg"
 "git.clone" = "repo-clone.svg"
 "git.force_push" = "repo-force-push.svg"
 
 # Git Branch & PR
-"git.branch" = "repo.svg"
-"git.branch.changes" = "repo.svg"
-"git.branch.conflicts" = "repo.svg"
-"git.branch.staged" = "repo.svg"
-"git.pull_request" = "issues.svg"
-"git.pull_request.create" = "issues.svg"
-"git.pull_request.closed" = "issues.svg"
-"git.pull_request.merged" = "issues.svg"
-"git.pull_request.draft" = "issues.svg"
+"git.branch" = "git-branch.svg"
+"git.branch.changes" = "git-branch.svg"
+"git.branch.conflicts" = "git-branch.svg"
+"git.branch.staged" = "git-branch.svg"
+"git.pull_request" = "git-pull-request.svg"
+"git.pull_request.create" = "git-pull-request.svg"
+"git.pull_request.closed" = "git-pull-request.svg"
+"git.pull_request.merged" = "git-pull-request.svg"
+"git.pull_request.draft" = "git-pull-request-draft.svg"
 
 # Cloud/Sync
-"cloud.upload" = "arrow-up.svg"
-"cloud.download" = "arrow-down.svg"
+"cloud.upload" = "cloud-upload.svg"
+"cloud.download" = "cloud-download.svg"
 "refresh" = "refresh.svg"
 
 "palette.menu" = "chevron-down.svg"
@@ -180,5 +185,117 @@ name = "Lapce Codicons"
 [icon-theme.foldername]
 
 [icon-theme.filename]
+".env" = "env.svg"
+".env.local" = "env.svg"
+".env.development" = "env.svg"
+".env.production" = "env.svg"
+".env.test" = "env.svg"
+".env.example" = "env.svg"
+".gitignore" = "gitignore.svg"
+".gitattributes" = "gitignore.svg"
+".gitmodules" = "gitignore.svg"
 
 [icon-theme.extension]
+# Python
+"py" = "python.svg"
+"pyw" = "python.svg"
+"pyi" = "python.svg"
+
+# JavaScript
+"js" = "javascript.svg"
+"mjs" = "javascript.svg"
+"cjs" = "javascript.svg"
+
+# TypeScript
+"ts" = "typescript.svg"
+"mts" = "typescript.svg"
+"cts" = "typescript.svg"
+
+# React/JSX
+"jsx" = "react.svg"
+"tsx" = "react.svg"
+
+# Rust
+"rs" = "rust.svg"
+
+# Go
+"go" = "go.svg"
+
+# Java
+"java" = "java.svg"
+"jar" = "java.svg"
+"class" = "java.svg"
+
+# C/C++
+"c" = "cpp.svg"
+"h" = "cpp.svg"
+"cpp" = "cpp.svg"
+"hpp" = "cpp.svg"
+"cc" = "cpp.svg"
+"cxx" = "cpp.svg"
+
+# HTML
+"html" = "html.svg"
+"htm" = "html.svg"
+
+# CSS
+"css" = "css.svg"
+"scss" = "css.svg"
+"sass" = "css.svg"
+"less" = "css.svg"
+
+# Markdown
+"md" = "markdown.svg"
+"markdown" = "markdown.svg"
+
+# Shell/Bash
+"sh" = "shell.svg"
+"bash" = "shell.svg"
+"zsh" = "shell.svg"
+"fish" = "shell.svg"
+
+# Ruby
+"rb" = "ruby.svg"
+"rake" = "ruby.svg"
+"gemspec" = "ruby.svg"
+
+# PHP
+"php" = "php.svg"
+
+# JSON
+"json" = "json-icon.svg"
+"jsonc" = "json-icon.svg"
+
+# Mermaid
+"mermaid" = "mermaid.svg"
+"mmd" = "mermaid.svg"
+
+# Images
+"png" = "image.svg"
+"jpg" = "image.svg"
+"jpeg" = "image.svg"
+"gif" = "image.svg"
+"svg" = "image.svg"
+"webp" = "image.svg"
+"ico" = "image.svg"
+"bmp" = "image.svg"
+
+# Video
+"mp4" = "video.svg"
+"mkv" = "video.svg"
+"avi" = "video.svg"
+"mov" = "video.svg"
+"webm" = "video.svg"
+"wmv" = "video.svg"
+
+# Audio
+"mp3" = "audio.svg"
+"wav" = "audio.svg"
+"ogg" = "audio.svg"
+"flac" = "audio.svg"
+"aac" = "audio.svg"
+"m4a" = "audio.svg"
+
+# Text
+"txt" = "txt.svg"
+"log" = "txt.svg"

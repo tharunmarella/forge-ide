@@ -68,6 +68,7 @@ pub fn status(
     };
 
     let progresses = window_tab_data.progresses;
+    let window_tab_data_for_click = window_tab_data.clone();
     let mode = create_memo(move |_| window_tab_data.mode());
     let pointer_down = floem::reactive::create_rw_signal(false);
 
@@ -122,7 +123,7 @@ pub fn status(
                     .selectable(false)
             }),
             stack((
-                svg(move || config.get().ui_svg(LapceIcons::SCM)).style(move |s| {
+                svg(move || config.get().ui_svg(LapceIcons::GIT_LOG)).style(move |s| {
                     let config = config.get();
                     let icon_size = config.ui.icon_size() as f32;
                     s.size(icon_size, icon_size)
@@ -150,10 +151,20 @@ pub fn status(
                 })
             })
             .on_click_stop({
-                let panel = panel.clone();
+                let window_tab_data = window_tab_data_for_click.clone();
+                let source_control = source_control.clone();
                 move |_| {
-                    // Open Source Control panel to show Git UI
-                    panel.show_panel(&PanelKind::SourceControl);
+                    // Open Git Log panel at the bottom
+                    eprintln!("DEBUG: Status bar branch clicked - opening GitLog panel");
+                    
+                    // Load git log commits
+                    source_control.load_git_log();
+                    
+                    // Open the Git Log panel
+                    window_tab_data.toggle_panel_visual_at_position(
+                        PanelKind::GitLog,
+                        crate::panel::position::PanelPosition::BottomLeft,
+                    );
                 }
             }),
             {
