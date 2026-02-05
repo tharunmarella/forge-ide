@@ -38,7 +38,25 @@ clap              = { version = "4.5.0", default-features = false, features = ["
 crossbeam-channel = { version = "0.5.12" }
 directories       = { version = "4.0.1" }
 flate2            = { version = "1.0" }
-git2              = { version = "0.20.0", features = ["vendored-openssl"] }
+# Gitoxide - pure Rust Git implementation (replaced git2)
+# Features enabled for full git functionality:
+# - basic: core git operations
+# - status: worktree status  
+# - worktree-mutation: checkout operations
+# - index: .git/index file access
+# - revision: revspec parsing and describe
+# - blame: git blame functionality
+# - blob-diff: diff between blobs
+gix               = { version = "0.70", default-features = false, features = [
+    "basic",
+    "blocking-network-client", 
+    "status", 
+    "worktree-mutation",
+    "index",
+    "revision",
+    "blame",
+    "blob-diff"
+] }
 globset           = { version = "0.4.14" }
 hashbrown         = { version = "0.14.5", features = ["serde"] }
 im                = { version = "15.0.0", features = ["serde"] }

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -13,9 +13,7 @@ use std::{
 use alacritty_terminal::{event::WindowSize, event_loop::Msg};
 use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
-use git2::{
-    DiffOptions, ErrorCode::NotFound, Oid, Repository, build::CheckoutBuilder,
-};
+// git2 dependency removed - using gix and git command line instead
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{SearcherBuilder, sinks::UTF8};
@@ -352,11 +350,19 @@ impl ProxyHandler for Dispatcher {
                 }
             }
             GitCheckout { reference } => {
+                tracing::info!("[GIT CHECKOUT PROXY] Received GitCheckout notification for reference: {}", reference);
                 if let Some(workspace) = self.workspace.as_ref() {
+                    tracing::info!("[GIT CHECKOUT PROXY] Workspace path: {:?}", workspace);
                     match git_checkout(workspace, &reference) {
-                        Ok(()) => (),
-                        Err(e) => eprintln!("{e:?}"),
+                        Ok(()) => {
+                            tracing::info!("[GIT CHECKOUT PROXY] SUCCESS: Checkout completed for {}", reference);
+                        }
+                        Err(e) => {
+                            tracing::error!("[GIT CHECKOUT PROXY] ERROR: Checkout failed: {:?}", e);
+                        }
                     }
+                } else {
+                    tracing::error!("[GIT CHECKOUT PROXY] ERROR: No workspace available");
                 }
             }
             GitDiscardFilesChanges { files } => {
@@ -604,23 +610,57 @@ impl ProxyHandler for Dispatcher {
                 };
                 self.respond_rpc(id, result);
             }
+            // Git Checkout Operations
+            GitCheckoutRequest { reference } => {
+                let result = if let Some(workspace) = self.workspace.as_ref() {
+                    match git_checkout_with_status(workspace, &reference) {
+                        Ok(result) => Ok(ProxyResponse::GitCheckoutResponse { result }),
+                        Err(e) => Err(RpcError { code: 0, message: format!("git checkout error: {}", e) }),
+                    }
+                } else {
+                    Err(RpcError { code: 0, message: "no workspace set".to_string() })
+                };
+                self.respond_rpc(id, result);
+            }
+            GitSmartCheckout { reference } => {
+                let result = if let Some(workspace) = self.workspace.as_ref() {
+                    match git_smart_checkout(workspace, &reference) {
+                        Ok(result) => Ok(ProxyResponse::GitCheckoutResponse { result }),
+                        Err(e) => Err(RpcError { code: 0, message: format!("git smart checkout error: {}", e) }),
+                    }
+                } else {
+                    Err(RpcError { code: 0, message: "no workspace set".to_string() })
+                };
+                self.respond_rpc(id, result);
+            }
+            GitForceCheckout { reference } => {
+                let result = if let Some(workspace) = self.workspace.as_ref() {
+                    match git_force_checkout(workspace, &reference) {
+                        Ok(result) => Ok(ProxyResponse::GitCheckoutResponse { result }),
+                        Err(e) => Err(RpcError { code: 0, message: format!("git force checkout error: {}", e) }),
+                    }
+                } else {
+                    Err(RpcError { code: 0, message: "no workspace set".to_string() })
+                };
+                self.respond_rpc(id, result);
+            }
             // Git Push/Pull/Fetch - These require network operations, placeholder for now
             GitPush { options: _ } => {
-                // TODO: Implement push using git2 or command-line git
+                // TODO: Implement push using command-line git
                 self.respond_rpc(id, Err(RpcError { 
                     code: 0, 
                     message: "Push requires SSH/HTTPS credentials - use terminal for now".to_string() 
                 }));
             }
             GitPull { options: _ } => {
-                // TODO: Implement pull using git2 or command-line git
+                // TODO: Implement pull using command-line git
                 self.respond_rpc(id, Err(RpcError { 
                     code: 0, 
                     message: "Pull requires SSH/HTTPS credentials - use terminal for now".to_string() 
                 }));
             }
             GitFetch { options: _ } => {
-                // TODO: Implement fetch using git2 or command-line git
+                // TODO: Implement fetch using command-line git
                 self.respond_rpc(id, Err(RpcError { 
                     code: 0, 
                     message: "Fetch requires SSH/HTTPS credentials - use terminal for now".to_string() 
@@ -1745,9 +1785,13 @@ pub struct DiffHunk {
 }
 
 fn git_init(workspace_path: &Path) -> Result<()> {
-    if Repository::discover(workspace_path).is_err() {
-        Repository::init(workspace_path)?;
-    };
+    // Use gix to check if repo exists (faster, pure Rust)
+    if !crate::gix_utils::is_git_repo(workspace_path) {
+        tracing::info!("[git_init] Initializing new repository at {:?}", workspace_path);
+        crate::gix_utils::init_repo(workspace_path)?;
+    } else {
+        tracing::info!("[git_init] Repository already exists at {:?}", workspace_path);
+    }
     Ok(())
 }
 
@@ -1756,227 +1800,390 @@ fn git_commit(
     message: &str,
     diffs: Vec<FileDiff>,
 ) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let mut index = repo.index()?;
+    // Stage files based on diffs
+    let mut to_add: Vec<PathBuf> = Vec::new();
+    let mut to_remove: Vec<PathBuf> = Vec::new();
+    
     for diff in diffs {
         match diff {
             FileDiff::Modified(p) | FileDiff::Added(p) => {
-                index.add_path(p.strip_prefix(workspace_path)?)?;
+                if let Ok(rel) = p.strip_prefix(workspace_path) {
+                    to_add.push(rel.to_path_buf());
+                } else {
+                    to_add.push(p);
+                }
             }
             FileDiff::Renamed(a, d) => {
-                index.add_path(a.strip_prefix(workspace_path)?)?;
-                index.remove_path(d.strip_prefix(workspace_path)?)?;
+                if let Ok(rel) = a.strip_prefix(workspace_path) {
+                    to_add.push(rel.to_path_buf());
+                } else {
+                    to_add.push(a);
+                }
+                if let Ok(rel) = d.strip_prefix(workspace_path) {
+                    to_remove.push(rel.to_path_buf());
+                } else {
+                    to_remove.push(d);
+                }
             }
             FileDiff::Deleted(p) => {
-                index.remove_path(p.strip_prefix(workspace_path)?)?;
+                if let Ok(rel) = p.strip_prefix(workspace_path) {
+                    to_remove.push(rel.to_path_buf());
+                } else {
+                    to_remove.push(p);
+                }
             }
         }
     }
-    index.write()?;
-    let tree = index.write_tree()?;
-    let tree = repo.find_tree(tree)?;
+    
+    // Stage files using gix_utils
+    if !to_add.is_empty() {
+        crate::gix_utils::stage_files(workspace_path, &to_add)?;
+    }
+    
+    // Handle removed files
+    if !to_remove.is_empty() {
+        use std::process::Command;
+        let path_strs: Vec<&str> = to_remove.iter()
+            .filter_map(|p| p.to_str())
+            .collect();
+        let _ = Command::new("git")
+            .args(["rm", "--cached", "--ignore-unmatch", "--"])
+            .args(&path_strs)
+            .current_dir(workspace_path)
+            .output();
+    }
+    
+    // Commit using gix_utils
+    crate::gix_utils::commit(workspace_path, message)?;
+    Ok(())
+}
 
-    match repo.signature() {
-        Ok(signature) => {
-            let parents = repo
-                .head()
-                .and_then(|head| Ok(vec![head.peel_to_commit()?]))
-                .unwrap_or(vec![]);
-            let parents_refs = parents.iter().collect::<Vec<_>>();
+use lapce_rpc::source_control::{GitCheckoutResult, GitCheckoutStatus};
 
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &parents_refs,
-            )?;
-            Ok(())
+/// Attempt checkout without force - returns conflict status if there are local changes
+fn git_checkout_with_status(workspace_path: &Path, reference: &str) -> Result<GitCheckoutResult> {
+    tracing::info!("[GIT CHECKOUT] Attempting checkout for: {} in {:?}", reference, workspace_path);
+    
+    // Early validation using gix (faster, pure Rust)
+    if let Err(e) = crate::gix_utils::validate_checkout_target(workspace_path, reference) {
+        tracing::error!("[GIT CHECKOUT] Invalid target: {}", e);
+        return Ok(GitCheckoutResult {
+            status: GitCheckoutStatus::Error,
+            message: format!("Cannot find '{}': {}", reference, e),
+            checked_out_ref: None,
+        });
+    }
+    
+    // Check if there are uncommitted changes
+    let has_changes = crate::gix_utils::has_uncommitted_changes(workspace_path).unwrap_or(false);
+    
+    if has_changes {
+        tracing::info!("[GIT CHECKOUT] Conflict detected: uncommitted changes present");
+        return Ok(GitCheckoutResult {
+            status: GitCheckoutStatus::Conflict,
+            message: format!("Cannot checkout '{}': local changes would be overwritten. Choose 'Smart Checkout' to stash changes or 'Force Checkout' to discard them.", reference),
+            checked_out_ref: None,
+        });
+    }
+    
+    // Try checkout without force
+    match crate::gix_utils::checkout(workspace_path, reference, false) {
+        Ok(()) => {
+            tracing::info!("[GIT CHECKOUT] Success: checked out {}", reference);
+            Ok(GitCheckoutResult {
+                status: GitCheckoutStatus::Success,
+                message: format!("Successfully checked out '{}'", reference),
+                checked_out_ref: Some(reference.to_string()),
+            })
         }
-        Err(e) => match e.code() {
-            NotFound => Err(anyhow!(
-                "No user.name and/or user.email configured for this git repository."
-            )),
-            _ => Err(anyhow!(
-                "Error while creating commit's signature: {}",
-                e.message()
-            )),
-        },
+        Err(e) => {
+            let err_msg = e.to_string();
+            if err_msg.contains("conflict") || err_msg.contains("overwritten") {
+                tracing::info!("[GIT CHECKOUT] Conflict detected: {}", err_msg);
+                Ok(GitCheckoutResult {
+                    status: GitCheckoutStatus::Conflict,
+                    message: format!("Cannot checkout '{}': local changes would be overwritten. Choose 'Smart Checkout' to stash changes or 'Force Checkout' to discard them.", reference),
+                    checked_out_ref: None,
+                })
+            } else {
+                tracing::error!("[GIT CHECKOUT] Error: {:?}", e);
+                Ok(GitCheckoutResult {
+                    status: GitCheckoutStatus::Error,
+                    message: format!("Checkout failed: {}", err_msg),
+                    checked_out_ref: None,
+                })
+            }
+        }
     }
 }
 
+/// Smart checkout: stash -> checkout -> stash pop
+fn git_smart_checkout(workspace_path: &Path, reference: &str) -> Result<GitCheckoutResult> {
+    tracing::info!("[GIT SMART CHECKOUT] Starting for: {} in {:?}", reference, workspace_path);
+    
+    // Validate checkout target using gix first (fast validation)
+    if let Err(e) = crate::gix_utils::validate_checkout_target(workspace_path, reference) {
+        tracing::error!("[GIT SMART CHECKOUT] Invalid checkout target: {}", e);
+        return Ok(GitCheckoutResult {
+            status: GitCheckoutStatus::Error,
+            message: format!("Invalid checkout target: {}", e),
+            checked_out_ref: None,
+        });
+    }
+    
+    // Check if there are changes to stash using gix
+    let has_changes = crate::gix_utils::has_uncommitted_changes(workspace_path).unwrap_or(false);
+    
+    let stashed = if has_changes {
+        // Create stash using gix_utils
+        match crate::gix_utils::stash_save(workspace_path, Some("Auto-stash before checkout"), true) {
+            Ok(_) => {
+                tracing::info!("[GIT SMART CHECKOUT] Changes stashed successfully");
+                true
+            }
+            Err(e) => {
+                tracing::error!("[GIT SMART CHECKOUT] Failed to stash: {:?}", e);
+                return Ok(GitCheckoutResult {
+                    status: GitCheckoutStatus::Error,
+                    message: format!("Failed to stash changes: {}", e),
+                    checked_out_ref: None,
+                });
+            }
+        }
+    } else {
+        false
+    };
+    
+    // Now perform checkout
+    let checkout_result = crate::gix_utils::checkout(workspace_path, reference, false);
+    
+    // Handle checkout failure
+    if let Err(e) = checkout_result {
+        // If checkout fails, try to restore stash
+        if stashed {
+            let _ = crate::gix_utils::stash_pop(workspace_path, 0);
+        }
+        return Ok(GitCheckoutResult {
+            status: GitCheckoutStatus::Error,
+            message: format!("Checkout failed: {}", e),
+            checked_out_ref: None,
+        });
+    }
+    
+    // Pop the stash
+    if stashed {
+        match crate::gix_utils::stash_pop(workspace_path, 0) {
+            Ok(()) => {
+                tracing::info!("[GIT SMART CHECKOUT] Stash popped successfully");
+                Ok(GitCheckoutResult {
+                    status: GitCheckoutStatus::Success,
+                    message: format!("Successfully checked out '{}' and restored local changes", reference),
+                    checked_out_ref: Some(reference.to_string()),
+                })
+            }
+            Err(e) => {
+                tracing::warn!("[GIT SMART CHECKOUT] Stash pop had conflicts: {:?}", e);
+                Ok(GitCheckoutResult {
+                    status: GitCheckoutStatus::Success,
+                    message: format!("Checked out '{}'. Note: Restoring stashed changes had conflicts - your changes are still in stash.", reference),
+                    checked_out_ref: Some(reference.to_string()),
+                })
+            }
+        }
+    } else {
+        Ok(GitCheckoutResult {
+            status: GitCheckoutStatus::Success,
+            message: format!("Successfully checked out '{}'", reference),
+            checked_out_ref: Some(reference.to_string()),
+        })
+    }
+}
+
+/// Force checkout: discard local changes
+fn git_force_checkout(workspace_path: &Path, reference: &str) -> Result<GitCheckoutResult> {
+    tracing::info!("[GIT FORCE CHECKOUT] Starting for: {} in {:?}", reference, workspace_path);
+    
+    // Use gix_utils checkout with force=true
+    match crate::gix_utils::checkout(workspace_path, reference, true) {
+        Ok(()) => {
+            tracing::info!("[GIT FORCE CHECKOUT] Success");
+            Ok(GitCheckoutResult {
+                status: GitCheckoutStatus::Success,
+                message: format!("Successfully checked out '{}' (local changes discarded)", reference),
+                checked_out_ref: Some(reference.to_string()),
+            })
+        }
+        Err(e) => {
+            tracing::error!("[GIT FORCE CHECKOUT] Error: {:?}", e);
+            Ok(GitCheckoutResult {
+                status: GitCheckoutStatus::Error,
+                message: format!("Force checkout failed: {}", e),
+                checked_out_ref: None,
+            })
+        }
+    }
+}
+
+/// Legacy checkout function (kept for notification handler)
 fn git_checkout(workspace_path: &Path, reference: &str) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let (object, reference) = repo.revparse_ext(reference)?;
-    repo.checkout_tree(&object, None)?;
-    repo.set_head(reference.unwrap().name().unwrap())?;
-    Ok(())
+    let result = git_force_checkout(workspace_path, reference)?;
+    if result.status == GitCheckoutStatus::Success {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(result.message))
+    }
 }
 
 fn git_discard_files_changes<'a>(
     workspace_path: &Path,
     files: impl Iterator<Item = &'a Path>,
 ) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-
-    let mut checkout_b = CheckoutBuilder::new();
-    checkout_b.update_only(false).force();
-
-    let mut had_path = false;
-    for path in files {
-        // Remove the workspace path so it is relative to the folder
-        if let Ok(path) = path.strip_prefix(workspace_path) {
-            had_path = true;
-            checkout_b.path(path);
-        }
-    }
-
-    if !had_path {
-        // If there we no paths then we do nothing
-        // because the default behavior of checkout builder is to select all files
-        // if it is not given a path
+    let paths: Vec<PathBuf> = files
+        .filter_map(|path| {
+            path.strip_prefix(workspace_path)
+                .ok()
+                .map(|p| p.to_path_buf())
+        })
+        .collect();
+    
+    if paths.is_empty() {
+        // If there are no paths then we do nothing
         return Ok(());
     }
-
-    repo.checkout_index(None, Some(&mut checkout_b))?;
-
-    Ok(())
+    
+    crate::gix_utils::discard_file_changes(workspace_path, &paths)
 }
 
 fn git_discard_workspace_changes(workspace_path: &Path) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let mut checkout_b = CheckoutBuilder::new();
-    checkout_b.force();
-
-    repo.checkout_index(None, Some(&mut checkout_b))?;
-
-    Ok(())
-}
-
-fn git_delta_format(
-    workspace_path: &Path,
-    delta: &git2::DiffDelta,
-) -> Option<(git2::Delta, git2::Oid, PathBuf)> {
-    match delta.status() {
-        git2::Delta::Added | git2::Delta::Untracked => Some((
-            git2::Delta::Added,
-            delta.new_file().id(),
-            delta.new_file().path().map(|p| workspace_path.join(p))?,
-        )),
-        git2::Delta::Deleted => Some((
-            git2::Delta::Deleted,
-            delta.old_file().id(),
-            delta.old_file().path().map(|p| workspace_path.join(p))?,
-        )),
-        git2::Delta::Modified => Some((
-            git2::Delta::Modified,
-            delta.new_file().id(),
-            delta.new_file().path().map(|p| workspace_path.join(p))?,
-        )),
-        _ => None,
-    }
+    crate::gix_utils::discard_all_changes(workspace_path)
 }
 
 fn git_diff_new(workspace_path: &Path) -> Option<DiffInfo> {
-    let repo = Repository::discover(workspace_path).ok()?;
-    let name = match repo.head() {
-        Ok(head) => head.shorthand()?.to_string(),
-        _ => "(No branch)".to_owned(),
-    };
-
-    let mut branches = Vec::new();
-    for branch in repo.branches(None).ok()? {
-        branches.push(branch.ok()?.0.name().ok()??.to_string());
-    }
-
-    let mut tags = Vec::new();
-    if let Ok(git_tags) = repo.tag_names(None) {
-        for tag in git_tags.into_iter().flatten() {
-            tags.push(tag.to_owned());
-        }
-    }
-
-    let mut deltas = Vec::new();
-    let mut diff_options = DiffOptions::new();
-    let diff = repo
-        .diff_index_to_workdir(
-            None,
-            Some(
-                diff_options
-                    .include_untracked(true)
-                    .recurse_untracked_dirs(true),
-            ),
-        )
+    use std::process::Command;
+    
+    // Get current branch name
+    let name = crate::gix_utils::get_head_name_from_path(workspace_path).ok()?.unwrap_or_else(|| "(No branch)".to_string());
+    
+    // Get branches
+    let branches = crate::gix_utils::list_branches(workspace_path, true)
+        .ok()?
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    
+    // Get tags
+    let tags = crate::gix_utils::list_tags(workspace_path).ok()?;
+    
+    // Get status using git command
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1", "-uall"])
+        .current_dir(workspace_path)
+        .output()
         .ok()?;
-    for delta in diff.deltas() {
-        if let Some(delta) = git_delta_format(workspace_path, &delta) {
-            deltas.push(delta);
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    // Separate lists for staged, unstaged, and untracked
+    let mut staged = Vec::new();
+    let mut unstaged = Vec::new();
+    let mut untracked = Vec::new();
+    let mut all_diffs = Vec::new(); // Combined for backwards compatibility
+    
+    for line in stdout.lines() {
+        if line.len() < 3 {
+            continue;
         }
-    }
-
-    let oid = match repo.revparse_single("HEAD^{tree}") {
-        Ok(obj) => obj.id(),
-        _ => Oid::zero(),
-    };
-
-    let cached_diff = repo
-        .diff_tree_to_index(repo.find_tree(oid).ok().as_ref(), None, None)
-        .ok();
-
-    if let Some(cached_diff) = cached_diff {
-        for delta in cached_diff.deltas() {
-            if let Some(delta) = git_delta_format(workspace_path, &delta) {
-                deltas.push(delta);
+        let status = &line[0..2];
+        let path = line[3..].trim();
+        
+        // Handle renames (R status shows "old -> new")
+        if status.starts_with('R') {
+            let parts: Vec<&str> = path.split(" -> ").collect();
+            if parts.len() == 2 {
+                let diff = FileDiff::Renamed(
+                    workspace_path.join(parts[0]),
+                    workspace_path.join(parts[1]),
+                );
+                // Renames in index are staged
+                staged.push(diff.clone());
+                all_diffs.push(diff);
             }
+            continue;
         }
-    }
-    let mut renames = Vec::new();
-    let mut renamed_deltas = HashSet::new();
-
-    for (added_index, delta) in deltas.iter().enumerate() {
-        if delta.0 == git2::Delta::Added {
-            for (deleted_index, d) in deltas.iter().enumerate() {
-                if d.0 == git2::Delta::Deleted && d.1 == delta.1 {
-                    renames.push((added_index, deleted_index));
-                    renamed_deltas.insert(added_index);
-                    renamed_deltas.insert(deleted_index);
-                    break;
+        
+        let full_path = workspace_path.join(path);
+        
+        // Parse status codes
+        // First char is index (staged) status, second is worktree (unstaged) status
+        // ' ' = unmodified, M = modified, A = added, D = deleted, R = renamed
+        // C = copied, U = updated but unmerged, ? = untracked, ! = ignored
+        let index_status = status.chars().next().unwrap_or(' ');
+        let worktree_status = status.chars().nth(1).unwrap_or(' ');
+        
+        match (index_status, worktree_status) {
+            // Untracked files - only add to untracked list, NOT to all_diffs
+            ('?', '?') => {
+                untracked.push(full_path);
+            }
+            // Ignored files - skip
+            ('!', '!') => {}
+            // Staged changes (index has changes)
+            _ => {
+                // Check staged (index) status
+                match index_status {
+                    'M' => {
+                        staged.push(FileDiff::Modified(full_path.clone()));
+                    }
+                    'A' => {
+                        staged.push(FileDiff::Added(full_path.clone()));
+                    }
+                    'D' => {
+                        staged.push(FileDiff::Deleted(full_path.clone()));
+                    }
+                    _ => {}
+                }
+                
+                // Check unstaged (worktree) status
+                match worktree_status {
+                    'M' => {
+                        unstaged.push(FileDiff::Modified(full_path.clone()));
+                    }
+                    'D' => {
+                        unstaged.push(FileDiff::Deleted(full_path.clone()));
+                    }
+                    _ => {}
+                }
+                
+                // Add to combined list if anything changed
+                if index_status != ' ' || worktree_status != ' ' {
+                    // Use the most significant change for combined view
+                    let combined_diff = match (index_status, worktree_status) {
+                        ('D', _) | (_, 'D') => FileDiff::Deleted(full_path),
+                        ('A', _) => FileDiff::Added(full_path),
+                        ('M', _) | (_, 'M') => FileDiff::Modified(full_path),
+                        _ => continue,
+                    };
+                    all_diffs.push(combined_diff);
                 }
             }
         }
     }
-
-    let mut file_diffs = Vec::new();
-    for (added_index, deleted_index) in renames.iter() {
-        file_diffs.push(FileDiff::Renamed(
-            deltas[*added_index].2.clone(),
-            deltas[*deleted_index].2.clone(),
-        ));
-    }
-    for (i, delta) in deltas.iter().enumerate() {
-        if renamed_deltas.contains(&i) {
-            continue;
-        }
-        let diff = match delta.0 {
-            git2::Delta::Added => FileDiff::Added(delta.2.clone()),
-            git2::Delta::Deleted => FileDiff::Deleted(delta.2.clone()),
-            git2::Delta::Modified => FileDiff::Modified(delta.2.clone()),
-            _ => continue,
-        };
-        file_diffs.push(diff);
-    }
-    file_diffs.sort_by_key(|d| match d {
-        FileDiff::Modified(p)
-        | FileDiff::Added(p)
-        | FileDiff::Renamed(p, _)
-        | FileDiff::Deleted(p) => p.clone(),
-    });
+    
+    // Sort all lists by path
+    let sort_fn = |d: &FileDiff| d.path().clone();
+    staged.sort_by_key(sort_fn);
+    unstaged.sort_by_key(sort_fn);
+    untracked.sort();
+    all_diffs.sort_by_key(sort_fn);
+    
     Some(DiffInfo {
         head: name,
         branches,
         tags,
-        diffs: file_diffs,
+        diffs: all_diffs,
+        staged,
+        unstaged,
+        untracked,
     })
 }
 
@@ -1990,115 +2197,112 @@ fn git_log(
     search: Option<String>,
 ) -> Result<lapce_rpc::source_control::GitLogResult> {
     use lapce_rpc::source_control::{GitCommitInfo, GitLogResult};
+    use std::process::Command;
     
-    let repo = Repository::discover(workspace_path)?;
+    // Get HEAD commit id
+    let head_id = crate::gix_utils::get_head_commit_id(workspace_path)
+        .ok()
+        .flatten()
+        .map(|id| id.to_string());
     
-    // Get HEAD commit id for checking if commit is HEAD
-    let head_id = repo.head().ok().and_then(|h| h.target());
+    // Build git log command with custom format
+    // Format: hash|short_hash|author_name|author_email|timestamp|parent_hashes|summary|message
+    let format = "%H|%h|%an|%ae|%at|%P|%s|%B\x00";
+    
+    let mut args = vec![
+        "log".to_string(),
+        format!("--format={}", format),
+        format!("-n{}", limit + skip), // Get extra to handle skip
+        "-z".to_string(), // Use NUL as record separator
+    ];
+    
+    if let Some(ref author_filter) = author {
+        args.push(format!("--author={}", author_filter));
+    }
+    
+    if let Some(ref search_text) = search {
+        args.push(format!("--grep={}", search_text));
+        args.push("-i".to_string()); // Case insensitive
+    }
+    
+    // Add branch or default to HEAD
+    if let Some(ref branch_name) = branch {
+        args.push(branch_name.clone());
+    }
+    
+    let output = Command::new("git")
+        .args(&args)
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to run git log")?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git log failed: {}", stderr);
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut commits = Vec::new();
+    let total_count;
     
     // Get all branches for annotation
-    let mut branch_map: std::collections::HashMap<git2::Oid, Vec<String>> = std::collections::HashMap::new();
-    if let Ok(branches) = repo.branches(None) {
-        for branch_result in branches {
-            if let Ok((branch, _)) = branch_result {
-                if let (Some(name), Some(target)) = (branch.name().ok().flatten(), branch.get().target()) {
-                    branch_map.entry(target).or_default().push(name.to_string());
-                }
-            }
+    let branches_list = crate::gix_utils::list_branches(workspace_path, true).unwrap_or_default();
+    let mut branch_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for b in branches_list {
+        if let Some(ref commit_id) = b.last_commit_id {
+            branch_map.entry(commit_id.clone()).or_default().push(b.name);
         }
     }
     
     // Get all tags for annotation
-    let mut tag_map: std::collections::HashMap<git2::Oid, Vec<String>> = std::collections::HashMap::new();
-    if let Ok(tags) = repo.tag_names(None) {
-        for tag_name in tags.iter().flatten() {
-            if let Ok(obj) = repo.revparse_single(&format!("refs/tags/{}", tag_name)) {
-                // For annotated tags, peel to the commit
-                let commit_id = obj.peel_to_commit().map(|c| c.id()).unwrap_or(obj.id());
-                tag_map.entry(commit_id).or_default().push(tag_name.to_string());
-            }
-        }
-    }
+    let tags_list = crate::gix_utils::list_tags(workspace_path).unwrap_or_default();
+    let tag_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    // Note: For now, we don't have commit IDs for tags, so this stays empty
+    let _ = tags_list; // Suppress unused warning
     
-    // Set up revwalk
-    let mut revwalk = repo.revwalk()?;
-    revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)?;
+    // Parse commits
+    let records: Vec<&str> = stdout.split('\0').filter(|s| !s.trim().is_empty()).collect();
+    total_count = records.len();
     
-    // Start from branch or HEAD
-    if let Some(ref branch_name) = branch {
-        if let Ok(reference) = repo.resolve_reference_from_short_name(branch_name) {
-            if let Some(oid) = reference.target() {
-                revwalk.push(oid)?;
-            }
-        } else {
-            revwalk.push_head()?;
-        }
-    } else {
-        revwalk.push_head()?;
-    }
-    
-    let mut commits = Vec::new();
-    let mut total_count = 0;
-    
-    for oid_result in revwalk {
-        let oid = match oid_result {
-            Ok(oid) => oid,
-            Err(_) => continue,
-        };
-        
-        let commit = match repo.find_commit(oid) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        
-        // Apply author filter
-        if let Some(ref author_filter) = author {
-            let commit_author = commit.author();
-            let author_name = commit_author.name().unwrap_or("");
-            let author_email = commit_author.email().unwrap_or("");
-            if !author_name.to_lowercase().contains(&author_filter.to_lowercase())
-                && !author_email.to_lowercase().contains(&author_filter.to_lowercase())
-            {
-                continue;
-            }
-        }
-        
-        // Apply search filter (commit message)
-        if let Some(ref search_text) = search {
-            let message = commit.message().unwrap_or("");
-            if !message.to_lowercase().contains(&search_text.to_lowercase()) {
-                continue;
-            }
-        }
-        
-        total_count += 1;
-        
-        // Apply skip and limit
-        if total_count <= skip {
+    for (idx, record) in records.iter().enumerate() {
+        if idx < skip {
             continue;
         }
         if commits.len() >= limit {
-            continue; // Keep counting for total_count
+            break;
         }
         
-        let author_sig = commit.author();
-        let parents: Vec<String> = commit.parent_ids().map(|id| id.to_string()).collect();
+        let parts: Vec<&str> = record.splitn(8, '|').collect();
+        if parts.len() < 7 {
+            continue;
+        }
         
-        let commit_info = GitCommitInfo {
-            id: oid.to_string(),
-            short_id: oid.to_string().chars().take(7).collect(),
-            summary: commit.summary().unwrap_or("").to_string(),
-            message: commit.message().unwrap_or("").to_string(),
-            author_name: author_sig.name().unwrap_or("").to_string(),
-            author_email: author_sig.email().unwrap_or("").to_string(),
-            timestamp: commit.time().seconds(),
+        let id = parts[0].to_string();
+        let short_id = parts[1].to_string();
+        let author_name = parts[2].to_string();
+        let author_email = parts[3].to_string();
+        let timestamp: i64 = parts[4].parse().unwrap_or(0);
+        let parents: Vec<String> = parts[5].split_whitespace().map(|s| s.to_string()).collect();
+        let summary = parts[6].to_string();
+        let message = if parts.len() > 7 { parts[7].to_string() } else { summary.clone() };
+        
+        let is_head = head_id.as_ref() == Some(&id);
+        let commit_branches = branch_map.get(&id).cloned().unwrap_or_default();
+        let commit_tags = tag_map.get(&id).cloned().unwrap_or_default();
+        
+        commits.push(GitCommitInfo {
+            id,
+            short_id,
+            summary,
+            message,
+            author_name,
+            author_email,
+            timestamp,
             parents,
-            branches: branch_map.get(&oid).cloned().unwrap_or_default(),
-            tags: tag_map.get(&oid).cloned().unwrap_or_default(),
-            is_head: head_id == Some(oid),
-        };
-        
-        commits.push(commit_info);
+            branches: commit_branches,
+            tags: commit_tags,
+            is_head,
+        });
     }
     
     Ok(GitLogResult {
@@ -2115,65 +2319,54 @@ fn git_list_branches(
     workspace_path: &Path,
     include_remote: bool,
 ) -> Result<Vec<lapce_rpc::source_control::GitBranchInfo>> {
-    use lapce_rpc::source_control::GitBranchInfo;
+    use std::process::Command;
     
-    let repo = Repository::discover(workspace_path)?;
-    let head = repo.head().ok();
-    let head_name = head.as_ref().and_then(|h| h.shorthand().map(|s| s.to_string()));
+    // Use gix_utils for basic branch listing
+    let mut branches = crate::gix_utils::list_branches(workspace_path, include_remote)?;
+    tracing::info!("[gix] Successfully listed {} branches", branches.len());
     
-    let filter = if include_remote {
-        None
-    } else {
-        Some(git2::BranchType::Local)
-    };
-    
-    let mut branches = Vec::new();
-    for branch_result in repo.branches(filter)? {
-        let (branch, branch_type) = branch_result?;
-        let name = branch.name()?.unwrap_or("").to_string();
-        let is_remote = branch_type == git2::BranchType::Remote;
-        let is_head = head_name.as_ref() == Some(&name);
-        
-        // Get upstream info
-        let (upstream, ahead, behind) = if !is_remote {
-            if let Ok(upstream_branch) = branch.upstream() {
-                let upstream_name = upstream_branch.name().ok().flatten().map(|s| s.to_string());
-                let (ahead, behind) = if let (Some(local_oid), Some(upstream_oid)) = 
-                    (branch.get().target(), upstream_branch.get().target()) 
-                {
-                    repo.graph_ahead_behind(local_oid, upstream_oid).unwrap_or((0, 0))
-                } else {
-                    (0, 0)
-                };
-                (upstream_name, ahead, behind)
-            } else {
-                (None, 0, 0)
+    // Enhance with upstream tracking info using git command
+    for branch in &mut branches {
+        if !branch.is_remote {
+            // Get upstream branch name
+            if let Ok(output) = Command::new("git")
+                .args(["config", "--get", &format!("branch.{}.remote", branch.name)])
+                .current_dir(workspace_path)
+                .output()
+            {
+                if output.status.success() {
+                    let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if let Ok(merge_output) = Command::new("git")
+                        .args(["config", "--get", &format!("branch.{}.merge", branch.name)])
+                        .current_dir(workspace_path)
+                        .output()
+                    {
+                        if merge_output.status.success() {
+                            let merge = String::from_utf8_lossy(&merge_output.stdout).trim().to_string();
+                            let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
+                            branch.upstream = Some(format!("{}/{}", remote, upstream_branch));
+                            
+                            // Get ahead/behind counts
+                            if let Ok(count_output) = Command::new("git")
+                                .args(["rev-list", "--left-right", "--count", 
+                                       &format!("{}...{}/{}", branch.name, remote, upstream_branch)])
+                                .current_dir(workspace_path)
+                                .output()
+                            {
+                                if count_output.status.success() {
+                                    let counts = String::from_utf8_lossy(&count_output.stdout);
+                                    let parts: Vec<&str> = counts.trim().split('\t').collect();
+                                    if parts.len() == 2 {
+                                        branch.ahead = parts[0].parse().unwrap_or(0);
+                                        branch.behind = parts[1].parse().unwrap_or(0);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        } else {
-            (None, 0, 0)
-        };
-        
-        // Get last commit info
-        let (last_commit_id, last_commit_summary) = if let Some(oid) = branch.get().target() {
-            if let Ok(commit) = repo.find_commit(oid) {
-                (Some(oid.to_string()), commit.summary().map(|s| s.to_string()))
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
-        
-        branches.push(GitBranchInfo {
-            name,
-            is_remote,
-            is_head,
-            upstream,
-            ahead,
-            behind,
-            last_commit_id,
-            last_commit_summary,
-        });
+        }
     }
     
     Ok(branches)
@@ -2187,25 +2380,11 @@ fn git_create_branch(
 ) -> Result<lapce_rpc::source_control::GitBranchResult> {
     use lapce_rpc::source_control::GitBranchResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    
-    // Get the commit to branch from
-    let commit = if let Some(start) = start_point {
-        let obj = repo.revparse_single(start)?;
-        obj.peel_to_commit()?
-    } else {
-        repo.head()?.peel_to_commit()?
-    };
-    
-    // Create the branch
-    repo.branch(name, &commit, false)?;
+    crate::gix_utils::create_branch(workspace_path, name, start_point)?;
     
     // Checkout if requested
     if checkout {
-        let refname = format!("refs/heads/{}", name);
-        let obj = repo.revparse_single(&refname)?;
-        repo.checkout_tree(&obj, None)?;
-        repo.set_head(&refname)?;
+        crate::gix_utils::checkout(workspace_path, name, false)?;
     }
     
     Ok(GitBranchResult {
@@ -2223,20 +2402,7 @@ fn git_delete_branch(
 ) -> Result<lapce_rpc::source_control::GitBranchResult> {
     use lapce_rpc::source_control::GitBranchResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    
-    let mut branch = repo.find_branch(name, git2::BranchType::Local)?;
-    
-    if force {
-        branch.delete()?;
-    } else {
-        // Check if fully merged
-        if !branch.is_head() {
-            branch.delete()?;
-        } else {
-            return Err(anyhow!("Cannot delete the currently checked out branch"));
-        }
-    }
+    crate::gix_utils::delete_branch(workspace_path, name, force)?;
     
     Ok(GitBranchResult {
         success: true,
@@ -2252,9 +2418,7 @@ fn git_rename_branch(
 ) -> Result<lapce_rpc::source_control::GitBranchResult> {
     use lapce_rpc::source_control::GitBranchResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    let mut branch = repo.find_branch(old_name, git2::BranchType::Local)?;
-    branch.rename(new_name, false)?;
+    crate::gix_utils::rename_branch(workspace_path, old_name, new_name)?;
     
     Ok(GitBranchResult {
         success: true,
@@ -2270,38 +2434,17 @@ fn git_rename_branch(
 fn git_stash_list(workspace_path: &Path) -> Result<lapce_rpc::source_control::GitStashList> {
     use lapce_rpc::source_control::{GitStashEntry, GitStashList};
     
-    let repo = Repository::discover(workspace_path)?;
-    let mut entries = Vec::new();
-    let mut stash_data: Vec<(usize, String, git2::Oid)> = Vec::new();
-    
-    // First collect stash data without borrowing repo
-    {
-        let mut repo_mut = repo;
-        repo_mut.stash_foreach(|index, message, oid| {
-            stash_data.push((index, message.to_string(), *oid));
-            true
-        })?;
-        
-        // Now process the collected data
-        for (index, message, oid) in stash_data {
-            let commit = repo_mut.find_commit(oid).ok();
-            let (branch, timestamp) = if let Some(ref c) = commit {
-                let branch = c.summary().unwrap_or("").to_string();
-                let timestamp = c.time().seconds();
-                (branch, timestamp)
-            } else {
-                (String::new(), 0)
-            };
-            
-            entries.push(GitStashEntry {
-                index,
-                message,
-                branch,
-                commit_id: oid.to_string(),
-                timestamp,
-            });
-        }
-    }
+    let gix_entries = crate::gix_utils::stash_list(workspace_path)?;
+    let entries: Vec<GitStashEntry> = gix_entries
+        .into_iter()
+        .map(|e| GitStashEntry {
+            index: e.index,
+            message: e.message,
+            branch: e.branch,
+            commit_id: e.commit_id,
+            timestamp: e.timestamp,
+        })
+        .collect();
     
     Ok(GitStashList { entries })
 }
@@ -2310,24 +2453,11 @@ fn git_stash_save(
     workspace_path: &Path,
     message: Option<&str>,
     include_untracked: bool,
-    keep_index: bool,
+    _keep_index: bool,
 ) -> Result<lapce_rpc::source_control::GitStashResult> {
     use lapce_rpc::source_control::GitStashResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    let sig = repo.signature()?;
-    
-    let mut flags = git2::StashFlags::DEFAULT;
-    if include_untracked {
-        flags |= git2::StashFlags::INCLUDE_UNTRACKED;
-    }
-    if keep_index {
-        flags |= git2::StashFlags::KEEP_INDEX;
-    }
-    
-    // Need mutable repo for stash_save
-    let mut repo = repo;
-    let _oid = repo.stash_save(&sig, message.unwrap_or("WIP"), Some(flags))?;
+    crate::gix_utils::stash_save(workspace_path, message, include_untracked)?;
     
     Ok(GitStashResult {
         success: true,
@@ -2338,9 +2468,7 @@ fn git_stash_save(
 fn git_stash_pop(workspace_path: &Path, index: usize) -> Result<lapce_rpc::source_control::GitStashResult> {
     use lapce_rpc::source_control::GitStashResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    let mut repo = repo;
-    repo.stash_pop(index, None)?;
+    crate::gix_utils::stash_pop(workspace_path, index)?;
     
     Ok(GitStashResult {
         success: true,
@@ -2351,8 +2479,7 @@ fn git_stash_pop(workspace_path: &Path, index: usize) -> Result<lapce_rpc::sourc
 fn git_stash_apply(workspace_path: &Path, index: usize) -> Result<lapce_rpc::source_control::GitStashResult> {
     use lapce_rpc::source_control::GitStashResult;
     
-    let mut repo = Repository::discover(workspace_path)?;
-    repo.stash_apply(index, None)?;
+    crate::gix_utils::stash_apply(workspace_path, index)?;
     
     Ok(GitStashResult {
         success: true,
@@ -2363,9 +2490,7 @@ fn git_stash_apply(workspace_path: &Path, index: usize) -> Result<lapce_rpc::sou
 fn git_stash_drop(workspace_path: &Path, index: usize) -> Result<lapce_rpc::source_control::GitStashResult> {
     use lapce_rpc::source_control::GitStashResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    let mut repo = repo;
-    repo.stash_drop(index)?;
+    crate::gix_utils::stash_drop(workspace_path, index)?;
     
     Ok(GitStashResult {
         success: true,
@@ -2383,106 +2508,26 @@ fn git_merge(
 ) -> Result<lapce_rpc::source_control::GitMergeResult> {
     use lapce_rpc::source_control::GitMergeResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    
-    // Find the branch/commit to merge
-    let reference = repo.resolve_reference_from_short_name(&options.branch)?;
-    let annotated_commit = repo.reference_to_annotated_commit(&reference)?;
-    
-    // Perform merge analysis
-    let (analysis, _preference) = repo.merge_analysis(&[&annotated_commit])?;
-    
-    if analysis.is_up_to_date() {
-        return Ok(GitMergeResult {
-            success: true,
-            message: "Already up to date".to_string(),
-            conflicts: Vec::new(),
-            merged_commit: None,
-        });
-    }
-    
-    if analysis.is_fast_forward() && !options.no_ff {
-        // Fast-forward merge
-        let refname = format!("refs/heads/{}", repo.head()?.shorthand().unwrap_or("HEAD"));
-        let target_oid = annotated_commit.id();
-        let mut reference = repo.find_reference(&refname)?;
-        reference.set_target(target_oid, &format!("Fast-forward to {}", options.branch))?;
-        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
-        
-        return Ok(GitMergeResult {
-            success: true,
-            message: format!("Fast-forwarded to {}", options.branch),
-            conflicts: Vec::new(),
-            merged_commit: Some(target_oid.to_string()),
-        });
-    }
-    
-    // Regular merge
-    repo.merge(&[&annotated_commit], None, None)?;
-    
-    // Check for conflicts
-    let mut index = repo.index()?;
-    if index.has_conflicts() {
-        let conflicts: Vec<PathBuf> = index.conflicts()?
-            .filter_map(|c| c.ok())
-            .filter_map(|c| c.our.or(c.their).map(|e| PathBuf::from(String::from_utf8_lossy(&e.path).to_string())))
-            .collect();
-        
-        return Ok(GitMergeResult {
-            success: false,
-            message: "Merge has conflicts".to_string(),
-            conflicts,
-            merged_commit: None,
-        });
-    }
-    
-    // Create merge commit if not squashing
-    if !options.squash {
-        let sig = repo.signature()?;
-        let message = options.message.clone().unwrap_or_else(|| 
-            format!("Merge branch '{}'", options.branch)
-        );
-        let head_commit = repo.head()?.peel_to_commit()?;
-        let merge_commit = repo.find_commit(annotated_commit.id())?;
-        let tree_oid = index.write_tree()?;
-        let tree = repo.find_tree(tree_oid)?;
-        
-        let oid = repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            &message,
-            &tree,
-            &[&head_commit, &merge_commit],
-        )?;
-        
-        repo.cleanup_state()?;
-        
-        return Ok(GitMergeResult {
-            success: true,
-            message: format!("Merged branch '{}'", options.branch),
-            conflicts: Vec::new(),
-            merged_commit: Some(oid.to_string()),
-        });
-    }
+    let result = crate::gix_utils::merge(
+        workspace_path,
+        &options.branch,
+        options.message.as_deref(),
+        options.no_ff,
+        options.squash,
+    )?;
     
     Ok(GitMergeResult {
-        success: true,
-        message: "Merge completed (squash)".to_string(),
-        conflicts: Vec::new(),
-        merged_commit: None,
+        success: result.success,
+        message: result.message,
+        conflicts: result.conflicts,
+        merged_commit: result.merged_commit,
     })
 }
 
 fn git_merge_abort(workspace_path: &Path) -> Result<lapce_rpc::source_control::GitMergeResult> {
     use lapce_rpc::source_control::GitMergeResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    repo.cleanup_state()?;
-    
-    // Reset to HEAD
-    let head = repo.head()?.peel_to_commit()?;
-    repo.reset(head.as_object(), git2::ResetType::Hard, None)?;
+    crate::gix_utils::merge_abort(workspace_path)?;
     
     Ok(GitMergeResult {
         success: true,
@@ -2502,19 +2547,19 @@ fn git_reset(
 ) -> Result<lapce_rpc::source_control::GitResetResult> {
     use lapce_rpc::source_control::{GitResetMode, GitResetResult};
     
-    let repo = Repository::discover(workspace_path)?;
-    let obj = repo.revparse_single(&options.target)?;
-    
-    let reset_type = match options.mode {
-        GitResetMode::Soft => git2::ResetType::Soft,
-        GitResetMode::Mixed => git2::ResetType::Mixed,
-        GitResetMode::Hard => git2::ResetType::Hard,
-        GitResetMode::Keep => git2::ResetType::Mixed, // git2 doesn't have Keep
+    let mode = match options.mode {
+        GitResetMode::Soft => crate::gix_utils::ResetMode::Soft,
+        GitResetMode::Mixed => crate::gix_utils::ResetMode::Mixed,
+        GitResetMode::Hard => crate::gix_utils::ResetMode::Hard,
+        GitResetMode::Keep => crate::gix_utils::ResetMode::Keep,
     };
     
-    repo.reset(&obj, reset_type, None)?;
+    crate::gix_utils::reset(workspace_path, &options.target, mode)?;
     
-    let new_head = repo.head().ok().and_then(|h| h.target()).map(|o| o.to_string());
+    let new_head = crate::gix_utils::get_head_commit_id(workspace_path)
+        .ok()
+        .flatten()
+        .map(|id| id.to_string());
     
     Ok(GitResetResult {
         success: true,
@@ -2534,46 +2579,24 @@ fn git_blame(
 ) -> Result<lapce_rpc::source_control::GitBlameResult> {
     use lapce_rpc::source_control::{GitBlameLine, GitBlameResult};
     
-    let repo = Repository::discover(workspace_path)?;
     let relative_path = path.strip_prefix(workspace_path).unwrap_or(path);
+    let blame_entries = crate::gix_utils::blame(workspace_path, relative_path, commit)?;
     
-    let mut opts = git2::BlameOptions::new();
-    if let Some(commit_str) = commit {
-        let oid = git2::Oid::from_str(commit_str)?;
-        opts.newest_commit(oid);
-    }
-    
-    let blame = repo.blame_file(relative_path, Some(&mut opts))?;
-    
-    let mut lines = Vec::new();
-    for (line_no, hunk) in blame.iter().enumerate() {
-        let commit_id = hunk.final_commit_id();
-        let commit = repo.find_commit(commit_id).ok();
-        
-        let (author_name, author_email, timestamp, summary) = if let Some(ref c) = commit {
-            let sig = c.author();
-            (
-                sig.name().unwrap_or("").to_string(),
-                sig.email().unwrap_or("").to_string(),
-                c.time().seconds(),
-                c.summary().unwrap_or("").to_string(),
-            )
-        } else {
-            (String::new(), String::new(), 0, String::new())
-        };
-        
-        lines.push(GitBlameLine {
-            line_number: line_no + 1,
-            commit_id: commit_id.to_string(),
-            short_commit_id: commit_id.to_string().chars().take(7).collect(),
-            author_name,
-            author_email,
-            timestamp,
-            summary,
-            original_line_number: hunk.orig_start_line(),
-            original_path: hunk.path().map(PathBuf::from),
-        });
-    }
+    let lines: Vec<GitBlameLine> = blame_entries
+        .into_iter()
+        .enumerate()
+        .map(|(idx, entry)| GitBlameLine {
+            line_number: idx + 1,
+            commit_id: entry.commit_id.clone(),
+            short_commit_id: entry.commit_id.chars().take(7).collect(),
+            author_name: entry.author_name,
+            author_email: entry.author_email,
+            timestamp: entry.timestamp,
+            summary: entry.summary,
+            original_line_number: entry.original_line,
+            original_path: entry.original_path,
+        })
+        .collect();
     
     Ok(GitBlameResult {
         lines,
@@ -2588,45 +2611,22 @@ fn git_blame(
 fn git_list_tags(workspace_path: &Path) -> Result<Vec<lapce_rpc::source_control::GitTagInfo>> {
     use lapce_rpc::source_control::GitTagInfo;
     
-    let repo = Repository::discover(workspace_path)?;
-    let mut tags = Vec::new();
+    // Use gix_utils to list tags
+    let tag_names = crate::gix_utils::list_tags(workspace_path)?;
     
-    for tag_name in repo.tag_names(None)?.iter().flatten() {
-        let refname = format!("refs/tags/{}", tag_name);
-        if let Ok(reference) = repo.find_reference(&refname) {
-            let obj = reference.peel(git2::ObjectType::Any)?;
-            
-            let (commit_id, message, tagger_name, tagger_email, timestamp, is_annotated) = 
-                if let Ok(tag) = obj.clone().into_tag() {
-                    // Annotated tag
-                    let target = tag.target()?.peel_to_commit()?;
-                    let tagger = tag.tagger();
-                    (
-                        target.id().to_string(),
-                        tag.message().map(|s| s.to_string()),
-                        tagger.as_ref().and_then(|t| t.name()).map(|s| s.to_string()),
-                        tagger.as_ref().and_then(|t| t.email()).map(|s| s.to_string()),
-                        tagger.as_ref().map(|t| t.when().seconds()),
-                        true,
-                    )
-                } else if let Ok(commit) = obj.peel_to_commit() {
-                    // Lightweight tag
-                    (commit.id().to_string(), None, None, None, None, false)
-                } else {
-                    continue;
-                };
-            
-            tags.push(GitTagInfo {
-                name: tag_name.to_string(),
-                commit_id,
-                message,
-                tagger_name,
-                tagger_email,
-                timestamp,
-                is_annotated,
-            });
-        }
-    }
+    // For now, return basic tag info (tag details need to be fetched separately if needed)
+    let tags: Vec<GitTagInfo> = tag_names
+        .into_iter()
+        .map(|name| GitTagInfo {
+            name,
+            commit_id: String::new(),
+            message: None,
+            tagger_name: None,
+            tagger_email: None,
+            timestamp: None,
+            is_annotated: false,
+        })
+        .collect();
     
     Ok(tags)
 }
@@ -2640,20 +2640,8 @@ fn git_create_tag(
 ) -> Result<lapce_rpc::source_control::GitTagResult> {
     use lapce_rpc::source_control::GitTagResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    
-    let target_obj = if let Some(t) = target {
-        repo.revparse_single(t)?
-    } else {
-        repo.head()?.peel(git2::ObjectType::Commit)?
-    };
-    
-    if annotated {
-        let sig = repo.signature()?;
-        repo.tag(name, &target_obj, &sig, message.unwrap_or(""), false)?;
-    } else {
-        repo.tag_lightweight(name, &target_obj, false)?;
-    }
+    // Note: annotated tags are created when message is provided
+crate::gix_utils::create_tag(workspace_path, name, target, if annotated { message } else { None })?;
     
     Ok(GitTagResult {
         success: true,
@@ -2668,8 +2656,7 @@ fn git_delete_tag(
 ) -> Result<lapce_rpc::source_control::GitTagResult> {
     use lapce_rpc::source_control::GitTagResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    repo.tag_delete(name)?;
+    crate::gix_utils::delete_tag(workspace_path, name)?;
     
     Ok(GitTagResult {
         success: true,
@@ -2685,17 +2672,19 @@ fn git_delete_tag(
 fn git_list_remotes(workspace_path: &Path) -> Result<lapce_rpc::source_control::GitRemoteList> {
     use lapce_rpc::source_control::{GitRemoteInfo, GitRemoteList};
     
-    let repo = Repository::discover(workspace_path)?;
+    let remote_names = crate::gix_utils::list_remotes(workspace_path)?;
     let mut remotes = Vec::new();
     
-    for remote_name in repo.remotes()?.iter().flatten() {
-        if let Ok(remote) = repo.find_remote(remote_name) {
-            remotes.push(GitRemoteInfo {
-                name: remote_name.to_string(),
-                fetch_url: remote.url().unwrap_or("").to_string(),
-                push_url: remote.pushurl().unwrap_or(remote.url().unwrap_or("")).to_string(),
-            });
-        }
+    for name in remote_names {
+        let url = crate::gix_utils::get_remote_url(workspace_path, &name)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        remotes.push(GitRemoteInfo {
+            name,
+            fetch_url: url.clone(),
+            push_url: url,
+        });
     }
     
     Ok(GitRemoteList { remotes })
@@ -2708,8 +2697,7 @@ fn git_add_remote(
 ) -> Result<lapce_rpc::source_control::GitRemoteResult> {
     use lapce_rpc::source_control::GitRemoteResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    repo.remote(name, url)?;
+    crate::gix_utils::add_remote(workspace_path, name, url)?;
     
     Ok(GitRemoteResult {
         success: true,
@@ -2724,8 +2712,7 @@ fn git_remove_remote(
 ) -> Result<lapce_rpc::source_control::GitRemoteResult> {
     use lapce_rpc::source_control::GitRemoteResult;
     
-    let repo = Repository::discover(workspace_path)?;
-    repo.remote_delete(name)?;
+    crate::gix_utils::remove_remote(workspace_path, name)?;
     
     Ok(GitRemoteResult {
         success: true,
@@ -2740,32 +2727,32 @@ fn git_remove_remote(
 
 fn git_get_status(workspace_path: &Path) -> Result<lapce_rpc::source_control::GitStatus> {
     use lapce_rpc::source_control::GitStatus;
+    use std::process::Command;
     
-    let repo = Repository::discover(workspace_path)?;
-    let state = repo.state();
+    // Check repository state using git command
+    let git_dir = crate::gix_utils::get_git_dir(workspace_path)?;
     
-    let is_rebasing = matches!(state, 
-        git2::RepositoryState::Rebase | 
-        git2::RepositoryState::RebaseInteractive | 
-        git2::RepositoryState::RebaseMerge
-    );
-    let is_merging = state == git2::RepositoryState::Merge;
-    let is_cherry_picking = state == git2::RepositoryState::CherryPick || 
-                            state == git2::RepositoryState::CherryPickSequence;
-    let is_reverting = state == git2::RepositoryState::Revert || 
-                       state == git2::RepositoryState::RevertSequence;
-    let is_bisecting = state == git2::RepositoryState::Bisect;
+    let is_rebasing = git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists();
+    let is_merging = git_dir.join("MERGE_HEAD").exists();
+    let is_cherry_picking = git_dir.join("CHERRY_PICK_HEAD").exists();
+    let is_reverting = git_dir.join("REVERT_HEAD").exists();
+    let is_bisecting = git_dir.join("BISECT_LOG").exists();
     
-    // Get conflicts
-    let index = repo.index()?;
-    let conflicts: Vec<PathBuf> = if index.has_conflicts() {
-        index.conflicts()?
-            .filter_map(|c| c.ok())
-            .filter_map(|c| c.our.or(c.their).map(|e| PathBuf::from(String::from_utf8_lossy(&e.path).to_string())))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Get conflicts using git status
+    let mut conflicts = Vec::new();
+    if let Ok(output) = Command::new("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(workspace_path)
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.starts_with("UU ") || line.starts_with("AA ") || line.starts_with("DD ") {
+                let path = line[3..].trim();
+                conflicts.push(PathBuf::from(path));
+            }
+        }
+    }
     
     Ok(GitStatus {
         is_rebasing,
@@ -2773,8 +2760,8 @@ fn git_get_status(workspace_path: &Path) -> Result<lapce_rpc::source_control::Gi
         is_cherry_picking,
         is_reverting,
         is_bisecting,
-        rebase_head_name: None, // TODO: Read from .git/rebase-merge/head-name
-        merge_head: None, // TODO: Read from .git/MERGE_HEAD
+        rebase_head_name: None,
+        merge_head: None,
         conflicts,
     })
 }
@@ -2784,73 +2771,109 @@ fn git_get_status(workspace_path: &Path) -> Result<lapce_rpc::source_control::Gi
 // ============================================================================
 
 fn git_stage_files(workspace_path: &Path, paths: &[PathBuf]) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let mut index = repo.index()?;
-    
-    for path in paths {
-        let relative = path.strip_prefix(workspace_path).unwrap_or(path);
-        index.add_path(relative)?;
-    }
-    
-    index.write()?;
-    Ok(())
+    let relative_paths: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| p.strip_prefix(workspace_path).unwrap_or(p).to_path_buf())
+        .collect();
+    crate::gix_utils::stage_files(workspace_path, &relative_paths)
 }
 
 fn git_unstage_files(workspace_path: &Path, paths: &[PathBuf]) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let head = repo.head()?.peel_to_commit()?;
-    
-    for path in paths {
-        let relative = path.strip_prefix(workspace_path).unwrap_or(path);
-        repo.reset_default(Some(head.as_object()), &[relative])?;
-    }
-    
-    Ok(())
+    let relative_paths: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| p.strip_prefix(workspace_path).unwrap_or(p).to_path_buf())
+        .collect();
+    crate::gix_utils::unstage_files(workspace_path, &relative_paths)
 }
 
 fn git_stage_all(workspace_path: &Path) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let mut index = repo.index()?;
-    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
-    index.write()?;
-    Ok(())
+    crate::gix_utils::stage_all(workspace_path)
 }
 
 fn git_unstage_all(workspace_path: &Path) -> Result<()> {
-    let repo = Repository::discover(workspace_path)?;
-    let head = repo.head()?.peel_to_commit()?;
-    repo.reset(head.as_object(), git2::ResetType::Mixed, None)?;
-    Ok(())
+    crate::gix_utils::unstage_all(workspace_path)
 }
 
 fn file_get_head(workspace_path: &Path, path: &Path) -> Result<(String, String)> {
-    let repo = Repository::discover(workspace_path)?;
-    let head = repo.head()?;
-    let tree = head.peel_to_tree()?;
-    let tree_entry = tree.get_path(path.strip_prefix(workspace_path)?)?;
-    let blob = repo.find_blob(tree_entry.id())?;
-    let id = blob.id().to_string();
-    let content = std::str::from_utf8(blob.content())
-        .with_context(|| "content bytes to string")?
-        .to_string();
+    use std::process::Command;
+    
+    let relative_path = path.strip_prefix(workspace_path)?;
+    let relative_str = relative_path.to_str()
+        .ok_or_else(|| anyhow!("Invalid path"))?;
+    
+    // Get blob ID
+    let id_output = Command::new("git")
+        .args(["rev-parse", &format!("HEAD:{}", relative_str)])
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to get blob id")?;
+    
+    if !id_output.status.success() {
+        anyhow::bail!("Failed to get blob id");
+    }
+    
+    let id = String::from_utf8_lossy(&id_output.stdout).trim().to_string();
+    
+    // Get file content at HEAD
+    let content_output = Command::new("git")
+        .args(["show", &format!("HEAD:{}", relative_str)])
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to get file content")?;
+    
+    if !content_output.status.success() {
+        anyhow::bail!("Failed to get file content at HEAD");
+    }
+    
+    let content = String::from_utf8(content_output.stdout)
+        .context("content bytes to string")?;
+    
     Ok((id, content))
 }
 
 fn git_get_remote_file_url(workspace_path: &Path, file: &Path) -> Result<String> {
-    let repo = Repository::discover(workspace_path)?;
-    let head = repo.head()?;
-    let target_remote = repo.find_remote(
-        repo.branch_upstream_remote(head.name().unwrap())?
-            .as_str()
-            .unwrap(),
-    )?;
-
-    // Grab URL part of remote
-    let remote = target_remote
-        .url()
-        .ok_or(anyhow!("Failed to convert remote to str"))?;
-
-    let remote_url = match Url::parse(remote) {
+    use std::process::Command;
+    
+    // Get current commit
+    let commit_output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to get HEAD commit")?;
+    
+    if !commit_output.status.success() {
+        anyhow::bail!("Failed to get HEAD commit");
+    }
+    let commit = String::from_utf8_lossy(&commit_output.stdout).trim().to_string();
+    
+    // Get upstream remote name
+    let remote_output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to get upstream")?;
+    
+    let remote_name = if remote_output.status.success() {
+        let upstream = String::from_utf8_lossy(&remote_output.stdout).trim().to_string();
+        upstream.split('/').next().unwrap_or("origin").to_string()
+    } else {
+        "origin".to_string()
+    };
+    
+    // Get remote URL
+    let url_output = Command::new("git")
+        .args(["remote", "get-url", &remote_name])
+        .current_dir(workspace_path)
+        .output()
+        .context("Failed to get remote URL")?;
+    
+    if !url_output.status.success() {
+        anyhow::bail!("Failed to get remote URL");
+    }
+    
+    let remote = String::from_utf8_lossy(&url_output.stdout).trim().to_string();
+    
+    let remote_url = match Url::parse(&remote) {
         Ok(url) => url,
         Err(_) => {
             // Parse URL as ssh
@@ -2868,8 +2891,6 @@ fn git_get_remote_file_url(workspace_path: &Path, file: &Path) -> Result<String>
     } else {
         remote_url.path()
     };
-
-    let commit = head.peel_to_commit()?.id();
 
     let file_path = file
         .strip_prefix(workspace_path)?

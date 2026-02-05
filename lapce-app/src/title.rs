@@ -16,7 +16,7 @@ use floem::{
 use lapce_core::meta;
 #[allow(unused_imports)]
 use lapce_rpc::proxy::ProxyStatus;
-use tracing::debug;
+use tracing::{debug, error, info};
 
 use crate::{
     alert::AlertButton,
@@ -197,6 +197,7 @@ fn branch_dropdown_overlay(
     });
 
     // Menu item helper - full width clickable row
+    // Uses PointerDown instead of click to fire before FocusLost clears state
     let menu_item = move |icon: &'static str, text: String, on_click: Rc<dyn Fn()>| {
         container(
             stack((
@@ -218,7 +219,7 @@ fn branch_dropdown_overlay(
             ))
             .style(|s| s.items_center().width_full()),
         )
-        .on_click_stop(move |_| {
+        .on_event_stop(EventListener::PointerDown, move |_| {
             on_click();
         })
         .style(move |s| {
@@ -294,7 +295,15 @@ fn branch_dropdown_overlay(
             clip(
                 scroll(
                     dyn_stack(
-                        move || branches.get().into_iter().take(50).enumerate().collect::<Vec<_>>(),
+                        move || branches.get().into_iter()
+                            // Exclude remote tracking branches (origin/*, remotes/*) and HEAD
+                            .filter(|b| {
+                                b != "HEAD" && 
+                                !b.starts_with("origin/") && 
+                                !b.starts_with("remotes/") &&
+                                !b.ends_with("/HEAD")
+                            })
+                            .take(50).enumerate().collect::<Vec<_>>(),
                         move |(i, _)| *i,
                         move |(idx, branch_name)| {
                             let is_current = branch_name == current_branch.get_untracked();
@@ -407,7 +416,10 @@ fn branch_dropdown_overlay(
                         let selected_branch = selected_branch;
                         let branch_dropdown_visible = branch_dropdown_visible;
                         move || {
-                            if let Some(branch) = selected_branch.get_untracked() {
+                            let branch_value = selected_branch.get_untracked();
+                            info!("[GIT CHECKOUT] Checkout clicked, selected_branch: {:?}", branch_value);
+                            if let Some(branch) = branch_value {
+                                info!("[GIT CHECKOUT] Sending CheckoutReference command for branch: {}", branch);
                                 branch_dropdown_visible.set(false);
                                 lapce_command.send(LapceCommand {
                                     kind: CommandKind::Workbench(
@@ -415,6 +427,8 @@ fn branch_dropdown_overlay(
                                     ),
                                     data: Some(serde_json::json!(branch)),
                                 });
+                            } else {
+                                error!("[GIT CHECKOUT] ERROR: No branch selected!");
                             }
                         }
                     }),

@@ -7,7 +7,14 @@ pub struct DiffInfo {
     pub head: String,
     pub branches: Vec<String>,
     pub tags: Vec<String>,
+    /// All diffs combined (for backwards compatibility)
     pub diffs: Vec<FileDiff>,
+    /// Staged changes (in index, ready to commit)
+    pub staged: Vec<FileDiff>,
+    /// Unstaged changes (modified but not staged)
+    pub unstaged: Vec<FileDiff>,
+    /// Untracked files (new files not tracked by git)
+    pub untracked: Vec<PathBuf>,
 }
 
 // ============================================================================
@@ -101,6 +108,30 @@ pub struct GitStashList {
 pub struct GitStashResult {
     pub success: bool,
     pub message: String,
+}
+
+// ============================================================================
+// Git Checkout Operations
+// ============================================================================
+
+/// Checkout result status
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GitCheckoutStatus {
+    /// Checkout succeeded
+    Success,
+    /// Checkout failed due to local changes that would be overwritten
+    Conflict,
+    /// Checkout failed for other reasons
+    Error,
+}
+
+/// Result of checkout operation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitCheckoutResult {
+    pub status: GitCheckoutStatus,
+    pub message: String,
+    /// The reference that was checked out (if successful)
+    pub checked_out_ref: Option<String>,
 }
 
 // ============================================================================

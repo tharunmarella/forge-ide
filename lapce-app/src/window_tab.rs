@@ -41,7 +41,7 @@ use lapce_rpc::{
     file::{Naming, PathObject},
     plugin::PluginId,
     proxy::{ProxyResponse, ProxyRpcHandler, ProxyStatus},
-    source_control::FileDiff,
+    source_control::{FileDiff, GitCheckoutStatus},
     terminal::TermId,
 };
 use lsp_types::{
@@ -1320,14 +1320,88 @@ impl WindowTabData {
             SourceControlInit => {
                 self.proxy.proxy_rpc.git_init();
             }
-            CheckoutReference => match data {
-                Some(reference) => {
-                    if let Some(reference) = reference.as_str() {
-                        self.proxy.proxy_rpc.git_checkout(reference.to_string());
+            CheckoutReference => {
+                event!(Level::INFO, "[GIT CHECKOUT] CheckoutReference command received, data: {:?}", data);
+                match data {
+                    Some(reference) => {
+                        event!(Level::INFO, "[GIT CHECKOUT] Reference value: {:?}", reference);
+                        if let Some(reference_str) = reference.as_str() {
+                            let reference = reference_str.to_string();
+                            event!(Level::INFO, "[GIT CHECKOUT] Calling proxy git_checkout with: {}", reference);
+                            
+                            // Show loading spinner
+                            let git_loading = self.source_control.git_operation_loading;
+                            git_loading.set(true);
+                            
+                            let internal_command = self.common.internal_command;
+                            let ref_for_smart = reference.clone();
+                            let ref_for_force = reference.clone();
+                            
+                            let send = create_ext_action(self.scope, move |result| {
+                                // Hide loading spinner
+                                git_loading.set(false);
+                                if let Ok(ProxyResponse::GitCheckoutResponse { result }) = result {
+                                    match result.status {
+                                        GitCheckoutStatus::Success => {
+                                            event!(Level::INFO, "[GIT CHECKOUT] Success: {}", result.message);
+                                            // File watchers will handle the refresh
+                                        }
+                                        GitCheckoutStatus::Conflict => {
+                                            event!(Level::INFO, "[GIT CHECKOUT] Conflict detected, showing dialog");
+                                            let ref_smart = ref_for_smart.clone();
+                                            let ref_force = ref_for_force.clone();
+                                            let internal_cmd = internal_command.clone();
+                                            let internal_cmd2 = internal_command.clone();
+                                            
+                                            let buttons = vec![
+                                                AlertButton {
+                                                    text: "Smart Checkout".to_string(),
+                                                    action: Rc::new(move || {
+                                                        internal_cmd.send(InternalCommand::SmartCheckout { 
+                                                            reference: ref_smart.clone() 
+                                                        });
+                                                    }),
+                                                },
+                                                AlertButton {
+                                                    text: "Force Checkout".to_string(),
+                                                    action: Rc::new(move || {
+                                                        internal_cmd2.send(InternalCommand::ForceCheckout { 
+                                                            reference: ref_force.clone() 
+                                                        });
+                                                    }),
+                                                },
+                                            ];
+                                            
+                                            internal_command.send(InternalCommand::ShowAlert {
+                                                title: "Checkout Conflict".to_string(),
+                                                msg: result.message,
+                                                buttons,
+                                            });
+                                        }
+                                        GitCheckoutStatus::Error => {
+                                            event!(Level::ERROR, "[GIT CHECKOUT] Error: {}", result.message);
+                                            internal_command.send(InternalCommand::ShowAlert {
+                                                title: "Checkout Failed".to_string(),
+                                                msg: result.message,
+                                                buttons: vec![],
+                                            });
+                                        }
+                                    }
+                                }
+                            });
+                            
+                            self.proxy.proxy_rpc.git_checkout(reference, send);
+                            event!(Level::INFO, "[GIT CHECKOUT] git_checkout call initiated");
+                        } else {
+                            event!(Level::ERROR, "[GIT CHECKOUT] ERROR: reference.as_str() returned None");
+                        }
+                    }
+                    None => {
+                        event!(Level::ERROR, "[GIT CHECKOUT] ERROR: No ref provided (data is None)");
+                        error!("No ref provided");
                     }
                 }
-                None => error!("No ref provided"),
-            },
+            }
             SourceControlCommit => {
                 self.source_control.commit();
             }
@@ -2183,6 +2257,70 @@ impl WindowTabData {
             InternalCommand::HideAlert => {
                 self.alert_data.active.set(false);
             }
+            InternalCommand::SmartCheckout { reference } => {
+                self.alert_data.active.set(false);
+                event!(Level::INFO, "[GIT SMART CHECKOUT] Starting for: {}", reference);
+                
+                // Show loading spinner
+                let git_loading = self.source_control.git_operation_loading;
+                git_loading.set(true);
+                
+                let internal_command = self.common.internal_command.clone();
+                let send = create_ext_action(self.scope, move |result| {
+                    // Hide loading spinner
+                    git_loading.set(false);
+                    if let Ok(ProxyResponse::GitCheckoutResponse { result }) = result {
+                        match result.status {
+                            GitCheckoutStatus::Success => {
+                                event!(Level::INFO, "[GIT SMART CHECKOUT] Success: {}", result.message);
+                                // File watchers will handle the refresh
+                            }
+                            _ => {
+                                event!(Level::ERROR, "[GIT SMART CHECKOUT] Failed: {}", result.message);
+                                internal_command.send(InternalCommand::ShowAlert {
+                                    title: "Smart Checkout Failed".to_string(),
+                                    msg: result.message,
+                                    buttons: vec![],
+                                });
+                            }
+                        }
+                    }
+                });
+                
+                self.proxy.proxy_rpc.git_smart_checkout(reference, send);
+            }
+            InternalCommand::ForceCheckout { reference } => {
+                self.alert_data.active.set(false);
+                event!(Level::INFO, "[GIT FORCE CHECKOUT] Starting for: {}", reference);
+                
+                // Show loading spinner
+                let git_loading = self.source_control.git_operation_loading;
+                git_loading.set(true);
+                
+                let internal_command = self.common.internal_command.clone();
+                let send = create_ext_action(self.scope, move |result| {
+                    // Hide loading spinner
+                    git_loading.set(false);
+                    if let Ok(ProxyResponse::GitCheckoutResponse { result }) = result {
+                        match result.status {
+                            GitCheckoutStatus::Success => {
+                                event!(Level::INFO, "[GIT FORCE CHECKOUT] Success: {}", result.message);
+                                // File watchers will handle the refresh
+                            }
+                            _ => {
+                                event!(Level::ERROR, "[GIT FORCE CHECKOUT] Failed: {}", result.message);
+                                internal_command.send(InternalCommand::ShowAlert {
+                                    title: "Force Checkout Failed".to_string(),
+                                    msg: result.message,
+                                    buttons: vec![],
+                                });
+                            }
+                        }
+                    }
+                });
+                
+                self.proxy.proxy_rpc.git_force_checkout(reference, send);
+            }
             InternalCommand::SaveScratchDoc { doc } => {
                 self.main_split.save_scratch_doc(doc);
             }
@@ -2292,18 +2430,53 @@ impl WindowTabData {
                 self.source_control
                     .tags
                     .set(diff.tags.iter().cloned().collect());
+                
+                // Update combined file_diffs (backwards compatibility)
                 self.source_control.file_diffs.update(|file_diffs| {
                     *file_diffs = diff
                         .diffs
                         .iter()
                         .cloned()
-                        .map(|diff| {
+                        .map(|d| {
                             let checked =
-                                file_diffs.get(diff.path()).is_none_or(|(_, c)| *c);
-                            (diff.path().clone(), (diff, checked))
+                                file_diffs.get(d.path()).is_none_or(|(_, c)| *c);
+                            (d.path().clone(), (d, checked))
                         })
                         .collect();
                 });
+                
+                // Update staged changes
+                self.source_control.staged_diffs.update(|staged| {
+                    *staged = diff
+                        .staged
+                        .iter()
+                        .cloned()
+                        .map(|d| {
+                            let checked =
+                                staged.get(d.path()).is_none_or(|(_, c)| *c);
+                            (d.path().clone(), (d, checked))
+                        })
+                        .collect();
+                });
+                
+                // Update unstaged changes
+                self.source_control.unstaged_diffs.update(|unstaged| {
+                    *unstaged = diff
+                        .unstaged
+                        .iter()
+                        .cloned()
+                        .map(|d| {
+                            let checked =
+                                unstaged.get(d.path()).is_none_or(|(_, c)| *c);
+                            (d.path().clone(), (d, checked))
+                        })
+                        .collect();
+                });
+                
+                // Update untracked files
+                self.source_control.untracked_files.set(
+                    diff.untracked.iter().cloned().collect()
+                );
 
                 let docs = self.main_split.docs.get_untracked();
                 for (_, doc) in docs {

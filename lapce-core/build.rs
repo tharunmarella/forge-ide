@@ -76,39 +76,25 @@ fn get_info() -> Result<ReleaseInfo> {
     Ok(release_info)
 }
 
-#[cfg(not(target_os = "linux"))]
 fn get_head() -> Option<String> {
-    let repo = match git2::Repository::discover(format!(
-        "{}/..",
-        env::var("CARGO_MANIFEST_DIR").ok()?
-    )) {
-        Ok(v) => v,
-        Err(err) => {
-            println!("cargo::warning=Failed to obtain git repo: {err}");
-            return None;
-        }
-    };
-    let reference = match repo.head() {
-        Ok(v) => v,
-        Err(err) => {
-            println!("cargo::warning=Failed to obtain head: {err}");
-            return None;
-        }
-    };
-    let commit = reference.target();
-    println!("cargo::warning=Commit found: {commit:?}");
-    commit.map(|s| s.to_string().split_at(7).0.to_owned())
-}
-
-#[cfg(target_os = "linux")]
-fn get_head() -> Option<String> {
+    // Use git command to get commit hash (works on all platforms)
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").ok()?;
+    let repo_dir = Path::new(&manifest_dir).parent()?;
+    
     let cmd = std::process::Command::new("git")
-        .args(["show", "--pretty=format:%h", "--no-patch"])
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(repo_dir)
         .output()
         .ok()?;
+    
+    if !cmd.status.success() {
+        println!("cargo::warning=Failed to get git HEAD: git command failed");
+        return None;
+    }
 
     let commit = String::from_utf8_lossy(&cmd.stdout);
     let commit = commit.trim();
-
+    
+    println!("cargo::warning=Commit found: Some({commit})");
     Some(commit.to_string())
 }

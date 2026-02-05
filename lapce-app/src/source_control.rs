@@ -21,6 +21,12 @@ use crate::{
 pub struct SourceControlData {
     // VCS modified files & whether they should be included in the next commit
     pub file_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
+    /// Staged changes (in git index, ready to commit)
+    pub staged_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
+    /// Unstaged changes (modified but not in index)
+    pub unstaged_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
+    /// Untracked files (new files not tracked by git)
+    pub untracked_files: RwSignal<im::Vector<PathBuf>>,
     pub branch: RwSignal<String>,
     pub branches: RwSignal<im::Vector<String>>,
     pub tags: RwSignal<im::Vector<String>>,
@@ -74,6 +80,9 @@ impl SourceControlData {
         Self {
             // Use the shared file_diffs from CommonData
             file_diffs: common.file_diffs,
+            staged_diffs: cx.create_rw_signal(IndexMap::new()),
+            unstaged_diffs: cx.create_rw_signal(IndexMap::new()),
+            untracked_files: cx.create_rw_signal(im::Vector::new()),
             branch: cx.create_rw_signal("".to_string()),
             branches: cx.create_rw_signal(im::Vector::new()),
             tags: cx.create_rw_signal(im::Vector::new()),

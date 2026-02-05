@@ -127,6 +127,16 @@ pub enum ProxyRequest {
         old_name: String,
         new_name: String,
     },
+    // Git Checkout (request with response for conflict handling)
+    GitCheckoutRequest {
+        reference: String,
+    },
+    GitSmartCheckout {
+        reference: String,
+    },
+    GitForceCheckout {
+        reference: String,
+    },
     // Git Push/Pull/Fetch
     GitPush {
         options: crate::source_control::GitPushOptions,
@@ -532,6 +542,10 @@ pub enum ProxyResponse {
     GitRevertResponse {
         result: crate::source_control::GitRevertResult,
     },
+    // Git Checkout response
+    GitCheckoutResponse {
+        result: crate::source_control::GitCheckoutResult,
+    },
     // Git Blame response
     GitBlameResponse {
         result: crate::source_control::GitBlameResult,
@@ -808,8 +822,19 @@ impl ProxyRpcHandler {
         self.notification(ProxyNotification::GitCommit { message, diffs });
     }
 
-    pub fn git_checkout(&self, reference: String) {
-        self.notification(ProxyNotification::GitCheckout { reference });
+    /// Attempt checkout - returns result with conflict status if there are local changes
+    pub fn git_checkout(&self, reference: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitCheckoutRequest { reference }, f);
+    }
+
+    /// Smart checkout: stash -> checkout -> stash pop
+    pub fn git_smart_checkout(&self, reference: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitSmartCheckout { reference }, f);
+    }
+
+    /// Force checkout: discard local changes
+    pub fn git_force_checkout(&self, reference: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GitForceCheckout { reference }, f);
     }
 
     pub fn install_volt(&self, volt: VoltInfo) {

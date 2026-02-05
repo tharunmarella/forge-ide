@@ -878,6 +878,14 @@ pub enum InternalCommand {
         buttons: Vec<AlertButton>,
     },
     HideAlert,
+    /// Smart checkout: stash changes, checkout, restore stash
+    SmartCheckout {
+        reference: String,
+    },
+    /// Force checkout: discard local changes
+    ForceCheckout {
+        reference: String,
+    },
     SaveScratchDoc {
         doc: Rc<Doc>,
     },
