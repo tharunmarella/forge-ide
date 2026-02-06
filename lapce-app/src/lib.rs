@@ -31,6 +31,7 @@ pub mod plugin;
 pub mod proxy;
 pub mod rename;
 pub mod run_config;
+pub mod search_popup;
 pub mod settings;
 pub mod snippet;
 pub mod source_control;
