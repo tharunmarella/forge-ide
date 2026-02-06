@@ -14,6 +14,7 @@ pub enum PanelKind {
     GitLog,
     Plugin,
     SdkManager,
+    DatabaseManager,
     Search,
     Problem,
     Debug,
@@ -32,6 +33,7 @@ impl PanelKind {
             PanelKind::GitLog => LapceIcons::GIT_LOG,
             PanelKind::Plugin => LapceIcons::EXTENSIONS,
             PanelKind::SdkManager => LapceIcons::SDK,
+            PanelKind::DatabaseManager => LapceIcons::DATABASE,
             PanelKind::Search => LapceIcons::SEARCH,
             PanelKind::Problem => LapceIcons::PROBLEM,
             PanelKind::Debug => LapceIcons::DEBUG,
@@ -60,6 +62,7 @@ impl PanelKind {
             PanelKind::GitLog => PanelPosition::BottomLeft,  // Git Log opens at bottom
             PanelKind::Plugin => PanelPosition::LeftTop,
             PanelKind::SdkManager => PanelPosition::LeftTop,
+            PanelKind::DatabaseManager => PanelPosition::LeftTop,  // Opens as editor tab
             PanelKind::Search => PanelPosition::LeftTop,
             PanelKind::Problem => PanelPosition::BottomLeft,
             PanelKind::Debug => PanelPosition::BottomLeft,

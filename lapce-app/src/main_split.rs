@@ -48,7 +48,7 @@ use crate::{
     },
     id::{
         DiffEditorId, EditorTabId, KeymapId, SettingsId, SplitId,
-        ThemeColorSettingsId, VoltViewId, SdkManagerId, RunConfigEditorId,
+        ThemeColorSettingsId, VoltViewId, SdkManagerId, DatabaseManagerId, RunConfigEditorId,
     },
     keypress::{EventRef, KeyPressData, KeyPressHandle},
     panel::implementation_view::ReferencesRoot,
@@ -539,6 +539,7 @@ impl MainSplitData {
             EditorTabChild::Keymap(_) => None,
             EditorTabChild::Volt(_, _) => None,
             EditorTabChild::SdkManager(_) => None,
+            EditorTabChild::DatabaseManager(_) => None,
             EditorTabChild::RunConfigEditor(_) => None,
         }
     }
@@ -874,6 +875,7 @@ impl MainSplitData {
                         EditorTabChild::Keymap(_) => true,
                         EditorTabChild::Volt(_, _) => true,
                         EditorTabChild::SdkManager(_) => true,
+                        EditorTabChild::DatabaseManager(_) => true,
                         EditorTabChild::RunConfigEditor(_) => true,
                     };
 
@@ -1036,6 +1038,28 @@ impl MainSplitData {
                         })
                     }
                 }
+                EditorTabChildSource::DatabaseManager => {
+                    if let Some(index) =
+                        active_editor_tab.with_untracked(|editor_tab| {
+                            editor_tab.children.iter().position(|(_, _, child)| {
+                                matches!(child, EditorTabChild::DatabaseManager(_))
+                            })
+                        })
+                    {
+                        Some(index)
+                    } else if ignore_unconfirmed {
+                        None
+                    } else {
+                        active_editor_tab.with_untracked(|editor_tab| {
+                            editor_tab
+                                .get_unconfirmed_editor_tab_child(
+                                    editors,
+                                    &diff_editors,
+                                )
+                                .map(|(i, _)| i)
+                        })
+                    }
+                }
                 EditorTabChildSource::Volt(id) => {
                     if let Some(index) =
                         active_editor_tab.with_untracked(|editor_tab| {
@@ -1141,6 +1165,9 @@ impl MainSplitData {
                 EditorTabChildSource::SdkManager => {
                     EditorTabChild::SdkManager(SdkManagerId::next())
                 }
+                EditorTabChildSource::DatabaseManager => {
+                    EditorTabChild::DatabaseManager(DatabaseManagerId::next())
+                }
                 EditorTabChildSource::Volt(id) => {
                     EditorTabChild::Volt(VoltViewId::next(), id.to_owned())
                 }
@@ -1184,6 +1211,7 @@ impl MainSplitData {
                         EditorTabChild::Keymap(_) => {}
                         EditorTabChild::Volt(_, _) => {}
                         EditorTabChild::SdkManager(_) => {}
+                        EditorTabChild::DatabaseManager(_) => {}
                         EditorTabChild::RunConfigEditor(_) => {}
                     }
                     (editor_tab_id, current_child.clone())
@@ -1228,6 +1256,9 @@ impl MainSplitData {
                 (EditorTabChild::SdkManager(_), EditorTabChildSource::SdkManager) => {
                     true
                 }
+                (EditorTabChild::DatabaseManager(_), EditorTabChildSource::DatabaseManager) => {
+                    true
+                }
                 _ => false,
             };
             if is_same {
@@ -1255,6 +1286,7 @@ impl MainSplitData {
                 EditorTabChild::Keymap(_) => {}
                 EditorTabChild::Volt(_, _) => {}
                 EditorTabChild::SdkManager(_) => {}
+                EditorTabChild::DatabaseManager(_) => {}
                 EditorTabChild::RunConfigEditor(_) => {}
             }
 
@@ -1324,6 +1356,12 @@ impl MainSplitData {
                                 .iter()
                                 .position(|(_, _, child)| {
                                     matches!(child, EditorTabChild::SdkManager(_))
+                                }),
+                            EditorTabChildSource::DatabaseManager => editor_tab
+                                .children
+                                .iter()
+                                .position(|(_, _, child)| {
+                                    matches!(child, EditorTabChild::DatabaseManager(_))
                                 }),
                             EditorTabChildSource::Volt(id) => editor_tab
                                 .children
@@ -1646,6 +1684,9 @@ impl MainSplitData {
             EditorTabChild::Keymap(_) => EditorTabChild::Keymap(KeymapId::next()),
             EditorTabChild::SdkManager(_) => {
                 EditorTabChild::SdkManager(SdkManagerId::next())
+            }
+            EditorTabChild::DatabaseManager(_) => {
+                EditorTabChild::DatabaseManager(DatabaseManagerId::next())
             }
             EditorTabChild::Volt(_, id) => {
                 EditorTabChild::Volt(VoltViewId::next(), id.to_owned())
@@ -1996,6 +2037,7 @@ impl MainSplitData {
             EditorTabChild::Keymap(_) => None,
             EditorTabChild::Volt(_, _) => None,
             EditorTabChild::SdkManager(_) => None,
+            EditorTabChild::DatabaseManager(_) => None,
             EditorTabChild::RunConfigEditor(_) => None,
         }
     }
@@ -2236,6 +2278,7 @@ impl MainSplitData {
             EditorTabChild::Keymap(_) => {}
             EditorTabChild::Volt(_, _) => {}
             EditorTabChild::SdkManager(_) => {}
+            EditorTabChild::DatabaseManager(_) => {}
             EditorTabChild::RunConfigEditor(_) => {}
         }
 
@@ -2514,6 +2557,10 @@ impl MainSplitData {
 
     pub fn open_sdk_manager(&self) {
         self.get_editor_tab_child(EditorTabChildSource::SdkManager, false, false);
+    }
+
+    pub fn open_database_manager(&self) {
+        self.get_editor_tab_child(EditorTabChildSource::DatabaseManager, false, false);
     }
 
     pub fn open_run_config_editor(&self) {
@@ -2841,6 +2888,7 @@ impl MainSplitData {
             EditorTabChild::Keymap(_) => {}
             EditorTabChild::Volt(_, _) => {}
             EditorTabChild::SdkManager(_) => {}
+            EditorTabChild::DatabaseManager(_) => {}
             EditorTabChild::RunConfigEditor(_) => {}
         }
         Some(())

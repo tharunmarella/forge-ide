@@ -103,6 +103,7 @@ pub enum Focus {
     CodeAction,
     Rename,
     AboutPopup,
+    SearchPopup,
     Panel(PanelKind),
 }
 
@@ -883,6 +884,9 @@ impl WindowTabData {
             OpenSdkManager => {
                 self.main_split.open_sdk_manager();
             }
+            OpenDatabaseManager => {
+                self.main_split.open_database_manager();
+            }
             OpenRunConfigurations => {
                 self.main_split.open_run_config_editor();
             }
@@ -1307,7 +1311,13 @@ impl WindowTabData {
                 self.toggle_panel_visual(PanelKind::Debug);
             }
             ToggleSearchVisual => {
-                self.toggle_panel_visual(PanelKind::Search);
+                // Open search as a popup instead of side panel
+                let current_focus = self.common.focus.get_untracked();
+                if current_focus == Focus::SearchPopup {
+                    self.common.focus.set(Focus::Workbench);
+                } else {
+                    self.common.focus.set(Focus::SearchPopup);
+                }
             }
             FocusEditor => {
                 self.common.focus.set(Focus::Workbench);
@@ -2744,6 +2754,10 @@ impl WindowTabData {
             Focus::Panel(PanelKind::Search) => {
                 Some(keypress.key_down(event, &self.global_search))
             }
+            Focus::SearchPopup => {
+                // Use same key handling as global search
+                Some(keypress.key_down(event, &self.global_search))
+            }
             Focus::Panel(PanelKind::Plugin) => {
                 Some(keypress.key_down(event, &self.plugin))
             }
@@ -3092,6 +3106,7 @@ impl WindowTabData {
             PanelKind::FileExplorer
             | PanelKind::Plugin
             | PanelKind::SdkManager
+            | PanelKind::DatabaseManager
             | PanelKind::Problem
             | PanelKind::Debug
             | PanelKind::CallHierarchy

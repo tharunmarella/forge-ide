@@ -31,6 +31,7 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::Terminal,       // Icon in left, but opens at bottom
             PanelKind::Search,
             PanelKind::Plugin,         // Extensions/Plugins
+            PanelKind::DatabaseManager, // Opens as editor tab
             // Note: SdkManager opens as editor tab via command palette, not in sidebar
         ],
     );

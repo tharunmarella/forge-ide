@@ -520,6 +520,11 @@ fn panel_view(
                 PanelKind::SdkManager => {
                     sdk_panel(window_tab_data.clone(), position).into_any()
                 }
+                PanelKind::DatabaseManager => {
+                    // DatabaseManager opens as an editor tab, not a panel
+                    // This case should not be reached, but provide a placeholder
+                    floem::views::empty().into_any()
+                }
                 PanelKind::DocumentSymbol => {
                     symbol_panel(window_tab_data.clone(), position).into_any()
                 }
@@ -712,6 +717,7 @@ fn panel_icon_button(
         PanelKind::GitLog => "Git Log",
         PanelKind::Plugin => "Plugins",
         PanelKind::SdkManager => "SDK Manager",
+        PanelKind::DatabaseManager => "Database Manager",
         PanelKind::Search => "Search",
         PanelKind::Problem => "Problems",
         PanelKind::Debug => "Debug",
@@ -742,6 +748,9 @@ fn panel_icon_button(
                 if p == PanelKind::Terminal {
                     // Terminal opens at bottom, not in left panel
                     window_tab_data.toggle_panel_visual_at_position(p, PanelPosition::BottomLeft);
+                } else if p == PanelKind::DatabaseManager {
+                    // DatabaseManager opens as editor tab, not as a panel
+                    window_tab_data.main_split.open_database_manager();
                 } else {
                     window_tab_data.toggle_panel_visual(p);
                 }

@@ -98,7 +98,7 @@ use crate::{
         PaletteStatus,
         item::{PaletteItem, PaletteItemContent},
     },
-    panel::{position::PanelContainerPosition, sdk_view::sdk_manager_view, view::panel_container_view},
+    panel::{position::PanelContainerPosition, sdk_view::sdk_manager_view, database_view::database_manager_view, view::panel_container_view},
     plugin::{PluginData, plugin_info_view},
     run_config,
     settings::{settings_view, theme_color_settings_view},
@@ -1410,6 +1410,9 @@ fn editor_tab_content(
             }
             EditorTabChild::SdkManager(_) => {
                 sdk_manager_view(editors, common).into_any()
+            }
+            EditorTabChild::DatabaseManager(_) => {
+                database_manager_view(editors, common).into_any()
             }
             EditorTabChild::RunConfigEditor(_) => {
                 tracing::info!("app.rs: Creating RunConfigEditor view");
@@ -3342,6 +3345,7 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
         code_action(window_tab_data.clone()),
         rename(window_tab_data.clone()),
         palette(window_tab_data.clone()),
+        crate::search_popup::search_popup(window_tab_data.clone()),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
     ))

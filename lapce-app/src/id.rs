@@ -10,4 +10,5 @@ pub type VoltViewId = Id;
 pub type DiffEditorId = Id;
 pub type TerminalTabId = Id;
 pub type SdkManagerId = Id;
+pub type DatabaseManagerId = Id;
 pub type RunConfigEditorId = Id;

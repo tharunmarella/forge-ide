@@ -265,6 +265,10 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Open SDK Manager")]
     OpenSdkManager,
 
+    #[strum(serialize = "open_database_manager")]
+    #[strum(message = "Open Database Manager")]
+    OpenDatabaseManager,
+
     #[strum(serialize = "open_run_configurations")]
     #[strum(message = "Open Run Configurations")]
     OpenRunConfigurations,

@@ -62,6 +62,9 @@ impl LapceIcons {
     // SDK Manager
     pub const SDK: &'static str = "package";
     
+    // Database Manager
+    pub const DATABASE: &'static str = "database";
+    
     // Git Operations
     pub const GIT_COMMIT: &'static str = "git.commit";
     pub const GIT_PUSH: &'static str = "git.push";

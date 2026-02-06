@@ -1,5 +1,6 @@
 pub mod call_hierarchy_view;
 pub mod data;
+pub mod database_view;
 pub mod debug_view;
 pub mod document_symbol;
 pub mod git_log_view;
