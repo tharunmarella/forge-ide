@@ -30,6 +30,7 @@ pub mod panel;
 pub mod plugin;
 pub mod proxy;
 pub mod rename;
+pub mod run_config;
 pub mod settings;
 pub mod snippet;
 pub mod source_control;

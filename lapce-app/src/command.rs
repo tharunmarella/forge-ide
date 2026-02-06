@@ -261,6 +261,14 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Open Keyboard Shortcuts File")]
     OpenKeyboardShortcutsFile,
 
+    #[strum(serialize = "open_sdk_manager")]
+    #[strum(message = "Open SDK Manager")]
+    OpenSdkManager,
+
+    #[strum(serialize = "open_run_configurations")]
+    #[strum(message = "Open Run Configurations")]
+    OpenRunConfigurations,
+
     #[strum(serialize = "open_log_file")]
     #[strum(message = "Open Log File")]
     OpenLogFile,

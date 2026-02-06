@@ -31,7 +31,7 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::Terminal,       // Icon in left, but opens at bottom
             PanelKind::Search,
             PanelKind::Plugin,         // Extensions/Plugins
-            PanelKind::SdkManager,     // SDK/Toolchain Manager (proto)
+            // Note: SdkManager opens as editor tab via command palette, not in sidebar
         ],
     );
     // Bottom panel: auxiliary panels (Terminal and GitLog have their own headers)

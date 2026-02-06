@@ -880,6 +880,12 @@ impl WindowTabData {
             OpenKeyboardShortcuts => {
                 self.main_split.open_keymap();
             }
+            OpenSdkManager => {
+                self.main_split.open_sdk_manager();
+            }
+            OpenRunConfigurations => {
+                self.main_split.open_run_config_editor();
+            }
             OpenKeyboardShortcutsFile => {
                 if let Some(path) = LapceConfig::keymaps_file() {
                     self.main_split.jump_to_location(

@@ -744,68 +744,19 @@ fn middle(
     workbench_command: Listener<LapceWorkbenchCommand>,
     config: ReadSignal<Arc<LapceConfig>>,
 ) -> impl View {
-    let can_jump_backward = {
-        let main_split = main_split.clone();
-        create_memo(move |_| main_split.can_jump_location_backward(true))
-    };
-    let can_jump_forward =
-        create_memo(move |_| main_split.can_jump_location_forward(true));
+    // Suppress unused warnings
+    let _ = main_split;
+    let _ = workbench_command;
+    let _ = config;
 
-    let jump_backward = move || {
-        clickable_icon(
-            || LapceIcons::LOCATION_BACKWARD,
-            move || {
-                workbench_command.send(LapceWorkbenchCommand::JumpLocationBackward);
-            },
-            || false,
-            move || !can_jump_backward.get(),
-            || "Jump Backward",
-            config,
-        )
-        .style(move |s| s.margin_horiz(6.0))
-    };
-    let jump_forward = move || {
-        clickable_icon(
-            || LapceIcons::LOCATION_FORWARD,
-            move || {
-                workbench_command.send(LapceWorkbenchCommand::JumpLocationForward);
-            },
-            || false,
-            move || !can_jump_forward.get(),
-            || "Jump Forward",
-            config,
-        )
-        .style(move |s| s.margin_right(6.0))
-    };
-
-    // Simplified middle section - just navigation buttons and drag area (IntelliJ-style)
-    stack((
-        drag_window_area(empty())
-            .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0)),
-        jump_backward(),
-        jump_forward(),
-        clickable_icon(
-            || LapceIcons::START,
-            move || {
-                workbench_command.send(LapceWorkbenchCommand::PaletteRunAndDebug)
-            },
-            || false,
-            || false,
-            || "Run and Debug",
-            config,
-        )
-        .style(move |s| s.margin_horiz(6.0)),
-        drag_window_area(empty())
-            .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0)),
-    ))
-    .style(|s| {
-        s.flex_basis(0)
-            .flex_grow(2.0)
-            .height_pct(100.0)
-            .align_items(Some(AlignItems::Center))
-            .justify_content(Some(JustifyContent::Center))
-    })
-    .debug_name("Middle of Top Bar")
+    // Clean middle section - just drag area for window movement
+    drag_window_area(empty())
+        .style(|s| {
+            s.flex_basis(0)
+                .flex_grow(2.0)
+                .height_pct(100.0)
+        })
+        .debug_name("Middle of Top Bar")
 }
 
 fn right(
@@ -835,6 +786,28 @@ fn right(
     stack((
         drag_window_area(empty())
             .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0)),
+        // Run Configurations icon
+        clickable_icon(
+            || LapceIcons::START,
+            move || {
+                workbench_command.send(LapceWorkbenchCommand::OpenRunConfigurations);
+            },
+            || false,
+            || false,
+            || "Run Configurations",
+            config,
+        ),
+        // SDK Manager icon
+        clickable_icon(
+            || LapceIcons::SDK,
+            move || {
+                workbench_command.send(LapceWorkbenchCommand::OpenSdkManager);
+            },
+            || false,
+            || false,
+            || "SDK Manager",
+            config,
+        ),
         stack((
             not_clickable_icon(
                 || LapceIcons::SETTINGS,

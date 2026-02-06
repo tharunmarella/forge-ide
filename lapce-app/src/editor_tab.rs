@@ -28,7 +28,7 @@ use crate::{
     },
     id::{
         DiffEditorId, EditorTabId, KeymapId, SettingsId, SplitId,
-        ThemeColorSettingsId, VoltViewId, SdkManagerId,
+        ThemeColorSettingsId, VoltViewId, SdkManagerId, RunConfigEditorId,
     },
     main_split::{Editors, MainSplitData},
     plugin::PluginData,
@@ -44,6 +44,7 @@ pub enum EditorTabChildInfo {
     Keymap,
     Volt(VoltID),
     SdkManager,
+    RunConfigEditor,
 }
 
 impl EditorTabChildInfo {
@@ -73,6 +74,9 @@ impl EditorTabChildInfo {
             }
             EditorTabChildInfo::SdkManager => {
                 EditorTabChild::SdkManager(SdkManagerId::next())
+            }
+            EditorTabChildInfo::RunConfigEditor => {
+                EditorTabChild::RunConfigEditor(RunConfigEditorId::next())
             }
         }
     }
@@ -136,6 +140,7 @@ pub enum EditorTabChildSource {
     Keymap,
     Volt(VoltID),
     SdkManager,
+    RunConfigEditor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,6 +152,7 @@ pub enum EditorTabChild {
     Keymap(KeymapId),
     Volt(VoltViewId, VoltID),
     SdkManager(SdkManagerId),
+    RunConfigEditor(RunConfigEditorId),
 }
 
 #[derive(PartialEq)]
@@ -169,6 +175,7 @@ impl EditorTabChild {
             EditorTabChild::Keymap(id) => id.to_raw(),
             EditorTabChild::Volt(id, _) => id.to_raw(),
             EditorTabChild::SdkManager(id) => id.to_raw(),
+            EditorTabChild::RunConfigEditor(id) => id.to_raw(),
         }
     }
 
@@ -203,6 +210,7 @@ impl EditorTabChild {
             EditorTabChild::Keymap(_) => EditorTabChildInfo::Keymap,
             EditorTabChild::Volt(_, id) => EditorTabChildInfo::Volt(id.to_owned()),
             EditorTabChild::SdkManager(_) => EditorTabChildInfo::SdkManager,
+            EditorTabChild::RunConfigEditor(_) => EditorTabChildInfo::RunConfigEditor,
         }
     }
 
@@ -412,6 +420,17 @@ impl EditorTabChild {
                     icon: config.ui_svg(LapceIcons::SDK),
                     color: Some(config.color(LapceColor::LAPCE_ICON_ACTIVE)),
                     name: "SDK Manager".to_string(),
+                    path: None,
+                    confirmed: None,
+                    is_pristine: true,
+                }
+            }),
+            EditorTabChild::RunConfigEditor(_) => create_memo(move |_| {
+                let config = config.get();
+                EditorTabChildViewInfo {
+                    icon: config.ui_svg(LapceIcons::START),
+                    color: Some(config.color(LapceColor::LAPCE_ICON_ACTIVE)),
+                    name: "Run Configurations".to_string(),
                     path: None,
                     confirmed: None,
                     is_pristine: true,

@@ -98,8 +98,9 @@ use crate::{
         PaletteStatus,
         item::{PaletteItem, PaletteItemContent},
     },
-    panel::{position::PanelContainerPosition, view::panel_container_view},
+    panel::{position::PanelContainerPosition, sdk_view::sdk_manager_view, view::panel_container_view},
     plugin::{PluginData, plugin_info_view},
+    run_config,
     settings::{settings_view, theme_color_settings_view},
     status::status,
     text_input::TextInputBuilder,
@@ -1406,6 +1407,15 @@ fn editor_tab_content(
             EditorTabChild::Keymap(_) => keymap_view(editors, common).into_any(),
             EditorTabChild::Volt(_, id) => {
                 plugin_info_view(plugin.clone(), id).into_any()
+            }
+            EditorTabChild::SdkManager(_) => {
+                sdk_manager_view(editors, common).into_any()
+            }
+            EditorTabChild::RunConfigEditor(_) => {
+                tracing::info!("app.rs: Creating RunConfigEditor view");
+                let view = run_config::run_config_editor_view(editors, common);
+                tracing::info!("app.rs: RunConfigEditor view created, converting to any");
+                view.into_any()
             }
         };
         child.style(|s| s.size_full())

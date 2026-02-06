@@ -382,6 +382,16 @@ pub enum ProxyRequest {
     ProtoGetProjectConfig {},
     ProtoSetupProject {},
     ProtoDetectProjectTools {},
+    
+    // Run Configuration Detection
+    DetectRunConfigs {},
+    SaveRunConfig {
+        config: crate::dap_types::RunDebugConfig,
+    },
+    DeleteRunConfig {
+        name: String,
+    },
+    GetRunConfigs {},
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -736,6 +746,19 @@ pub enum ProxyResponse {
     ProtoDetectedToolsResponse {
         tools: Vec<(String, String)>,
     },
+    
+    // Run Configuration Responses
+    DetectedRunConfigsResponse {
+        configs: Vec<DetectedRunConfig>,
+    },
+    RunConfigsResponse {
+        detected: Vec<DetectedRunConfig>,
+        user: Vec<crate::dap_types::RunDebugConfig>,
+    },
+    RunConfigSaveResponse {
+        success: bool,
+        message: String,
+    },
 }
 
 /// Information about an installed proto tool
@@ -745,6 +768,23 @@ pub struct ProtoToolInfo {
     pub version: String,
     pub path: Option<PathBuf>,
     pub is_default: bool,
+}
+
+/// A run configuration detected from project files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectedRunConfig {
+    /// Display name (e.g., "npm start", "cargo run")
+    pub name: String,
+    /// Type of configuration (e.g., "npm", "cargo", "python", "make")
+    pub config_type: String,
+    /// The command to run (e.g., "npm", "cargo")
+    pub command: String,
+    /// Arguments for the command
+    pub args: Vec<String>,
+    /// Working directory (usually workspace root)
+    pub cwd: Option<String>,
+    /// Source file that this was detected from
+    pub source: String,
 }
 
 pub type ProxyMessage = RpcMessage<ProxyRequest, ProxyNotification, ProxyResponse>;
@@ -1859,6 +1899,27 @@ impl ProxyRpcHandler {
 
     pub fn proto_detect_project_tools(&self, f: impl ProxyCallback + 'static) {
         self.request_async(ProxyRequest::ProtoDetectProjectTools {}, f);
+    }
+    
+    // Run Configuration methods
+    pub fn detect_run_configs(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DetectRunConfigs {}, f);
+    }
+    
+    pub fn get_run_configs(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::GetRunConfigs {}, f);
+    }
+    
+    pub fn save_run_config(
+        &self,
+        config: crate::dap_types::RunDebugConfig,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::SaveRunConfig { config }, f);
+    }
+    
+    pub fn delete_run_config(&self, name: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DeleteRunConfig { name }, f);
     }
 }
 

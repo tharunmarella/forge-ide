@@ -71,83 +71,77 @@ impl ProtoManager {
         Ok(version)
     }
 
-    /// List all installed tools
+    /// List all installed tools by scanning ~/.proto/tools directory
     pub fn list_installed_tools(&self) -> Result<Vec<ProtoTool>> {
-        let output = Command::new("proto")
-            .arg("list")
-            .arg("--json")
-            .output()
-            .context("Failed to run proto list")?;
-
-        if !output.status.success() {
-            // Try without --json for older versions
-            return self.list_installed_tools_text();
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        
-        // Parse JSON output
-        // Proto outputs: { "tool_name": { "versions": [...], "default": "x.y.z" } }
-        let parsed: HashMap<String, serde_json::Value> = 
-            serde_json::from_str(&stdout).unwrap_or_default();
-
         let mut tools = Vec::new();
-        for (name, info) in parsed {
-            if let Some(obj) = info.as_object() {
-                let default_version = obj.get("default")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+        
+        // Get proto home directory
+        let proto_home = std::env::var("PROTO_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                directories::UserDirs::new()
+                    .map(|d| d.home_dir().to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("/"))
+                    .join(".proto")
+            });
+        
+        let tools_dir = proto_home.join("tools");
+        
+        if !tools_dir.exists() {
+            return Ok(tools);
+        }
+        
+        // Scan each tool directory
+        if let Ok(entries) = std::fs::read_dir(&tools_dir) {
+            for entry in entries.flatten() {
+                let tool_path = entry.path();
+                if !tool_path.is_dir() {
+                    continue;
+                }
                 
-                if let Some(versions) = obj.get("versions").and_then(|v| v.as_array()) {
-                    for ver in versions {
-                        if let Some(version) = ver.as_str() {
-                            tools.push(ProtoTool {
-                                name: name.clone(),
-                                version: version.to_string(),
-                                path: None,
-                                is_default: version == default_version,
-                            });
+                let tool_name = tool_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                
+                if tool_name.is_empty() {
+                    continue;
+                }
+                
+                // Scan version directories inside each tool
+                if let Ok(versions) = std::fs::read_dir(&tool_path) {
+                    let mut version_list: Vec<String> = Vec::new();
+                    
+                    for ver_entry in versions.flatten() {
+                        let ver_path = ver_entry.path();
+                        let ver_name = ver_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("");
+                        
+                        // Skip manifest files, only include version directories
+                        if ver_path.is_dir() && !ver_name.starts_with('.') {
+                            version_list.push(ver_name.to_string());
                         }
+                    }
+                    
+                    // Sort versions (newest first)
+                    version_list.sort();
+                    version_list.reverse();
+                    
+                    for (i, version) in version_list.iter().enumerate() {
+                        tools.push(ProtoTool {
+                            name: tool_name.clone(),
+                            version: version.clone(),
+                            path: Some(tool_path.join(version)),
+                            is_default: i == 0, // First (latest) version is default
+                        });
                     }
                 }
             }
         }
-
-        Ok(tools)
-    }
-
-    /// Fallback: parse text output from proto list
-    fn list_installed_tools_text(&self) -> Result<Vec<ProtoTool>> {
-        let output = Command::new("proto")
-            .arg("list")
-            .output()
-            .context("Failed to run proto list")?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut tools = Vec::new();
-
-        // Parse text output line by line
-        // Format: "tool_name - version (default)" or "tool_name - version"
-        for line in stdout.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with("No tools") {
-                continue;
-            }
-
-            // Try to parse "name - version" format
-            if let Some((name, rest)) = line.split_once(" - ") {
-                let is_default = rest.contains("(default)");
-                let version = rest.replace("(default)", "").trim().to_string();
-                
-                tools.push(ProtoTool {
-                    name: name.trim().to_string(),
-                    version,
-                    path: None,
-                    is_default,
-                });
-            }
-        }
-
+        
         Ok(tools)
     }
 
@@ -306,12 +300,13 @@ impl ProtoManager {
     pub fn detect_project_tools(workspace: &Path) -> Vec<(String, String)> {
         let mut tools = Vec::new();
 
-        // Check for various project files and suggest tools
+        // Check for various project files and suggest stable tool versions
         if workspace.join("Cargo.toml").exists() {
             tools.push(("rust".to_string(), "stable".to_string()));
         }
 
         if workspace.join("package.json").exists() {
+            // Use LTS version for Node.js
             tools.push(("node".to_string(), "lts".to_string()));
         }
 
@@ -319,11 +314,13 @@ impl ProtoManager {
             || workspace.join("pyproject.toml").exists()
             || workspace.join("setup.py").exists() 
         {
-            tools.push(("python".to_string(), "latest".to_string()));
+            // Use stable Python 3.12 (well-supported, has pre-built binaries)
+            tools.push(("python".to_string(), "3.12".to_string()));
         }
 
         if workspace.join("go.mod").exists() {
-            tools.push(("go".to_string(), "latest".to_string()));
+            // Use stable Go version
+            tools.push(("go".to_string(), "1.22".to_string()));
         }
 
         if workspace.join("deno.json").exists() 

@@ -1801,6 +1801,151 @@ impl ProxyHandler for Dispatcher {
                 };
                 self.respond_rpc(id, Ok(ProxyResponse::ProtoDetectedToolsResponse { tools }));
             }
+            
+            // Run Configuration Detection
+            DetectRunConfigs {} => {
+                use crate::run_config_detector::detect_run_configs;
+                let configs = if let Some(workspace) = self.workspace.as_ref() {
+                    detect_run_configs(workspace)
+                } else {
+                    Vec::new()
+                };
+                self.respond_rpc(id, Ok(ProxyResponse::DetectedRunConfigsResponse { configs }));
+            }
+            
+            GetRunConfigs {} => {
+                use crate::run_config_detector::detect_run_configs;
+                
+                tracing::info!("GetRunConfigs: Starting");
+                
+                let detected = if let Some(workspace) = self.workspace.as_ref() {
+                    tracing::info!("GetRunConfigs: Detecting configs in {:?}", workspace);
+                    detect_run_configs(workspace)
+                } else {
+                    tracing::info!("GetRunConfigs: No workspace");
+                    Vec::new()
+                };
+                
+                tracing::info!("GetRunConfigs: Found {} detected configs", detected.len());
+                
+                // Load user configs from .lapce/run.toml
+                let user = if let Some(workspace) = self.workspace.as_ref() {
+                    let run_toml = workspace.join(".lapce").join("run.toml");
+                    if run_toml.exists() {
+                        tracing::info!("GetRunConfigs: Loading user configs from {:?}", run_toml);
+                        if let Ok(content) = std::fs::read_to_string(&run_toml) {
+                            #[derive(serde::Deserialize)]
+                            struct RunConfigs {
+                                configs: Vec<lapce_rpc::dap_types::RunDebugConfig>,
+                            }
+                            toml::from_str::<RunConfigs>(&content)
+                                .map(|c| c.configs)
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        tracing::info!("GetRunConfigs: No run.toml file");
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+                
+                tracing::info!("GetRunConfigs: Responding with {} detected, {} user configs", detected.len(), user.len());
+                self.respond_rpc(id, Ok(ProxyResponse::RunConfigsResponse { detected, user }));
+            }
+            
+            SaveRunConfig { config } => {
+                let result = if let Some(workspace) = self.workspace.as_ref() {
+                    let lapce_dir = workspace.join(".lapce");
+                    if !lapce_dir.exists() {
+                        let _ = std::fs::create_dir_all(&lapce_dir);
+                    }
+                    let run_toml = lapce_dir.join("run.toml");
+                    
+                    // Load existing configs
+                    #[derive(serde::Deserialize, serde::Serialize)]
+                    struct RunConfigs {
+                        configs: Vec<lapce_rpc::dap_types::RunDebugConfig>,
+                    }
+                    
+                    let mut configs = if run_toml.exists() {
+                        std::fs::read_to_string(&run_toml)
+                            .ok()
+                            .and_then(|c| toml::from_str::<RunConfigs>(&c).ok())
+                            .map(|c| c.configs)
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    
+                    // Update or add config
+                    if let Some(pos) = configs.iter().position(|c| c.name == config.name) {
+                        configs[pos] = config;
+                    } else {
+                        configs.push(config);
+                    }
+                    
+                    // Save
+                    match toml::to_string_pretty(&RunConfigs { configs }) {
+                        Ok(content) => {
+                            match std::fs::write(&run_toml, content) {
+                                Ok(_) => (true, "Configuration saved".to_string()),
+                                Err(e) => (false, format!("Failed to save: {}", e)),
+                            }
+                        }
+                        Err(e) => (false, format!("Failed to serialize: {}", e)),
+                    }
+                } else {
+                    (false, "No workspace open".to_string())
+                };
+                
+                self.respond_rpc(id, Ok(ProxyResponse::RunConfigSaveResponse { 
+                    success: result.0, 
+                    message: result.1 
+                }));
+            }
+            
+            DeleteRunConfig { name } => {
+                let result = if let Some(workspace) = self.workspace.as_ref() {
+                    let run_toml = workspace.join(".lapce").join("run.toml");
+                    
+                    #[derive(serde::Deserialize, serde::Serialize)]
+                    struct RunConfigs {
+                        configs: Vec<lapce_rpc::dap_types::RunDebugConfig>,
+                    }
+                    
+                    if run_toml.exists() {
+                        let mut configs = std::fs::read_to_string(&run_toml)
+                            .ok()
+                            .and_then(|c| toml::from_str::<RunConfigs>(&c).ok())
+                            .map(|c| c.configs)
+                            .unwrap_or_default();
+                        
+                        configs.retain(|c| c.name != name);
+                        
+                        match toml::to_string_pretty(&RunConfigs { configs }) {
+                            Ok(content) => {
+                                match std::fs::write(&run_toml, content) {
+                                    Ok(_) => (true, "Configuration deleted".to_string()),
+                                    Err(e) => (false, format!("Failed to save: {}", e)),
+                                }
+                            }
+                            Err(e) => (false, format!("Failed to serialize: {}", e)),
+                        }
+                    } else {
+                        (true, "No configurations to delete".to_string())
+                    }
+                } else {
+                    (false, "No workspace open".to_string())
+                };
+                
+                self.respond_rpc(id, Ok(ProxyResponse::RunConfigSaveResponse { 
+                    success: result.0, 
+                    message: result.1 
+                }));
+            }
         }
     }
 }

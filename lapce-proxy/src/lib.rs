@@ -6,6 +6,7 @@ pub mod dispatch;
 pub mod gix_utils;
 pub mod plugin;
 pub mod proto_manager;
+pub mod run_config_detector;
 pub mod terminal;
 pub mod watcher;
 
