@@ -335,11 +335,95 @@ impl ProxyHandler for Dispatcher {
             }
             GitCommit { message, diffs } => {
                 if let Some(workspace) = self.workspace.as_ref() {
+                    let file_count = diffs.len();
                     match git_commit(workspace, &message, diffs) {
-                        Ok(()) => (),
+                        Ok(()) => {
+                            let msg = if file_count == 1 {
+                                "1 file committed successfully.".to_string()
+                            } else {
+                                format!("{} files committed successfully.", file_count)
+                            };
+                            self.core_rpc.show_message(
+                                "Commit Successful".to_owned(),
+                                ShowMessageParams {
+                                    typ: MessageType::INFO,
+                                    message: msg,
+                                },
+                            );
+                        }
                         Err(e) => {
                             self.core_rpc.show_message(
-                                "Git Commit failure".to_owned(),
+                                "Commit Failed".to_owned(),
+                                ShowMessageParams {
+                                    typ: MessageType::ERROR,
+                                    message: e.to_string(),
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+            GitCommitAndPush { message, diffs } => {
+                if let Some(workspace) = self.workspace.as_ref() {
+                    let file_count = diffs.len();
+                    match git_commit(workspace, &message, diffs) {
+                        Ok(()) => {
+                            // Now push
+                            let push_result = std::process::Command::new("git")
+                                .arg("push")
+                                .current_dir(workspace)
+                                .output();
+                            
+                            match push_result {
+                                Ok(output) => {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    let combined = format!("{}{}", stdout, stderr);
+                                    
+                                    if output.status.success() {
+                                        let commit_msg = if file_count == 1 {
+                                            "1 file committed".to_string()
+                                        } else {
+                                            format!("{} files committed", file_count)
+                                        };
+                                        
+                                        let push_msg = if combined.contains("Everything up-to-date") {
+                                            "already synced with remote".to_string()
+                                        } else {
+                                            "pushed to remote".to_string()
+                                        };
+                                        
+                                        self.core_rpc.show_message(
+                                            "Commit & Push Successful".to_owned(),
+                                            ShowMessageParams {
+                                                typ: MessageType::INFO,
+                                                message: format!("{} and {}.", commit_msg, push_msg),
+                                            },
+                                        );
+                                    } else {
+                                        self.core_rpc.show_message(
+                                            "Push Failed".to_owned(),
+                                            ShowMessageParams {
+                                                typ: MessageType::ERROR,
+                                                message: format!("Commit succeeded but push failed: {}", stderr),
+                                            },
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    self.core_rpc.show_message(
+                                        "Push Failed".to_owned(),
+                                        ShowMessageParams {
+                                            typ: MessageType::ERROR,
+                                            message: format!("Commit succeeded but push failed: {}", e),
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.core_rpc.show_message(
+                                "Commit Failed".to_owned(),
                                 ShowMessageParams {
                                     typ: MessageType::ERROR,
                                     message: e.to_string(),
@@ -549,15 +633,24 @@ impl ProxyHandler for Dispatcher {
                 }
             }
             GitLog { limit, skip, branch, author, search } => {
+                eprintln!("[GIT_LOG] Request received: limit={}, skip={}", limit, skip);
                 let result = if let Some(workspace) = self.workspace.as_ref() {
+                    eprintln!("[GIT_LOG] Workspace: {:?}", workspace);
                     match git_log(workspace, limit, skip, branch, author, search) {
-                        Ok(result) => Ok(ProxyResponse::GitLogResponse { result }),
-                        Err(e) => Err(RpcError {
-                            code: 0,
-                            message: format!("git log error: {}", e),
-                        }),
+                        Ok(result) => {
+                            eprintln!("[GIT_LOG] Success: {} commits found, total: {}", result.commits.len(), result.total_count);
+                            Ok(ProxyResponse::GitLogResponse { result })
+                        },
+                        Err(e) => {
+                            eprintln!("[GIT_LOG] Error: {}", e);
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("git log error: {}", e),
+                            })
+                        },
                     }
                 } else {
+                    eprintln!("[GIT_LOG] No workspace set!");
                     Err(RpcError {
                         code: 0,
                         message: "no workspace set".to_string(),
@@ -1855,8 +1948,8 @@ fn git_commit(
     
     // Commit using gix_utils
     crate::gix_utils::commit(workspace_path, message)?;
-    Ok(())
-}
+            Ok(())
+        }
 
 use lapce_rpc::source_control::{GitCheckoutResult, GitCheckoutStatus};
 
@@ -2028,7 +2121,7 @@ fn git_force_checkout(workspace_path: &Path, reference: &str) -> Result<GitCheck
 fn git_checkout(workspace_path: &Path, reference: &str) -> Result<()> {
     let result = git_force_checkout(workspace_path, reference)?;
     if result.status == GitCheckoutStatus::Success {
-        Ok(())
+    Ok(())
     } else {
         Err(anyhow::anyhow!(result.message))
     }
@@ -2207,13 +2300,14 @@ fn git_log(
     
     // Build git log command with custom format
     // Format: hash|short_hash|author_name|author_email|timestamp|parent_hashes|summary|message
-    let format = "%H|%h|%an|%ae|%at|%P|%s|%B\x00";
+    // The -z flag makes git separate records with NUL bytes
+    let format = "%H|%h|%an|%ae|%at|%P|%s|%B";
     
     let mut args = vec![
         "log".to_string(),
         format!("--format={}", format),
         format!("-n{}", limit + skip), // Get extra to handle skip
-        "-z".to_string(), // Use NUL as record separator
+        "-z".to_string(), // Use NUL as record separator between commits
     ];
     
     if let Some(ref author_filter) = author {
@@ -2234,7 +2328,11 @@ fn git_log(
         .args(&args)
         .current_dir(workspace_path)
         .output()
-        .context("Failed to run git log")?;
+        .map_err(|e| {
+            eprintln!("[GIT_LOG] Command::new(\"git\") failed: {:?}", e);
+            eprintln!("[GIT_LOG] PATH: {:?}", std::env::var("PATH"));
+            anyhow::anyhow!("Failed to run git log: {}", e)
+        })?;
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

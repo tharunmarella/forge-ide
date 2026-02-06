@@ -187,10 +187,13 @@ pub fn source_control_panel(
                     let source_control = source_control.clone();
                     label(|| "Commit".to_string())
                         .on_click_stop(move |_| {
-                            source_control.commit();
+                            if !is_empty.get_untracked() {
+                                source_control.commit();
+                            }
                         })
                         .style(move |s| {
                             let config = config.get();
+                            let disabled = is_empty.get();
                             s.line_height(1.6)
                                 .flex_grow(1.0)
                                 .justify_center()
@@ -199,16 +202,21 @@ pub fn source_control_panel(
                                 .border(1.0)
                                 .border_radius(6.0)
                                 .border_color(config.color(LapceColor::LAPCE_BORDER))
-                                .hover(|s| {
-                                    s.cursor(CursorStyle::Pointer).background(
-                                        config
-                                            .color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                                    )
+                                .apply_if(disabled, |s| {
+                                    s.color(config.color(LapceColor::EDITOR_DIM))
+                                        .cursor(CursorStyle::Default)
                                 })
-                                .active(|s| {
-                                    s.background(config.color(
-                                        LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                    ))
+                                .apply_if(!disabled, |s| {
+                                    s.hover(|s| {
+                                        s.cursor(CursorStyle::Pointer).background(
+                                            config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                        )
+                                    })
+                                    .active(|s| {
+                                        s.background(config.color(
+                                            LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
+                                        ))
+                                    })
                                 })
                                 .selectable(false)
                         })
@@ -217,12 +225,13 @@ pub fn source_control_panel(
                     let source_control = source_control.clone();
                     label(|| "Commit & Push".to_string())
                         .on_click_stop(move |_| {
-                            source_control.commit();
-                            // Trigger push after commit
-                            workbench_command.send(LapceWorkbenchCommand::GitPush);
+                            if !is_empty.get_untracked() {
+                                source_control.commit_and_push();
+                            }
                         })
                         .style(move |s| {
                             let config = config.get();
+                            let disabled = is_empty.get();
                             s.margin_left(8.0)
                                 .line_height(1.6)
                                 .flex_grow(1.0)
@@ -232,18 +241,32 @@ pub fn source_control_panel(
                                 .border(1.0)
                                 .border_radius(6.0)
                                 .border_color(config.color(LapceColor::LAPCE_BORDER))
-                                .background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
-                                .color(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND))
-                                .hover(|s| {
-                                    s.cursor(CursorStyle::Pointer).background(
-                                        config
-                                            .color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                .apply_if(disabled, |s| {
+                                    s.background(
+                                        config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                                            .multiply_alpha(0.4)
                                     )
+                                    .color(
+                                        config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND)
+                                            .multiply_alpha(0.5)
+                                    )
+                                    .cursor(CursorStyle::Default)
                                 })
-                                .active(|s| {
-                                    s.background(config.color(
-                                        LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                    ))
+                                .apply_if(!disabled, |s| {
+                                    s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
+                                        .color(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND))
+                                        .hover(|s| {
+                                            s.cursor(CursorStyle::Pointer).background(
+                                                config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                                                    .multiply_alpha(0.85),
+                                            )
+                                        })
+                                        .active(|s| {
+                                            s.background(
+                                                config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                                                    .multiply_alpha(0.7),
+                                            )
+                                        })
                                 })
                                 .selectable(false)
                         })

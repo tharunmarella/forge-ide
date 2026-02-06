@@ -35,6 +35,7 @@ pub fn git_log_panel(
     let config = window_tab_data.common.config;
     let source_control = window_tab_data.source_control.clone();
     let commits = source_control.commits;
+    let commits_loading = source_control.commits_loading;
     let proxy = window_tab_data.common.proxy.clone();
     let scope = window_tab_data.scope;
     
@@ -78,6 +79,21 @@ pub fn git_log_panel(
                         }),
                 ))
                 .style(|s| s.items_center().flex_grow(1.0)),
+                // Refresh button
+                {
+                    let source_control = source_control.clone();
+                    clickable_icon(
+                        || LapceIcons::DEBUG_RESTART,
+                        move || {
+                            source_control.load_git_log();
+                        },
+                        || false,
+                        || false,
+                        || "Refresh",
+                        config,
+                    )
+                    .style(|s| s.margin_right(4.0))
+                },
                 // Close button
                 clickable_icon(
                     || LapceIcons::CLOSE,
@@ -106,13 +122,41 @@ pub fn git_log_panel(
         stack((
             // Left side: Commit list (30%)
             scroll(
-            dyn_stack(
-                move || {
-                    let commits_list = commits.get();
-                    commits_list.into_iter().enumerate().collect::<Vec<_>>()
-                },
-                move |(index, commit)| (commit.id.clone(), *index),
-                move |(index, commit)| {
+            stack((
+                // Empty state message
+                dyn_stack(
+                    move || {
+                        let commits_list = commits.get();
+                        let loading = commits_loading.get();
+                        if commits_list.is_empty() && !loading {
+                            vec![("empty", "No commits found. Click the branch name in the status bar to load.")]
+                        } else if loading {
+                            vec![("loading", "Loading commits...")]
+                        } else {
+                            vec![]
+                        }
+                    },
+                    |(id, _)| id.to_string(),
+                    move |(_, msg)| {
+                        label(move || msg.to_string())
+                            .style(move |s| {
+                                let config = config.get();
+                                s.padding(16.0)
+                                    .width_pct(100.0)
+                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                    .font_size(bottom_font_size())
+                            })
+                    },
+                )
+                .style(|s| s.flex_col().width_pct(100.0)),
+                // Commit list
+                dyn_stack(
+                    move || {
+                        let commits_list = commits.get();
+                        commits_list.into_iter().enumerate().collect::<Vec<_>>()
+                    },
+                    move |(index, commit)| (commit.id.clone(), *index),
+                    move |(index, commit)| {
                     let commit_clone = commit.clone();
                     let commit_id_for_click = commit.id.clone();
                     let proxy_for_click = proxy.clone();
@@ -223,6 +267,8 @@ pub fn git_log_panel(
                     })
                 },
             )
+            .style(|s| s.flex_col().width_pct(100.0)),
+            ))
             .style(|s| s.flex_col().width_pct(100.0)),
         )
         .style(move |s| {

@@ -417,28 +417,29 @@ pub fn panel_container_view(
             ),
         ))
     } else {
-        // Bottom panel: hide panel pickers when GitLog is active
+        // Bottom panel: hide panel pickers when GitLog or Terminal is active
+        // (these panels have their own header/tab management)
         let panel_for_check1 = panel.clone();
         let panel_for_check2 = panel.clone();
         
         stack((
             container(panel_picker(window_tab_data.clone(), position.first()))
                 .style(move |s| {
-                    let is_git_log = panel_for_check1
+                    let should_hide = panel_for_check1
                         .active_panel_at_position(&PanelPosition::BottomLeft, true)
-                        .map(|(kind, shown)| shown && kind == PanelKind::GitLog)
+                        .map(|(kind, shown)| shown && (kind == PanelKind::GitLog || kind == PanelKind::Terminal))
                         .unwrap_or(false);
-                    s.apply_if(is_git_log, |s| s.hide())
+                    s.apply_if(should_hide, |s| s.hide())
                 }),
             panel_view(window_tab_data.clone(), position.first()),
             panel_view(window_tab_data.clone(), position.second()),
             container(panel_picker(window_tab_data.clone(), position.second()))
                 .style(move |s| {
-                    let is_git_log = panel_for_check2
+                    let should_hide = panel_for_check2
                         .active_panel_at_position(&PanelPosition::BottomLeft, true)
-                        .map(|(kind, shown)| shown && kind == PanelKind::GitLog)
+                        .map(|(kind, shown)| shown && (kind == PanelKind::GitLog || kind == PanelKind::Terminal))
                         .unwrap_or(false);
-                    s.apply_if(is_git_log, |s| s.hide())
+                    s.apply_if(should_hide, |s| s.hide())
                 }),
             resize_drag_view(position),
             stack((drop_view(position.first()), drop_view(position.second()))).style(
@@ -844,17 +845,21 @@ fn panel_picker(
         },
     )
     .style(move |s| {
+        let config = config.get();
         s.flex_col()
-            .border_color(config.get().color(LapceColor::LAPCE_BORDER))
+            .border_color(config.color(LapceColor::LAPCE_BORDER))
+            .background(config.color(LapceColor::PANEL_BACKGROUND))
             .apply_if(
                 panels.with(|p| {
                     p.get(&position).map(|p| p.is_empty()).unwrap_or(true)
                 }),
                 |s| s.hide(),
             )
+            // Bottom panel icon borders
             .apply_if(is_bottom && is_first, |s| s.border_right(1.0))
             .apply_if(is_bottom && !is_first, |s| s.border_left(1.0))
-            .apply_if(!is_bottom && is_first, |s| s.border_bottom(1.0))
-            .apply_if(!is_bottom && !is_first, |s| s.border_top(1.0))
+            // Left/Right panel icon borders - add right border to separate from content
+            .apply_if(!is_bottom && is_first, |s| s.border_right(1.0))
+            .apply_if(!is_bottom && !is_first, |s| s.border_left(1.0))
     })
 }

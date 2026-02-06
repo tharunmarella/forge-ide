@@ -339,11 +339,11 @@ fn branch_dropdown_overlay(
                                                 .font_size(config.ui.font_size() as f32)
                                                 .color(config.color(LapceColor::EDITOR_CARET))
                                         }),
-                                    // Chevron arrow
-                                    svg(move || config.get().ui_svg(LapceIcons::ITEM_OPENED))
+                                    // Chevron arrow (>)
+                                    svg(move || config.get().ui_svg(LapceIcons::ITEM_CLOSED))
                                         .style(move |s| {
                                             let config = config.get();
-                                            let icon_size = (config.ui.icon_size() - 4) as f32;
+                                            let icon_size = (config.ui.icon_size() - 2) as f32;
                                             s.size(icon_size, icon_size)
                                                 .color(config.color(LapceColor::LAPCE_ICON_INACTIVE))
                                         }),
@@ -392,21 +392,6 @@ fn branch_dropdown_overlay(
         let show_info = show_info.clone();
         container(
             stack((
-                // Branch name header
-                container(
-                    label(move || {
-                        selected_branch.get().unwrap_or_else(|| "".to_string())
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        s.font_bold()
-                            .font_size(config.ui.font_size() as f32)
-                            .padding_horiz(12.0)
-                            .padding_vert(8.0)
-                            .color(config.color(LapceColor::PANEL_FOREGROUND))
-                    })
-                ),
-                separator(),
                 // Checkout
                 menu_item(
                     LapceIcons::GIT_BRANCH,

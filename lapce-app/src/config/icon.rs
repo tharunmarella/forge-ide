@@ -10,6 +10,7 @@ impl LapceIcons {
     pub const MENU: &'static str = "menu";
     pub const LINK: &'static str = "link";
     pub const ERROR: &'static str = "error";
+    pub const INFO: &'static str = "info";
     pub const ADD: &'static str = "add";
     pub const CLOSE: &'static str = "close";
     pub const REMOTE: &'static str = "remote";

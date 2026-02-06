@@ -1323,7 +1323,7 @@ impl WindowTabData {
             CheckoutReference => {
                 event!(Level::INFO, "[GIT CHECKOUT] CheckoutReference command received, data: {:?}", data);
                 match data {
-                    Some(reference) => {
+                Some(reference) => {
                         event!(Level::INFO, "[GIT CHECKOUT] Reference value: {:?}", reference);
                         if let Some(reference_str) = reference.as_str() {
                             let reference = reference_str.to_string();
@@ -1668,7 +1668,7 @@ impl WindowTabData {
                     editor_data.receive_char(DEFAULT_RUN_TOML);
                 }
             }
-            
+
             // Git Operations
             GitPush => {
                 if let Some(workspace_path) = self.workspace.path.as_ref() {
@@ -1693,14 +1693,21 @@ impl WindowTabData {
                                 if output.status.success() {
                                     let stdout = String::from_utf8_lossy(&output.stdout);
                                     let stderr = String::from_utf8_lossy(&output.stderr);
-                                    let message = if stdout.is_empty() && stderr.is_empty() {
-                                        "Push completed successfully".to_string()
-                                    } else if !stderr.is_empty() {
-                                        stderr.to_string()
+                                    let combined = format!("{}{}", stdout, stderr);
+                                    
+                                    // Determine the appropriate message
+                                    let (title, message) = if combined.contains("Everything up-to-date") {
+                                        ("Git Push".to_string(), "Already up-to-date. No new commits to push.".to_string())
+                                    } else if combined.contains("->") {
+                                        // Successfully pushed commits (git shows "branch -> remote/branch")
+                                        ("Push Successful".to_string(), "Changes pushed to remote successfully.".to_string())
+                                    } else if stdout.is_empty() && stderr.is_empty() {
+                                        ("Push Successful".to_string(), "Changes pushed to remote successfully.".to_string())
                                     } else {
-                                        stdout.to_string()
+                                        ("Push Successful".to_string(), combined.trim().to_string())
                                     };
-                                    ("Git Push".to_string(), ShowMessageParams {
+                                    
+                                    (title, ShowMessageParams {
                                         typ: lsp_types::MessageType::INFO,
                                         message,
                                     })
@@ -1743,24 +1750,32 @@ impl WindowTabData {
                             Ok(output) => {
                                 if output.status.success() {
                                     let stdout = String::from_utf8_lossy(&output.stdout);
-                                    let message = if stdout.trim().is_empty() {
-                                        "Already up to date".to_string()
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    let combined = format!("{}{}", stdout, stderr);
+                                    
+                                    let (title, message) = if combined.contains("Already up to date") || stdout.trim() == "Already up to date." {
+                                        ("Git Pull".to_string(), "Already up-to-date. No new changes from remote.".to_string())
+                                    } else if combined.contains("Fast-forward") || combined.contains("files changed") {
+                                        ("Pull Successful".to_string(), "Changes pulled from remote successfully.".to_string())
+                                    } else if stdout.trim().is_empty() {
+                                        ("Git Pull".to_string(), "Already up-to-date. No new changes from remote.".to_string())
                                     } else {
-                                        stdout.to_string()
+                                        ("Pull Successful".to_string(), stdout.trim().to_string())
                                     };
-                                    ("Git Update".to_string(), ShowMessageParams {
+                                    
+                                    (title, ShowMessageParams {
                                         typ: lsp_types::MessageType::INFO,
                                         message,
                                     })
                                 } else {
                                     let stderr = String::from_utf8_lossy(&output.stderr);
-                                    ("Git Update Failed".to_string(), ShowMessageParams {
+                                    ("Git Pull Failed".to_string(), ShowMessageParams {
                                         typ: lsp_types::MessageType::ERROR,
                                         message: stderr.to_string(),
                                     })
                                 }
                             }
-                            Err(e) => ("Git Update Error".to_string(), ShowMessageParams {
+                            Err(e) => ("Git Pull Error".to_string(), ShowMessageParams {
                                 typ: lsp_types::MessageType::ERROR,
                                 message: e.to_string(),
                             }),
@@ -1842,6 +1857,8 @@ impl WindowTabData {
                 // TODO: Implement blame toggle in editor
             }
             GitShowLog => {
+                // Load git log commits
+                self.source_control.load_git_log();
                 // Open Git Log panel at bottom
                 self.toggle_panel_visual_at_position(PanelKind::GitLog, PanelPosition::BottomLeft);
                 self.common.focus.set(Focus::Panel(PanelKind::GitLog));

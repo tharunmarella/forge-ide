@@ -9,7 +9,7 @@ use floem::{
     event::EventListener,
     reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate},
     style::CursorStyle,
-    views::{Decorators, container, dyn_stack, label, stack, svg},
+    views::{Decorators, container, dyn_stack, empty, label, stack, svg},
 };
 
 use crate::{
@@ -63,82 +63,164 @@ pub fn alert_box(alert_data: AlertBoxData) -> impl View {
     container({
         container({
             stack((
-                svg(move || config.get().ui_svg(LapceIcons::WARNING)).style(
-                    move |s| {
-                        s.size(50.0, 50.0)
-                            .color(config.get().color(LapceColor::LAPCE_WARN))
-                    },
-                ),
-                label(move || title.get()).style(move |s| {
-                    s.margin_top(20.0)
-                        .width_pct(100.0)
-                        .font_bold()
-                        .font_size((config.get().ui.font_size() + 1) as f32)
+                // Icon with circular background
+                container(
+                    svg(move || config.get().ui_svg(LapceIcons::WARNING)).style(
+                        move |s| {
+                            s.size(32.0, 32.0)
+                                .color(config.get().color(LapceColor::LAPCE_WARN))
+                        },
+                    ),
+                )
+                .style(move |s| {
+                    let config = config.get();
+                    s.size(64.0, 64.0)
+                        .items_center()
+                        .justify_center()
+                        .border_radius(32.0)
+                        .background(
+                            config
+                                .color(LapceColor::LAPCE_WARN)
+                                .multiply_alpha(0.15),
+                        )
                 }),
-                label(move || msg.get())
-                    .style(move |s| s.width_pct(100.0).margin_top(10.0)),
+                // Title
+                label(move || title.get()).style(move |s| {
+                    let config = config.get();
+                    s.margin_top(24.0)
+                        .width_pct(100.0)
+                        .justify_center()
+                        .font_bold()
+                        .font_size((config.ui.font_size() + 4) as f32)
+                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                }),
+                // Message
+                label(move || msg.get()).style(move |s| {
+                    let config = config.get();
+                    s.width_pct(100.0)
+                        .margin_top(12.0)
+                        .justify_center()
+                        .line_height(1.5)
+                        .font_size(config.ui.font_size() as f32)
+                        .color(
+                            config
+                                .color(LapceColor::EDITOR_FOREGROUND)
+                                .multiply_alpha(0.7),
+                        )
+                }),
+                // Spacer before buttons
+                empty().style(|s| s.height(24.0)),
+                // Action buttons
                 dyn_stack(
-                    move || buttons.get(),
-                    move |_button| {
+                    move || {
+                        let btns = buttons.get();
+                        btns.into_iter().enumerate().collect::<Vec<_>>()
+                    },
+                    move |(_idx, _button)| {
                         button_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                     },
-                    move |button| {
+                    move |(idx, button)| {
+                        let is_primary = idx == 0;
                         label(move || button.text.clone())
                             .on_click_stop(move |_| {
                                 (button.action)();
                             })
                             .style(move |s| {
                                 let config = config.get();
-                                s.margin_top(10.0)
+                                let base = s
+                                    .margin_top(8.0)
                                     .width_pct(100.0)
                                     .justify_center()
+                                    .padding_vert(10.0)
                                     .font_size((config.ui.font_size() + 1) as f32)
-                                    .line_height(1.6)
-                                    .border(1.0)
-                                    .border_radius(6.0)
-                                    .border_color(
-                                        config.color(LapceColor::LAPCE_BORDER),
+                                    .border_radius(8.0)
+                                    .cursor(CursorStyle::Pointer);
+
+                                if is_primary {
+                                    // Primary button - filled with accent color
+                                    base.background(
+                                        config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND),
                                     )
+                                    .color(
+                                        config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND),
+                                    )
+                                    .font_bold()
                                     .hover(|s| {
-                                        s.cursor(CursorStyle::Pointer).background(
-                                            config.color(
-                                                LapceColor::PANEL_HOVERED_BACKGROUND,
-                                            ),
+                                        s.background(
+                                            config
+                                                .color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                                                .multiply_alpha(0.85),
                                         )
                                     })
                                     .active(|s| {
-                                        s.background(config.color(
-                                    LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                ))
+                                        s.background(
+                                            config
+                                                .color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                                                .multiply_alpha(0.7),
+                                        )
                                     })
+                                } else {
+                                    // Secondary button - outlined
+                                    base.border(1.0)
+                                        .border_color(
+                                            config.color(LapceColor::LAPCE_BORDER),
+                                        )
+                                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                        .hover(|s| {
+                                            s.background(
+                                                config.color(
+                                                    LapceColor::PANEL_HOVERED_BACKGROUND,
+                                                ),
+                                            )
+                                            .border_color(
+                                                config
+                                                    .color(LapceColor::LAPCE_BORDER)
+                                                    .multiply_alpha(1.5),
+                                            )
+                                        })
+                                        .active(|s| {
+                                            s.background(
+                                                config.color(
+                                                    LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
+                                                ),
+                                            )
+                                        })
+                                }
                             })
                     },
                 )
-                .style(|s| s.flex_col().width_pct(100.0).margin_top(10.0)),
+                .style(|s| s.flex_col().width_pct(100.0)),
+                // Cancel button - subtle text button
                 label(|| "Cancel".to_string())
                     .on_click_stop(move |_| {
                         active.set(false);
                     })
                     .style(move |s| {
                         let config = config.get();
-                        s.margin_top(20.0)
+                        s.margin_top(16.0)
                             .width_pct(100.0)
                             .justify_center()
+                            .padding_vert(10.0)
                             .font_size((config.ui.font_size() + 1) as f32)
-                            .line_height(1.5)
-                            .border(1.0)
-                            .border_radius(6.0)
-                            .border_color(config.color(LapceColor::LAPCE_BORDER))
+                            .border_radius(8.0)
+                            .cursor(CursorStyle::Pointer)
+                            .color(
+                                config
+                                    .color(LapceColor::EDITOR_FOREGROUND)
+                                    .multiply_alpha(0.6),
+                            )
                             .hover(|s| {
-                                s.cursor(CursorStyle::Pointer).background(
+                                s.background(
                                     config
-                                        .color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                        .color(LapceColor::PANEL_HOVERED_BACKGROUND)
+                                        .multiply_alpha(0.5),
                                 )
+                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
                             })
                             .active(|s| {
-                                s.background(config.color(
-                                    LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                ))
+                                s.background(
+                                    config.color(LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
+                                )
                             })
                     }),
             ))
@@ -147,13 +229,17 @@ pub fn alert_box(alert_data: AlertBoxData) -> impl View {
         .on_event_stop(EventListener::PointerDown, |_| {})
         .style(move |s| {
             let config = config.get();
-            s.padding(20.0)
-                .width(250.0)
-                .border(1.0)
-                .border_radius(6.0)
-                .border_color(config.color(LapceColor::LAPCE_BORDER))
+            s.padding(32.0)
+                .width(340.0)
+                .border_radius(16.0)
                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                 .background(config.color(LapceColor::PANEL_BACKGROUND))
+                .box_shadow_blur(40.0)
+                .box_shadow_color(
+                    config
+                        .color(LapceColor::LAPCE_DROPDOWN_SHADOW)
+                        .multiply_alpha(0.3),
+                )
         })
     })
     .on_event_stop(EventListener::PointerDown, move |_| {})
@@ -167,7 +253,7 @@ pub fn alert_box(alert_data: AlertBoxData) -> impl View {
                 config
                     .get()
                     .color(LapceColor::LAPCE_DROPDOWN_SHADOW)
-                    .multiply_alpha(0.5),
+                    .multiply_alpha(0.6),
             )
     })
     .debug_name("Alert Box")

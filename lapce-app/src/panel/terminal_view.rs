@@ -237,7 +237,10 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
         }),
         empty().style(move |s| {
             let size = scroll_size.get();
-            s.size(size.width, size.height).pointer_events_none()
+            s.min_width(size.width)
+                .height(size.height)
+                .flex_grow(1.0)
+                .pointer_events_none()
         }),
         container(
             stack((

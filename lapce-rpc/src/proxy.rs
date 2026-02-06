@@ -425,6 +425,10 @@ pub enum ProxyNotification {
         message: String,
         diffs: Vec<FileDiff>,
     },
+    GitCommitAndPush {
+        message: String,
+        diffs: Vec<FileDiff>,
+    },
     GitCheckout {
         reference: String,
     },
@@ -820,6 +824,10 @@ impl ProxyRpcHandler {
 
     pub fn git_commit(&self, message: String, diffs: Vec<FileDiff>) {
         self.notification(ProxyNotification::GitCommit { message, diffs });
+    }
+
+    pub fn git_commit_and_push(&self, message: String, diffs: Vec<FileDiff>) {
+        self.notification(ProxyNotification::GitCommitAndPush { message, diffs });
     }
 
     /// Attempt checkout - returns result with conflict status if there are local changes

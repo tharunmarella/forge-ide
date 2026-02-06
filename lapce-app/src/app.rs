@@ -2842,19 +2842,22 @@ fn window_message_view(
         move |(i, (title, message)): (usize, (String, ShowMessageParams))| {
             stack((
                 svg(move || {
-                    if let MessageType::ERROR = message.typ {
-                        config.get().ui_svg(LapceIcons::ERROR)
-                    } else {
-                        config.get().ui_svg(LapceIcons::WARNING)
+                    let config = config.get();
+                    match message.typ {
+                        MessageType::ERROR => config.ui_svg(LapceIcons::ERROR),
+                        MessageType::WARNING => config.ui_svg(LapceIcons::WARNING),
+                        MessageType::INFO | MessageType::LOG => config.ui_svg(LapceIcons::INFO),
+                        _ => config.ui_svg(LapceIcons::INFO),
                     }
                 })
                 .style(move |s| {
                     let config = config.get();
                     let size = config.ui.icon_size() as f32;
-                    let color = if let MessageType::ERROR = message.typ {
-                        config.color(LapceColor::LAPCE_ERROR)
-                    } else {
-                        config.color(LapceColor::LAPCE_WARN)
+                    let color = match message.typ {
+                        MessageType::ERROR => config.color(LapceColor::LAPCE_ERROR),
+                        MessageType::WARNING => config.color(LapceColor::LAPCE_WARN),
+                        MessageType::INFO | MessageType::LOG => config.color(LapceColor::EDITOR_FOREGROUND),
+                        _ => config.color(LapceColor::EDITOR_FOREGROUND),
                     };
                     s.min_width(size)
                         .size(size, size)

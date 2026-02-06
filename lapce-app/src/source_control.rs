@@ -124,6 +124,36 @@ impl SourceControlData {
         self.editor.reset();
         self.common.proxy.git_commit(message.to_string(), diffs);
     }
+
+    pub fn commit_and_push(&self) {
+        let diffs: Vec<FileDiff> = self.file_diffs.with_untracked(|file_diffs| {
+            file_diffs
+                .iter()
+                .filter_map(
+                    |(_, (diff, checked))| {
+                        if *checked { Some(diff) } else { None }
+                    },
+                )
+                .cloned()
+                .collect()
+        });
+        if diffs.is_empty() {
+            return;
+        }
+
+        let message = self
+            .editor
+            .doc()
+            .buffer
+            .with_untracked(|buffer| buffer.to_string());
+        let message = message.trim();
+        if message.is_empty() {
+            return;
+        }
+
+        self.editor.reset();
+        self.common.proxy.git_commit_and_push(message.to_string(), diffs);
+    }
     
     /// Load git log commits from the repository
     pub fn load_git_log(&self) {
