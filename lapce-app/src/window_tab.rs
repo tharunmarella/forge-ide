@@ -3085,6 +3085,7 @@ impl WindowTabData {
         let should_hide = match kind {
             PanelKind::FileExplorer
             | PanelKind::Plugin
+            | PanelKind::SdkManager
             | PanelKind::Problem
             | PanelKind::Debug
             | PanelKind::CallHierarchy

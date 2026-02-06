@@ -361,6 +361,27 @@ pub enum ProxyRequest {
     ReferencesResolve {
         items: Vec<Location>,
     },
+    // Proto SDK Manager
+    ProtoIsInstalled {},
+    ProtoGetVersion {},
+    ProtoListTools {},
+    ProtoInstallTool {
+        tool: String,
+        version: String,
+    },
+    ProtoUninstallTool {
+        tool: String,
+        version: String,
+    },
+    ProtoGetToolPath {
+        tool: String,
+    },
+    ProtoListRemoteVersions {
+        tool: String,
+    },
+    ProtoGetProjectConfig {},
+    ProtoSetupProject {},
+    ProtoDetectProjectTools {},
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -689,6 +710,41 @@ pub enum ProxyResponse {
     ReferencesResolveResponse {
         items: Vec<FileLine>,
     },
+    // Proto SDK Manager Responses
+    ProtoIsInstalledResponse {
+        installed: bool,
+    },
+    ProtoVersionResponse {
+        version: String,
+    },
+    ProtoToolsListResponse {
+        tools: Vec<ProtoToolInfo>,
+    },
+    ProtoInstallResponse {
+        success: bool,
+        message: String,
+    },
+    ProtoToolPathResponse {
+        path: Option<PathBuf>,
+    },
+    ProtoVersionsListResponse {
+        versions: Vec<String>,
+    },
+    ProtoProjectConfigResponse {
+        tools: HashMap<String, String>,
+    },
+    ProtoDetectedToolsResponse {
+        tools: Vec<(String, String)>,
+    },
+}
+
+/// Information about an installed proto tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtoToolInfo {
+    pub name: String,
+    pub version: String,
+    pub path: Option<PathBuf>,
+    pub is_default: bool,
 }
 
 pub type ProxyMessage = RpcMessage<ProxyRequest, ProxyNotification, ProxyResponse>;
@@ -1752,6 +1808,57 @@ impl ProxyRpcHandler {
         f: impl ProxyCallback + 'static,
     ) {
         self.request_async(ProxyRequest::DapGetScopes { dap_id, frame_id }, f);
+    }
+
+    // Proto SDK Manager methods
+    pub fn proto_is_installed(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoIsInstalled {}, f);
+    }
+
+    pub fn proto_get_version(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoGetVersion {}, f);
+    }
+
+    pub fn proto_list_tools(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoListTools {}, f);
+    }
+
+    pub fn proto_install_tool(
+        &self,
+        tool: String,
+        version: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::ProtoInstallTool { tool, version }, f);
+    }
+
+    pub fn proto_uninstall_tool(
+        &self,
+        tool: String,
+        version: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::ProtoUninstallTool { tool, version }, f);
+    }
+
+    pub fn proto_get_tool_path(&self, tool: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoGetToolPath { tool }, f);
+    }
+
+    pub fn proto_list_remote_versions(&self, tool: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoListRemoteVersions { tool }, f);
+    }
+
+    pub fn proto_get_project_config(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoGetProjectConfig {}, f);
+    }
+
+    pub fn proto_setup_project(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoSetupProject {}, f);
+    }
+
+    pub fn proto_detect_project_tools(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::ProtoDetectProjectTools {}, f);
     }
 }
 

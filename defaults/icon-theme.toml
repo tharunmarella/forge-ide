@@ -62,6 +62,9 @@ name = "Lapce Codicons"
 # Git Log / History
 "history" = "history.svg"
 
+# SDK Manager
+"package" = "package.svg"
+
 # Git Operations
 "git.commit" = "git-commit.svg"
 "git.push" = "repo-push.svg"

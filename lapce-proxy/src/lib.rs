@@ -5,6 +5,7 @@ pub mod cli;
 pub mod dispatch;
 pub mod gix_utils;
 pub mod plugin;
+pub mod proto_manager;
 pub mod terminal;
 pub mod watcher;
 

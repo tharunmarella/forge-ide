@@ -59,6 +59,9 @@ impl LapceIcons {
     // Git Log / History
     pub const HISTORY: &'static str = "history";
     
+    // SDK Manager
+    pub const SDK: &'static str = "package";
+    
     // Git Operations
     pub const GIT_COMMIT: &'static str = "git.commit";
     pub const GIT_PUSH: &'static str = "git.push";

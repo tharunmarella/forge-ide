@@ -1701,6 +1701,106 @@ impl ProxyHandler for Dispatcher {
                 let resp = ProxyResponse::ReferencesResolveResponse { items };
                 self.proxy_rpc.handle_response(id, Ok(resp));
             }
+            // Proto SDK Manager
+            ProtoIsInstalled {} => {
+                use crate::proto_manager::ProtoManager;
+                let installed = ProtoManager::is_proto_installed();
+                self.respond_rpc(id, Ok(ProxyResponse::ProtoIsInstalledResponse { installed }));
+            }
+            ProtoGetVersion {} => {
+                use crate::proto_manager::ProtoManager;
+                let result = match ProtoManager::get_proto_version() {
+                    Ok(version) => Ok(ProxyResponse::ProtoVersionResponse { version }),
+                    Err(e) => Err(RpcError { code: 0, message: format!("Failed to get proto version: {}", e) }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoListTools {} => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let result = match manager.list_installed_tools() {
+                    Ok(tools) => {
+                        let tools = tools.into_iter().map(|t| lapce_rpc::proxy::ProtoToolInfo {
+                            name: t.name,
+                            version: t.version,
+                            path: t.path,
+                            is_default: t.is_default,
+                        }).collect();
+                        Ok(ProxyResponse::ProtoToolsListResponse { tools })
+                    }
+                    Err(e) => Err(RpcError { code: 0, message: format!("Failed to list tools: {}", e) }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoInstallTool { tool, version } => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let result = match manager.install_tool(&tool, &version) {
+                    Ok(message) => Ok(ProxyResponse::ProtoInstallResponse { success: true, message }),
+                    Err(e) => Ok(ProxyResponse::ProtoInstallResponse { 
+                        success: false, 
+                        message: format!("Failed to install {} {}: {}", tool, version, e) 
+                    }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoUninstallTool { tool, version } => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let result = match manager.uninstall_tool(&tool, &version) {
+                    Ok(message) => Ok(ProxyResponse::ProtoInstallResponse { success: true, message }),
+                    Err(e) => Ok(ProxyResponse::ProtoInstallResponse { 
+                        success: false, 
+                        message: format!("Failed to uninstall {} {}: {}", tool, version, e) 
+                    }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoGetToolPath { tool } => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let path = manager.get_tool_bin_path(&tool).ok();
+                self.respond_rpc(id, Ok(ProxyResponse::ProtoToolPathResponse { path }));
+            }
+            ProtoListRemoteVersions { tool } => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let result = match manager.search_tool_versions(&tool) {
+                    Ok(versions) => Ok(ProxyResponse::ProtoVersionsListResponse { versions }),
+                    Err(e) => Err(RpcError { code: 0, message: format!("Failed to list versions for {}: {}", tool, e) }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoGetProjectConfig {} => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let result = match manager.read_project_config() {
+                    Ok(config) => Ok(ProxyResponse::ProtoProjectConfigResponse { tools: config.tools }),
+                    Err(e) => Err(RpcError { code: 0, message: format!("Failed to read project config: {}", e) }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoSetupProject {} => {
+                use crate::proto_manager::ProtoManager;
+                let manager = ProtoManager::new(self.workspace.clone());
+                let result = match manager.setup_project() {
+                    Ok(message) => Ok(ProxyResponse::ProtoInstallResponse { success: true, message }),
+                    Err(e) => Ok(ProxyResponse::ProtoInstallResponse { 
+                        success: false, 
+                        message: format!("Failed to setup project: {}", e) 
+                    }),
+                };
+                self.respond_rpc(id, result);
+            }
+            ProtoDetectProjectTools {} => {
+                use crate::proto_manager::ProtoManager;
+                let tools = if let Some(workspace) = self.workspace.as_ref() {
+                    ProtoManager::detect_project_tools(workspace)
+                } else {
+                    Vec::new()
+                };
+                self.respond_rpc(id, Ok(ProxyResponse::ProtoDetectedToolsResponse { tools }));
+            }
         }
     }
 }

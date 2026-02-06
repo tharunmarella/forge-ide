@@ -24,6 +24,7 @@ use super::{
     plugin_view::plugin_panel,
     position::{PanelContainerPosition, PanelPosition},
     problem_view::problem_panel,
+    sdk_view::sdk_panel,
     source_control_view::source_control_panel,
     terminal_view::terminal_panel,
 };
@@ -417,30 +418,12 @@ pub fn panel_container_view(
             ),
         ))
     } else {
-        // Bottom panel: hide panel pickers when GitLog or Terminal is active
-        // (these panels have their own header/tab management)
-        let panel_for_check1 = panel.clone();
-        let panel_for_check2 = panel.clone();
-        
+        // Bottom panel layout
         stack((
-            container(panel_picker(window_tab_data.clone(), position.first()))
-                .style(move |s| {
-                    let should_hide = panel_for_check1
-                        .active_panel_at_position(&PanelPosition::BottomLeft, true)
-                        .map(|(kind, shown)| shown && (kind == PanelKind::GitLog || kind == PanelKind::Terminal))
-                        .unwrap_or(false);
-                    s.apply_if(should_hide, |s| s.hide())
-                }),
+            panel_picker(window_tab_data.clone(), position.first()),
             panel_view(window_tab_data.clone(), position.first()),
             panel_view(window_tab_data.clone(), position.second()),
-            container(panel_picker(window_tab_data.clone(), position.second()))
-                .style(move |s| {
-                    let should_hide = panel_for_check2
-                        .active_panel_at_position(&PanelPosition::BottomLeft, true)
-                        .map(|(kind, shown)| shown && (kind == PanelKind::GitLog || kind == PanelKind::Terminal))
-                        .unwrap_or(false);
-                    s.apply_if(should_hide, |s| s.hide())
-                }),
+            panel_picker(window_tab_data.clone(), position.second()),
             resize_drag_view(position),
             stack((drop_view(position.first()), drop_view(position.second()))).style(
                 move |s| {
@@ -533,6 +516,9 @@ fn panel_view(
                 }
                 PanelKind::Plugin => {
                     plugin_panel(window_tab_data.clone(), position).into_any()
+                }
+                PanelKind::SdkManager => {
+                    sdk_panel(window_tab_data.clone(), position).into_any()
                 }
                 PanelKind::DocumentSymbol => {
                     symbol_panel(window_tab_data.clone(), position).into_any()
@@ -725,6 +711,7 @@ fn panel_icon_button(
         PanelKind::SourceControl => "Source Control",
         PanelKind::GitLog => "Git Log",
         PanelKind::Plugin => "Plugins",
+        PanelKind::SdkManager => "SDK Manager",
         PanelKind::Search => "Search",
         PanelKind::Problem => "Problems",
         PanelKind::Debug => "Debug",

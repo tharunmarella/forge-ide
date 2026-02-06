@@ -30,19 +30,19 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::SourceControl,  // Commit / Git
             PanelKind::Terminal,       // Icon in left, but opens at bottom
             PanelKind::Search,
+            PanelKind::Plugin,         // Extensions/Plugins
+            PanelKind::SdkManager,     // SDK/Toolchain Manager (proto)
         ],
     );
-    // Bottom panel: Terminal, Git Log, and auxiliary panels
+    // Bottom panel: auxiliary panels (Terminal and GitLog have their own headers)
     order.insert(
         PanelPosition::BottomLeft,
         im::vector![
-            PanelKind::GitLog,         // Git Log opens at bottom
             PanelKind::Problem,
             PanelKind::CallHierarchy,
             PanelKind::References,
             PanelKind::Implementation,
             PanelKind::Debug,
-            PanelKind::Plugin,
         ],
     );
     order.insert(
