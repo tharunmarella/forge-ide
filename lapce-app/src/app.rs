@@ -3345,7 +3345,7 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
         code_action(window_tab_data.clone()),
         rename(window_tab_data.clone()),
         palette(window_tab_data.clone()),
-        crate::search_popup::search_popup(window_tab_data.clone()),
+        // crate::search_popup::search_popup(window_tab_data.clone()),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
     ))
