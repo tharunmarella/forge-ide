@@ -48,7 +48,7 @@ pub fn default_panel_order() -> PanelOrder {
     );
     order.insert(
         PanelPosition::RightTop,
-        im::vector![PanelKind::DocumentSymbol,],
+        im::vector![PanelKind::AiChat, PanelKind::DocumentSymbol,],
     );
 
     order
@@ -165,7 +165,7 @@ impl PanelData {
             left_split: 0.5,
             bottom: 300.0,
             bottom_split: 0.5,
-            right: 250.0,
+            right: 400.0,
             right_split: 0.5,
         });
         let sections = cx.create_rw_signal(

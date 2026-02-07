@@ -27,6 +27,7 @@ tar                = { workspace = true }
 toml               = { workspace = true }
 tracing            = { workspace = true }
 tracing-log        = { workspace = true }
+chrono             = { workspace = true }
 url                = { workspace = true }
 zstd               = { workspace = true }
 
@@ -37,6 +38,14 @@ lapce-xi-rope     = { workspace = true }
 lapce-core        = { workspace = true }
 lapce-rpc         = { workspace = true }
 floem-editor-core = { workspace = true }
+forge-agent       = { workspace = true }
+
+# database support
+tokio        = { workspace = true }
+sqlx         = { workspace = true }
+mongodb      = { workspace = true }
+uuid         = { workspace = true }
+futures-util = "0.3"
 
 # proxy specific dependencies
 

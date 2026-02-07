@@ -195,6 +195,8 @@ pub struct WindowTabData {
     pub update_in_progress: RwSignal<bool>,
     pub progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
     pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
+    pub database: crate::database::DatabaseViewData,
+    pub ai_chat: crate::ai_chat::AiChatData,
     pub common: Rc<CommonData>,
 }
 
@@ -559,6 +561,7 @@ impl WindowTabData {
         let about_data = AboutData::new(cx, common.focus);
         let alert_data = AlertBoxData::new(cx, common.clone());
 
+        let editors_for_chat = main_split.editors;
         let window_tab_data = Self {
             scope: cx,
             window_tab_id: WindowTabId::next(),
@@ -589,6 +592,8 @@ impl WindowTabData {
             update_in_progress: cx.create_rw_signal(false),
             progresses: cx.create_rw_signal(IndexMap::new()),
             messages: cx.create_rw_signal(Vec::new()),
+            database: crate::database::DatabaseViewData::new(cx, common.proxy.clone()),
+            ai_chat: crate::ai_chat::AiChatData::new(cx, editors_for_chat, common.clone()),
             common,
         };
 
@@ -2729,6 +2734,88 @@ impl WindowTabData {
             CoreNotification::WorkspaceFileChange => {
                 self.file_explorer.reload();
             }
+            CoreNotification::AgentTextChunk { text, done } => {
+                use crate::ai_chat::{ChatEntryKind, ChatRole, new_message};
+                if !text.is_empty() {
+                    self.ai_chat.entries.update(|entries| {
+                        // Find the last assistant message (may not be the very
+                        // last entry if tool calls were interleaved).
+                        let found = entries.iter_mut().rev().any(|entry| {
+                            if let ChatEntryKind::Message {
+                                role: ChatRole::Assistant,
+                                content,
+                            } = &mut entry.kind
+                            {
+                                content.push_str(text);
+                                entry.version += 1;
+                                return true;
+                            }
+                            false
+                        });
+                        if !found {
+                            entries.push_back(new_message(
+                                ChatRole::Assistant,
+                                text.clone(),
+                            ));
+                        }
+                    });
+                }
+                if *done {
+                    self.ai_chat.is_loading.set(false);
+                }
+            }
+            CoreNotification::AgentToolCallUpdate {
+                tool_call_id,
+                tool_name,
+                arguments,
+                status,
+                output,
+            } => {
+                use crate::ai_chat::{
+                    ChatEntryKind, ChatToolCall, ToolCallStatus, new_tool_call,
+                };
+                let tc_status = match status.as_str() {
+                    "running" => ToolCallStatus::Running,
+                    "completed" => ToolCallStatus::Success,
+                    "error" => ToolCallStatus::Error,
+                    _ => ToolCallStatus::Pending,
+                };
+                self.ai_chat.entries.update(|entries| {
+                    // Try to update an existing tool call entry
+                    let found = entries.iter_mut().any(|entry| {
+                        if let ChatEntryKind::ToolCall(tc) = &mut entry.kind {
+                            if tc.id == *tool_call_id {
+                                tc.status = tc_status.clone();
+                                if let Some(out) = output {
+                                    tc.output = Some(out.clone());
+                                }
+                                entry.version += 1;
+                                return true;
+                            }
+                        }
+                        false
+                    });
+                    if !found {
+                        entries.push_back(new_tool_call(ChatToolCall {
+                            id: tool_call_id.clone(),
+                            name: tool_name.clone(),
+                            arguments: arguments.clone(),
+                            status: tc_status,
+                            output: output.clone(),
+                        }));
+                    }
+                });
+            }
+            CoreNotification::AgentError { error } => {
+                use crate::ai_chat::{ChatRole, new_message};
+                self.ai_chat.entries.update(|entries| {
+                    entries.push_back(new_message(
+                        ChatRole::System,
+                        format!("Error: {}", error),
+                    ));
+                });
+                self.ai_chat.is_loading.set(false);
+            }
             _ => {}
         }
     }
@@ -2763,6 +2850,9 @@ impl WindowTabData {
             }
             Focus::Panel(PanelKind::SourceControl) => {
                 Some(keypress.key_down(event, &self.source_control))
+            }
+            Focus::Panel(PanelKind::AiChat) => {
+                Some(keypress.key_down(event, &self.ai_chat))
             }
             _ => None,
         };
@@ -3112,7 +3202,8 @@ impl WindowTabData {
             | PanelKind::CallHierarchy
             | PanelKind::DocumentSymbol
             | PanelKind::References
-            | PanelKind::Implementation => {
+            | PanelKind::Implementation
+            | PanelKind::AiChat => {
                 // Some panels don't accept focus (yet). Fall back to visibility check
                 // in those cases.
                 self.panel.is_panel_visible(&kind)

@@ -392,6 +392,63 @@ pub enum ProxyRequest {
         name: String,
     },
     GetRunConfigs {},
+
+    // Database Manager
+    DbListConnections {},
+    DbSaveConnection {
+        config: crate::db::DbConnectionConfig,
+    },
+    DbDeleteConnection {
+        id: String,
+    },
+    DbTestConnection {
+        config: crate::db::DbConnectionConfig,
+    },
+    DbConnect {
+        connection_id: String,
+    },
+    DbDisconnect {
+        connection_id: String,
+    },
+    DbGetSchema {
+        connection_id: String,
+    },
+    DbGetTableData {
+        connection_id: String,
+        table: String,
+        offset: u64,
+        limit: u64,
+    },
+    DbGetTableStructure {
+        connection_id: String,
+        table: String,
+    },
+    DbExecuteQuery {
+        connection_id: String,
+        query: String,
+    },
+
+    // ── AI Agent ─────────────────────────────────────────────────
+    /// Send a prompt to the AI agent and get a response.
+    AgentPrompt {
+        prompt: String,
+        /// Provider id (e.g. "anthropic", "gemini", "openai")
+        provider: String,
+        /// Model id (e.g. "claude-sonnet-4-20250514")
+        model: String,
+        /// API key for the provider
+        api_key: String,
+    },
+    /// Cancel an in-progress agent operation.
+    AgentCancel {},
+    /// Approve a pending tool call.
+    AgentApproveToolCall {
+        tool_call_id: String,
+    },
+    /// Reject a pending tool call.
+    AgentRejectToolCall {
+        tool_call_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -758,6 +815,57 @@ pub enum ProxyResponse {
     RunConfigSaveResponse {
         success: bool,
         message: String,
+    },
+
+    // Database Manager Responses
+    DbConnectionsListResponse {
+        connections: Vec<crate::db::DbConnectionConfig>,
+    },
+    DbTestConnectionResponse {
+        success: bool,
+        message: String,
+    },
+    DbConnectResponse {
+        success: bool,
+        schema: Option<crate::db::DbSchema>,
+        message: String,
+    },
+    DbSchemaResponse {
+        schema: crate::db::DbSchema,
+    },
+    DbQueryResponse {
+        result: crate::db::DbQueryResult,
+    },
+    DbTableStructureResponse {
+        structure: crate::db::DbTableStructure,
+    },
+
+    // ── AI Agent ─────────────────────────────────────────────────
+    /// Streamed text chunk from the agent.
+    AgentTextChunk {
+        text: String,
+        done: bool,
+    },
+    /// Agent wants to call a tool -- needs approval.
+    AgentToolCallPending {
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+    },
+    /// Result of an executed tool.
+    AgentToolResult {
+        tool_call_id: String,
+        tool_name: String,
+        success: bool,
+        output: String,
+    },
+    /// Agent completed its turn.
+    AgentDone {
+        message: String,
+    },
+    /// Agent encountered an error.
+    AgentError {
+        error: String,
     },
 }
 
@@ -1920,6 +2028,93 @@ impl ProxyRpcHandler {
     
     pub fn delete_run_config(&self, name: String, f: impl ProxyCallback + 'static) {
         self.request_async(ProxyRequest::DeleteRunConfig { name }, f);
+    }
+
+    // Database Manager methods
+
+    pub fn db_list_connections(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DbListConnections {}, f);
+    }
+
+    pub fn db_save_connection(
+        &self,
+        config: crate::db::DbConnectionConfig,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::DbSaveConnection { config }, f);
+    }
+
+    pub fn db_delete_connection(&self, id: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DbDeleteConnection { id }, f);
+    }
+
+    pub fn db_test_connection(
+        &self,
+        config: crate::db::DbConnectionConfig,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::DbTestConnection { config }, f);
+    }
+
+    pub fn db_connect(&self, connection_id: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DbConnect { connection_id }, f);
+    }
+
+    pub fn db_disconnect(&self, connection_id: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DbDisconnect { connection_id }, f);
+    }
+
+    pub fn db_get_schema(&self, connection_id: String, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::DbGetSchema { connection_id }, f);
+    }
+
+    pub fn db_get_table_data(
+        &self,
+        connection_id: String,
+        table: String,
+        offset: u64,
+        limit: u64,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(
+            ProxyRequest::DbGetTableData {
+                connection_id,
+                table,
+                offset,
+                limit,
+            },
+            f,
+        );
+    }
+
+    pub fn db_get_table_structure(
+        &self,
+        connection_id: String,
+        table: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(
+            ProxyRequest::DbGetTableStructure {
+                connection_id,
+                table,
+            },
+            f,
+        );
+    }
+
+    pub fn db_execute_query(
+        &self,
+        connection_id: String,
+        query: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(
+            ProxyRequest::DbExecuteQuery {
+                connection_id,
+                query,
+            },
+            f,
+        );
     }
 }
 

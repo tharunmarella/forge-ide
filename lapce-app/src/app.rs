@@ -1412,7 +1412,8 @@ fn editor_tab_content(
                 sdk_manager_view(editors, common).into_any()
             }
             EditorTabChild::DatabaseManager(_) => {
-                database_manager_view(editors, common).into_any()
+                let db_data = window_tab_data.database.clone();
+                database_manager_view(db_data, editors, common).into_any()
             }
             EditorTabChild::RunConfigEditor(_) => {
                 tracing::info!("app.rs: Creating RunConfigEditor view");

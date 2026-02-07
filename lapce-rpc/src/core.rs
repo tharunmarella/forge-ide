@@ -146,6 +146,22 @@ pub enum CoreNotification {
         path: PathBuf,
         breakpoints: Vec<dap_types::Breakpoint>,
     },
+
+    // ── AI Agent streaming ─────────────────────────────
+    AgentTextChunk {
+        text: String,
+        done: bool,
+    },
+    AgentToolCallUpdate {
+        tool_call_id: String,
+        tool_name: String,
+        arguments: String,
+        status: String,
+        output: Option<String>,
+    },
+    AgentError {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

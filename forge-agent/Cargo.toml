@@ -1,0 +1,71 @@
+[package]
+name = "forge-agent"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "AI coding agent for forge-ide"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "fs"] }
+futures = "0.3"
+
+# LLM framework -- provides multi-provider client, agent loop, tool trait, streaming
+rig-core = { version = "0.30", default-features = false, features = ["reqwest-rustls"] }
+schemars = "0.8"
+
+# HTTP (still needed for web tools, context7 fetching)
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# File walking
+walkdir = "2"
+ignore = "0.4"
+
+# Code parsing
+# NOTE: tree-sitter is available via lapce-core (v0.22) at the workspace level.
+# For now, forge-agent uses regex-based parsing; tree-sitter integration will 
+# come via the proxy bridge to lapce-core's existing infrastructure.
+
+# Database (session persistence + embeddings)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Caching (moka - high-performance concurrent cache)
+moka = { version = "0.12", features = ["sync"] }
+
+## glob crate was considered for ReadManyFiles but WalkDir + manual matching
+## is used instead for consistency with the existing glob_search tool
+
+# Utils
+async-trait = "0.1"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+dirs = "5"
+uuid = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+regex = { workspace = true }
+similar = "2"
+shellexpand = "3"
+urlencoding = "2"
+petgraph = "0.6"
+
+# IDE integration - communicate with proxy
+lapce-rpc = { workspace = true }
+crossbeam-channel = { workspace = true }
+
+# CLI harness dependencies
+clap = { workspace = true }
+futures-util = "0.3"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+directories = "5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "forge-cli"
+path = "src/bin/forge_cli.rs"

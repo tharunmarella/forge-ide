@@ -60,6 +60,7 @@ pub struct Dispatcher {
     file_watcher: FileWatcher,
     window_id: usize,
     tab_id: usize,
+    db_manager: crate::database::connection_manager::ConnectionManager,
 }
 
 impl ProxyHandler for Dispatcher {
@@ -1946,8 +1947,447 @@ impl ProxyHandler for Dispatcher {
                     message: result.1 
                 }));
             }
+
+            // Database Manager handlers
+            DbListConnections {} => {
+                let connections = crate::database::connection_manager::ConnectionManager::load_connections()
+                    .unwrap_or_default();
+                self.respond_rpc(
+                    id,
+                    Ok(ProxyResponse::DbConnectionsListResponse { connections }),
+                );
+            }
+            DbSaveConnection { config } => {
+                match crate::database::connection_manager::ConnectionManager::save_connection(config) {
+                    Ok(()) => {
+                        let connections = crate::database::connection_manager::ConnectionManager::load_connections()
+                            .unwrap_or_default();
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbConnectionsListResponse { connections }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("Failed to save connection: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+            DbDeleteConnection { id: conn_id } => {
+                self.db_manager.disconnect(&conn_id);
+                match crate::database::connection_manager::ConnectionManager::delete_connection(&conn_id) {
+                    Ok(()) => {
+                        let connections = crate::database::connection_manager::ConnectionManager::load_connections()
+                            .unwrap_or_default();
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbConnectionsListResponse { connections }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("Failed to delete connection: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+            DbTestConnection { config } => {
+                match self.db_manager.test_connection(&config) {
+                    Ok(true) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbTestConnectionResponse {
+                                success: true,
+                                message: "Connection successful".to_string(),
+                            }),
+                        );
+                    }
+                    Ok(false) | Err(_) => {
+                        let message = "Connection failed".to_string();
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbTestConnectionResponse {
+                                success: false,
+                                message,
+                            }),
+                        );
+                    }
+                }
+            }
+            DbConnect { connection_id } => {
+                match self.db_manager.connect(&connection_id) {
+                    Ok(schema) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbConnectResponse {
+                                success: true,
+                                schema: Some(schema),
+                                message: "Connected".to_string(),
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbConnectResponse {
+                                success: false,
+                                schema: None,
+                                message: format!("Connection failed: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+            DbDisconnect { connection_id } => {
+                self.db_manager.disconnect(&connection_id);
+                self.respond_rpc(
+                    id,
+                    Ok(ProxyResponse::DbTestConnectionResponse {
+                        success: true,
+                        message: "Disconnected".to_string(),
+                    }),
+                );
+            }
+            DbGetSchema { connection_id } => {
+                match self.db_manager.get_schema(&connection_id) {
+                    Ok(schema) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbSchemaResponse { schema }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("Failed to get schema: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+            DbGetTableData {
+                connection_id,
+                table,
+                offset,
+                limit,
+            } => {
+                match self.db_manager.get_table_data(&connection_id, &table, offset, limit) {
+                    Ok(result) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbQueryResponse { result }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("Failed to get table data: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+            DbGetTableStructure {
+                connection_id,
+                table,
+            } => {
+                match self.db_manager.get_table_structure(&connection_id, &table) {
+                    Ok(structure) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbTableStructureResponse { structure }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("Failed to get table structure: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+            DbExecuteQuery {
+                connection_id,
+                query,
+            } => {
+                match self.db_manager.execute_query(&connection_id, &query) {
+                    Ok(result) => {
+                        self.respond_rpc(
+                            id,
+                            Ok(ProxyResponse::DbQueryResponse { result }),
+                        );
+                    }
+                    Err(e) => {
+                        self.respond_rpc(
+                            id,
+                            Err(RpcError {
+                                code: 0,
+                                message: format!("Query execution failed: {}", e),
+                            }),
+                        );
+                    }
+                }
+            }
+
+            // ── AI Agent ─────────────────────────────────────────
+            AgentPrompt { prompt, provider, model, api_key } => {
+                tracing::info!("Agent prompt received: provider={provider}, model={model}");
+                let proxy_rpc = self.proxy_rpc.clone();
+                let core_rpc = self.core_rpc.clone();
+                let workspace = self.workspace.clone();
+
+                thread::spawn(move || {
+                    let rt = match tokio::runtime::Runtime::new() {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            proxy_rpc.handle_response(
+                                id,
+                                Ok(ProxyResponse::AgentError {
+                                    error: format!("Failed to create async runtime: {e}"),
+                                }),
+                            );
+                            return;
+                        }
+                    };
+
+                    rt.block_on(async move {
+                        let workspace_path = workspace
+                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+                        let workspace_display = workspace_path.display().to_string();
+                        tracing::info!(
+                            "[FORGE] Workspace: {}, prompt len: {} chars",
+                            workspace_display,
+                            prompt.len()
+                        );
+
+                        let bridge: std::sync::Arc<dyn forge_agent::ProxyBridge> =
+                            std::sync::Arc::new(forge_agent::StandaloneBridge::new(
+                                workspace_path,
+                            ));
+
+                        let config = forge_agent::ForgeAgentConfig {
+                            provider: provider.clone(),
+                            model: model.clone(),
+                            api_key: api_key.clone(),
+                            max_turns: 25,
+                            ..Default::default()
+                        };
+
+                        // Create a per-session trace file
+                        let trace_dir = directories::BaseDirs::new()
+                            .map(|d| d.data_local_dir().to_path_buf())
+                            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                            .join("forge-ide")
+                            .join("traces");
+                        let trace_filename = format!(
+                            "agent-{}.jsonl",
+                            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+                        );
+                        let hook = match forge_agent::TracingHook::new(trace_dir.join(&trace_filename)) {
+                            Ok(h) => {
+                                tracing::info!("[FORGE] Trace file: {}", h.trace_path.display());
+                                h
+                            }
+                            Err(e) => {
+                                tracing::warn!("[FORGE] Failed to create trace file: {e}, using /tmp fallback");
+                                forge_agent::TracingHook::new(
+                                    std::path::PathBuf::from("/tmp").join("forge-traces").join(&trace_filename)
+                                ).expect("fallback trace must work")
+                            }
+                        };
+
+                        hook.write_event("session_start", serde_json::json!({
+                            "provider": &provider,
+                            "model": &model,
+                            "prompt_len": prompt.len(),
+                            "workspace": workspace_display,
+                        }));
+
+                        // ── Build enriched prompt with project context ──
+                        let enriched_prompt = build_enriched_prompt(
+                            &prompt,
+                            &workspace_display,
+                        );
+
+                        let result: Result<String, String> = match provider.as_str() {
+                            "gemini" => {
+                                match forge_agent::create_agent_gemini(&config, bridge) {
+                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone()).await,
+                                    Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
+                                }
+                            }
+                            "anthropic" => {
+                                match forge_agent::create_agent_anthropic(&config, bridge) {
+                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone()).await,
+                                    Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
+                                }
+                            }
+                            "openai" => {
+                                match forge_agent::create_agent_openai(&config, bridge) {
+                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone()).await,
+                                    Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
+                                }
+                            }
+                            other => Err(format!("Unknown provider: {other}")),
+                        };
+
+                        match result {
+                            Ok(response) => {
+                                proxy_rpc.handle_response(
+                                    id,
+                                    Ok(ProxyResponse::AgentDone { message: response }),
+                                );
+                            }
+                            Err(error) => {
+                                core_rpc.notification(CoreNotification::AgentError {
+                                    error: error.clone(),
+                                });
+                                proxy_rpc.handle_response(
+                                    id,
+                                    Ok(ProxyResponse::AgentError { error }),
+                                );
+                            }
+                        }
+                    });
+                });
+            }
+            AgentCancel {} => {
+                // TODO: Cancel running agent task
+                tracing::info!("Agent cancel requested");
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
+                    message: "Cancelled".to_string(),
+                }));
+            }
+            AgentApproveToolCall { tool_call_id } => {
+                // TODO: Signal approval to agent runtime
+                tracing::info!("Agent tool call approved: {tool_call_id}");
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
+                    message: format!("Approved: {tool_call_id}"),
+                }));
+            }
+            AgentRejectToolCall { tool_call_id } => {
+                // TODO: Signal rejection to agent runtime
+                tracing::info!("Agent tool call rejected: {tool_call_id}");
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
+                    message: format!("Rejected: {tool_call_id}"),
+                }));
+            }
         }
     }
+}
+
+// build_enriched_prompt, build_project_tree, detect_primary_language
+// are now in forge_agent crate (forge_agent::build_enriched_prompt etc.)
+fn build_enriched_prompt(user_prompt: &str, workspace_path: &str) -> String {
+    forge_agent::build_enriched_prompt(user_prompt, workspace_path)
+}
+
+/// Stream an agent prompt, sending incremental text chunks as `CoreNotification`s.
+/// Returns the full accumulated response text on success.
+async fn run_streaming_agent<M>(
+    agent: forge_agent::rig::agent::Agent<M>,
+    prompt: &str,
+    core_rpc: &CoreRpcHandler,
+    hook: forge_agent::TracingHook,
+) -> Result<String, String>
+where
+    M: forge_agent::rig::completion::CompletionModel + 'static,
+{
+    use forge_agent::rig::streaming::{StreamingPrompt, StreamedAssistantContent, StreamedUserContent};
+    use forge_agent::rig::agent::MultiTurnStreamItem;
+    use futures_util::StreamExt;
+
+    let mut stream = agent.stream_prompt(prompt).with_hook(hook.clone()).await;
+    let mut full_response = String::new();
+
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(text),
+            )) => {
+                full_response.push_str(&text.text);
+                core_rpc.notification(CoreNotification::AgentTextChunk {
+                    text: text.text,
+                    done: false,
+                });
+            }
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::ToolCall { tool_call, .. },
+            )) => {
+                let args = serde_json::to_string(&tool_call.function.arguments)
+                    .unwrap_or_default();
+                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                    tool_call_id: tool_call.id.clone(),
+                    tool_name: tool_call.function.name.clone(),
+                    arguments: args,
+                    status: "running".to_string(),
+                    output: None,
+                });
+            }
+            Ok(MultiTurnStreamItem::StreamUserItem(
+                StreamedUserContent::ToolResult { tool_result, .. },
+            )) => {
+                let output = tool_result
+                    .content
+                    .iter()
+                    .filter_map(|c| {
+                        if let forge_agent::rig::message::ToolResultContent::Text(t) = c {
+                            Some(t.text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                    tool_call_id: tool_result.id.clone(),
+                    tool_name: String::new(),
+                    arguments: String::new(),
+                    status: "completed".to_string(),
+                    output: Some(output),
+                });
+            }
+            Ok(MultiTurnStreamItem::FinalResponse(final_resp)) => {
+                // Use the final aggregated response if we haven't accumulated any text
+                if full_response.is_empty() {
+                    full_response = final_resp.response().to_string();
+                }
+                core_rpc.notification(CoreNotification::AgentTextChunk {
+                    text: String::new(),
+                    done: true,
+                });
+                hook.write_session_end();
+                break;
+            }
+            Err(e) => {
+                hook.write_event("error", serde_json::json!({ "error": e.to_string() }));
+                hook.write_session_end();
+                return Err(e.to_string());
+            }
+            _ => {
+                // ToolCallDelta, ReasoningDelta, etc. -- ignore for now
+            }
+        }
+    }
+
+    Ok(full_response)
 }
 
 impl Dispatcher {
@@ -1967,6 +2407,7 @@ impl Dispatcher {
             file_watcher,
             window_id: 1,
             tab_id: 1,
+            db_manager: crate::database::connection_manager::ConnectionManager::new(),
         }
     }
 

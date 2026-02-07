@@ -2,6 +2,7 @@
 
 pub mod buffer;
 pub mod cli;
+pub mod database;
 pub mod dispatch;
 pub mod gix_utils;
 pub mod plugin;

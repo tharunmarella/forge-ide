@@ -64,6 +64,8 @@ impl LapceIcons {
     
     // Database Manager
     pub const DATABASE: &'static str = "database";
+    pub const DATABASE_POSTGRES: &'static str = "database.postgres";
+    pub const DATABASE_MONGODB: &'static str = "database.mongodb";
     
     // Git Operations
     pub const GIT_COMMIT: &'static str = "git.commit";
@@ -157,6 +159,8 @@ impl LapceIcons {
     pub const REFERENCES: &'static str = "references";
 
     pub const IMPLEMENTATION: &'static str = "implementation";
+
+    pub const AI_CHAT: &'static str = "lightbulb";
 
     pub const SYMBOL_KIND_ARRAY: &'static str = "symbol_kind.array";
     pub const SYMBOL_KIND_BOOLEAN: &'static str = "symbol_kind.boolean";

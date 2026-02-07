@@ -4,6 +4,7 @@ pub mod buffer;
 pub mod core;
 pub mod counter;
 pub mod dap_types;
+pub mod db;
 pub mod file;
 pub mod file_line;
 mod parse;

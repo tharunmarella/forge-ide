@@ -17,6 +17,7 @@ use floem::{
 };
 
 use super::{
+    ai_chat_view::ai_chat_panel,
     debug_view::debug_panel,
     git_log_view::git_log_panel,
     global_search_view::global_search_panel,
@@ -595,6 +596,9 @@ fn panel_view(
                         implementation_panel(window_tab_data.clone(), position).into_any()
                     }
                 }
+                PanelKind::AiChat => {
+                    ai_chat_panel(window_tab_data.clone(), position).into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
@@ -638,6 +642,7 @@ fn bottom_panel_with_header(
         PanelKind::CallHierarchy => "Call Hierarchy",
         PanelKind::References => "References",
         PanelKind::Implementation => "Implementation",
+        PanelKind::AiChat => "Forge AI",
         _ => "Panel",
     };
     let icon = kind.svg_name();
@@ -725,6 +730,7 @@ fn panel_icon_button(
         PanelKind::DocumentSymbol => "Document Symbol",
         PanelKind::References => "References",
         PanelKind::Implementation => "Implementation",
+        PanelKind::AiChat => "Forge AI",
     };
     let icon = p.svg_name();
     let is_active = {

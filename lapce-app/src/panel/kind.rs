@@ -22,6 +22,7 @@ pub enum PanelKind {
     DocumentSymbol,
     References,
     Implementation,
+    AiChat,
 }
 
 impl PanelKind {
@@ -41,6 +42,7 @@ impl PanelKind {
             PanelKind::DocumentSymbol => LapceIcons::DOCUMENT_SYMBOL,
             PanelKind::References => LapceIcons::REFERENCES,
             PanelKind::Implementation => LapceIcons::IMPLEMENTATION,
+            PanelKind::AiChat => LapceIcons::AI_CHAT,
         }
     }
 
@@ -70,6 +72,7 @@ impl PanelKind {
             PanelKind::DocumentSymbol => PanelPosition::RightTop,
             PanelKind::References => PanelPosition::BottomLeft,
             PanelKind::Implementation => PanelPosition::BottomLeft,
+            PanelKind::AiChat => PanelPosition::RightTop,
         }
     }
 }
