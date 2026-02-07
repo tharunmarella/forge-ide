@@ -261,6 +261,9 @@ pub async fn write(args: &Value, workdir: &Path) -> ToolResult {
 
     let full_path = workdir.join(path);
 
+    // Capture old content for diff preview (empty if file doesn't exist)
+    let old_content = std::fs::read_to_string(&full_path).unwrap_or_default();
+
     // Create parent directories
     if let Some(parent) = full_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -269,7 +272,15 @@ pub async fn write(args: &Value, workdir: &Path) -> ToolResult {
     }
 
     match std::fs::write(&full_path, content) {
-        Ok(_) => ToolResult::ok(format!("Created {path} ({} bytes)", content.len())),
+        Ok(_) => {
+            let meta = super::FileEditMeta {
+                path: path.to_string(),
+                old_content,
+                new_content: content.to_string(),
+            };
+            ToolResult::ok(format!("Created {path} ({} bytes)", content.len()))
+                .with_file_edit(meta)
+        }
         Err(e) => ToolResult::err(format!("Failed to write: {e}")),
     }
 }
@@ -333,7 +344,15 @@ pub async fn replace(args: &Value, workdir: &Path) -> ToolResult {
         }
 
         return match std::fs::write(&full_path, &new_content) {
-            Ok(_) => ToolResult::ok(format!("Updated {path} (replaced lines {start}-{end})")),
+            Ok(_) => {
+                let meta = super::FileEditMeta {
+                    path: path.to_string(),
+                    old_content: content.clone(),
+                    new_content: new_content.clone(),
+                };
+                ToolResult::ok(format!("Updated {path} (replaced lines {start}-{end})"))
+                    .with_file_edit(meta)
+            }
             Err(e) => ToolResult::err(format!("Failed to write: {e}")),
         };
     }
@@ -355,7 +374,13 @@ pub async fn replace(args: &Value, workdir: &Path) -> ToolResult {
                     MatchStrategy::Exact => String::new(),
                     other => format!(" ({other} match)"),
                 };
+                let meta = super::FileEditMeta {
+                    path: path.to_string(),
+                    old_content: content.clone(),
+                    new_content: result.new_content.clone(),
+                };
                 ToolResult::ok(format!("Updated {path}{strategy_note}"))
+                    .with_file_edit(meta)
             }
             Err(e) => ToolResult::err(format!("Failed to write: {e}")),
         };
@@ -924,7 +949,7 @@ pub async fn apply_v4a_patch(args: &Value, workdir: &Path) -> ToolResult {
     if success {
         ToolResult::ok(output)
     } else {
-        ToolResult { success: false, output }
+        ToolResult { success: false, output, file_edit: None }
     }
 }
 

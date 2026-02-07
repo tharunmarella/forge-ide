@@ -14,12 +14,24 @@ pub enum MarkdownContent {
     Text(TextLayout),
     Image { url: String, title: String },
     Separator,
+    /// A rendered Mermaid diagram (SVG string).
+    MermaidDiagram { svg: String },
 }
 
 pub fn parse_markdown(
     text: &str,
     line_height: f64,
     config: &LapceConfig,
+) -> Vec<MarkdownContent> {
+    parse_markdown_sized(text, line_height, config, config.ui.font_size() as f32)
+}
+
+/// Like `parse_markdown` but with a custom font size (useful for compact panels).
+pub fn parse_markdown_sized(
+    text: &str,
+    line_height: f64,
+    config: &LapceConfig,
+    font_size: f32,
 ) -> Vec<MarkdownContent> {
     let mut res = Vec::new();
 
@@ -29,7 +41,7 @@ pub fn parse_markdown(
 
     let default_attrs = Attrs::new()
         .color(config.color(LapceColor::EDITOR_FOREGROUND))
-        .font_size(config.ui.font_size() as f32)
+        .font_size(font_size)
         .line_height(LineHeightValue::Normal(line_height as f32));
     let mut attr_list = AttrsList::new(default_attrs.clone());
 
@@ -87,22 +99,69 @@ pub fn parse_markdown(
 
                     match &tag {
                         Tag::CodeBlock(kind) => {
-                            let language =
-                                if let CodeBlockKind::Fenced(language) = kind {
-                                    md_language_to_lapce_language(language)
-                                } else {
-                                    None
-                                };
-
-                            highlight_as_code(
-                                &mut attr_list,
-                                default_attrs.clone().family(&code_font_family),
-                                language,
-                                &last_text,
-                                start_offset,
-                                config,
+                            // Check if this is a mermaid diagram
+                            let is_mermaid = matches!(
+                                kind,
+                                CodeBlockKind::Fenced(lang) if lang.as_ref().trim().eq_ignore_ascii_case("mermaid")
                             );
-                            builder_dirty = true;
+
+                            if is_mermaid {
+                                // Render mermaid diagram to SVG inline
+                                let mermaid_src = last_text.as_ref();
+                                match mermaid_rs_renderer::render(mermaid_src) {
+                                    Ok(svg_string) => {
+                                        // Flush any pending text before the diagram
+                                        if builder_dirty {
+                                            // Remove the mermaid source text that was appended
+                                            if current_text.len() >= mermaid_src.len() {
+                                                let new_len = current_text.len() - mermaid_src.len();
+                                                current_text.truncate(new_len);
+                                                pos = current_text.len();
+                                            }
+                                            if !current_text.is_empty() {
+                                                let mut text_layout = TextLayout::new();
+                                                text_layout.set_text(&current_text, attr_list, None);
+                                                res.push(MarkdownContent::Text(text_layout));
+                                            }
+                                            attr_list = AttrsList::new(default_attrs.clone());
+                                            current_text.clear();
+                                            pos = 0;
+                                            builder_dirty = false;
+                                        }
+                                        res.push(MarkdownContent::MermaidDiagram { svg: svg_string });
+                                    }
+                                    Err(e) => {
+                                        // Rendering failed — fall back to showing as code
+                                        tracing::warn!("Mermaid render failed: {e}");
+                                        highlight_as_code(
+                                            &mut attr_list,
+                                            default_attrs.clone().family(&code_font_family),
+                                            None,
+                                            &last_text,
+                                            start_offset,
+                                            config,
+                                        );
+                                        builder_dirty = true;
+                                    }
+                                }
+                            } else {
+                                let language =
+                                    if let CodeBlockKind::Fenced(language) = kind {
+                                        md_language_to_lapce_language(language)
+                                    } else {
+                                        None
+                                    };
+
+                                highlight_as_code(
+                                    &mut attr_list,
+                                    default_attrs.clone().family(&code_font_family),
+                                    language,
+                                    &last_text,
+                                    start_offset,
+                                    config,
+                                );
+                                builder_dirty = true;
+                            }
                         }
                         Tag::Image {
                             link_type: _,

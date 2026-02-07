@@ -6,6 +6,7 @@ use std::rc::Rc;
 use floem::{
     ext_event::create_ext_action,
     keyboard::Modifiers,
+    kurbo::Point,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
 use serde::{Deserialize, Serialize};
@@ -139,6 +140,10 @@ pub struct ChatToolCall {
     pub arguments: String,
     pub status: ToolCallStatus,
     pub output: Option<String>,
+    /// When this tool call started (for elapsed time display).
+    pub started_at: std::time::Instant,
+    /// Pre-formatted elapsed time string (e.g. "1.2s"), updated on completion.
+    pub elapsed_display: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -218,6 +223,18 @@ pub struct AiChatData {
     /// Whether the model dropdown is currently open
     pub dropdown_open: RwSignal<bool>,
     pub common: Rc<CommonData>,
+
+    // ── Streaming UI signals ────────────────────────────────────
+    /// Current in-progress streaming text (plain, not yet markdown-parsed).
+    /// Updated on every AgentTextChunk; cleared on done.
+    pub streaming_text: RwSignal<String>,
+    /// Whether we've received the first text token (controls thinking indicator).
+    pub has_first_token: RwSignal<bool>,
+    /// Signal to auto-scroll the message list to the bottom.
+    pub scroll_to_bottom: RwSignal<Option<Point>>,
+    /// Counter incremented each time we want to trigger a scroll.
+    /// The view reacts to changes in this signal.
+    pub scroll_trigger: RwSignal<u64>,
 }
 
 impl AiChatData {
@@ -237,6 +254,10 @@ impl AiChatData {
             keys_config: cx.create_rw_signal(config),
             dropdown_open: cx.create_rw_signal(false),
             common,
+            streaming_text: cx.create_rw_signal(String::new()),
+            has_first_token: cx.create_rw_signal(false),
+            scroll_to_bottom: cx.create_rw_signal(None),
+            scroll_trigger: cx.create_rw_signal(0),
         }
     }
 
@@ -304,9 +325,11 @@ impl AiChatData {
             entries.push_back(new_message(ChatRole::User, text.clone()));
         });
 
-        // Clear the editor
+        // Clear the editor and reset streaming state
         self.editor.doc().reload(lapce_xi_rope::Rope::from(""), true);
         self.is_loading.set(true);
+        self.has_first_token.set(false);
+        self.streaming_text.set(String::new());
 
         if api_key.is_empty() {
             self.entries.update(|entries| {
@@ -371,6 +394,14 @@ impl AiChatData {
 
     pub fn clear_chat(&self) {
         self.entries.update(|entries| entries.clear());
+        self.streaming_text.set(String::new());
+        self.has_first_token.set(false);
+        self.is_loading.set(false);
+    }
+
+    /// Trigger the scroll-to-bottom signal.
+    pub fn request_scroll_to_bottom(&self) {
+        self.scroll_trigger.update(|v| *v += 1);
     }
 }
 

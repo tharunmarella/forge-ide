@@ -142,20 +142,41 @@ pub struct ToolCall {
     pub thought_signature: Option<String>,
 }
 
+/// Metadata about a file edit performed by a tool (for diff preview).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEditMeta {
+    /// Relative path within the workspace.
+    pub path: String,
+    /// Original file content before edit (empty for new files).
+    pub old_content: String,
+    /// New file content after edit.
+    pub new_content: String,
+}
+
 /// Result of executing a tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub success: bool,
     pub output: String,
+    /// If this tool wrote/modified a file, this contains the before/after content
+    /// so the proxy can compute a diff preview.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_edit: Option<FileEditMeta>,
 }
 
 impl ToolResult {
     pub fn ok(output: impl Into<String>) -> Self {
-        Self { success: true, output: output.into() }
+        Self { success: true, output: output.into(), file_edit: None }
     }
 
     pub fn err(output: impl Into<String>) -> Self {
-        Self { success: false, output: output.into() }
+        Self { success: false, output: output.into(), file_edit: None }
+    }
+
+    /// Attach file edit metadata (for diff preview).
+    pub fn with_file_edit(mut self, meta: FileEditMeta) -> Self {
+        self.file_edit = Some(meta);
+        self
     }
 }
 

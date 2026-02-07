@@ -25,10 +25,16 @@ serde_json = { workspace = true }
 walkdir = "2"
 ignore = "0.4"
 
-# Code parsing
-# NOTE: tree-sitter is available via lapce-core (v0.22) at the workspace level.
-# For now, forge-agent uses regex-based parsing; tree-sitter integration will 
-# come via the proxy bridge to lapce-core's existing infrastructure.
+# Code parsing -- tree-sitter for accurate symbol extraction in RepoMap
+# Pinned to 0.22/0.21 to match lapce-core's tree-sitter version (avoids `links` conflict)
+# NOTE: tree-sitter-javascript 0.21 is excluded due to `cc ~1.0.90` constraint conflict;
+# JS/JSX files use tree-sitter-typescript's TSX parser instead (TS is a JS superset).
+tree-sitter = "0.22"
+tree-sitter-tags = "0.22"
+tree-sitter-rust = "0.21"
+tree-sitter-python = "0.21"
+tree-sitter-typescript = "0.21"
+tree-sitter-go = "0.21"
 
 # Database (session persistence + embeddings)
 rusqlite = { version = "0.32", features = ["bundled"] }

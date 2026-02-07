@@ -766,6 +766,7 @@ fn right(
     update_in_progress: RwSignal<bool>,
     num_window_tabs: Memo<usize>,
     window_maximized: RwSignal<bool>,
+    panel: crate::panel::data::PanelData,
     config: ReadSignal<Arc<LapceConfig>>,
 ) -> impl View {
     let latest_version = create_memo(move |_| {
@@ -808,6 +809,80 @@ fn right(
             || "SDK Manager",
             config,
         ),
+        // ── Panel toggle icons ──
+        {
+            use crate::panel::position::PanelContainerPosition;
+            let panel_left = panel.clone();
+            let panel_bottom = panel.clone();
+            let panel_right = panel.clone();
+            let panel_left_icon = panel.clone();
+            let panel_bottom_icon = panel.clone();
+            let panel_right_icon = panel.clone();
+            stack((
+                clickable_icon(
+                    move || {
+                        if panel_left_icon
+                            .is_container_shown(&PanelContainerPosition::Left, true)
+                        {
+                            LapceIcons::SIDEBAR_LEFT
+                        } else {
+                            LapceIcons::SIDEBAR_LEFT_OFF
+                        }
+                    },
+                    move || {
+                        panel_left.toggle_container_visual(&PanelContainerPosition::Left)
+                    },
+                    || false,
+                    || false,
+                    || "Toggle Left Panel",
+                    config,
+                ),
+                clickable_icon(
+                    move || {
+                        if panel_bottom_icon.is_container_shown(
+                            &PanelContainerPosition::Bottom,
+                            true,
+                        ) {
+                            LapceIcons::LAYOUT_PANEL
+                        } else {
+                            LapceIcons::LAYOUT_PANEL_OFF
+                        }
+                    },
+                    move || {
+                        panel_bottom
+                            .toggle_container_visual(&PanelContainerPosition::Bottom)
+                    },
+                    || false,
+                    || false,
+                    || "Toggle Bottom Panel",
+                    config,
+                ),
+                clickable_icon(
+                    move || {
+                        if panel_right_icon
+                            .is_container_shown(&PanelContainerPosition::Right, true)
+                        {
+                            LapceIcons::SIDEBAR_RIGHT
+                        } else {
+                            LapceIcons::SIDEBAR_RIGHT_OFF
+                        }
+                    },
+                    move || {
+                        panel_right.toggle_container_visual(&PanelContainerPosition::Right)
+                    },
+                    || false,
+                    || false,
+                    || "Toggle Right Panel",
+                    config,
+                ),
+            ))
+            .style(move |s| {
+                s.items_center()
+                    .gap(2.0)
+                    .margin_right(6.0)
+                    .color(config.get().color(LapceColor::STATUS_FOREGROUND))
+            })
+        },
         stack((
             not_clickable_icon(
                 || LapceIcons::SETTINGS,
@@ -1024,6 +1099,7 @@ pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
                 update_in_progress,
                 num_window_tabs,
                 window_maximized,
+                window_tab_data.panel.clone(),
                 config,
             ),
         ))

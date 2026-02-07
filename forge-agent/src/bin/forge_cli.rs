@@ -50,7 +50,7 @@ struct Cli {
     workspace: String,
 
     /// Maximum agent turns (tool call rounds)
-    #[arg(long, default_value = "25")]
+    #[arg(long, default_value = "15")]
     max_turns: usize,
 
     /// Initialize a FORGE.md by having the agent explore the project

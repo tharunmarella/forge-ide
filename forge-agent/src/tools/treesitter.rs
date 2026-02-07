@@ -1,10 +1,11 @@
-//! Symbol extraction using regex patterns.
+//! Symbol extraction using tree-sitter-tags.
 //!
-//! This is a fallback implementation that uses regex instead of tree-sitter.
-//! TODO: Wire to IDE's tree-sitter infrastructure via the proxy bridge
-//! for more accurate symbol extraction.
+//! Provides accurate AST-based symbol extraction for tools like
+//! `list_definitions`, `get_definition`, and `find_references`.
+//! Uses the same tree-sitter-tags infrastructure as the RepoMap.
 
 use anyhow::Result;
+use crate::repomap;
 
 /// Code symbol definition
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ pub enum SymbolKind {
     Interface,
     Type,
     Constant,
+    #[allow(dead_code)]
     Variable,
     Method,
     Module,
@@ -47,64 +49,65 @@ impl std::fmt::Display for SymbolKind {
     }
 }
 
-/// Parse a file and extract symbol definitions (regex-based)
+/// Parse a file and extract symbol definitions using tree-sitter-tags.
+///
+/// This uses the same tree-sitter infrastructure as the RepoMap for
+/// accurate, scope-aware symbol extraction.
 pub fn parse_definitions(content: &str, file_ext: &str) -> Result<Vec<Symbol>> {
-    let patterns: Vec<(&str, SymbolKind)> = match file_ext {
-        "rs" => vec![
-            (r"(?m)^[[:space:]]*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", SymbolKind::Function),
-            (r"(?m)^[[:space:]]*(?:pub\s+)?struct\s+(\w+)", SymbolKind::Struct),
-            (r"(?m)^[[:space:]]*(?:pub\s+)?enum\s+(\w+)", SymbolKind::Enum),
-            (r"(?m)^[[:space:]]*(?:pub\s+)?trait\s+(\w+)", SymbolKind::Interface),
-            (r"(?m)^[[:space:]]*(?:pub\s+)?type\s+(\w+)", SymbolKind::Type),
-            (r"(?m)^[[:space:]]*(?:pub\s+)?const\s+(\w+)", SymbolKind::Constant),
-            (r"(?m)^[[:space:]]*(?:pub\s+)?mod\s+(\w+)", SymbolKind::Module),
-            (r"(?m)^[[:space:]]*impl(?:<[^>]*>)?\s+(?:\w+\s+for\s+)?(\w+)", SymbolKind::Method),
-        ],
-        "py" => vec![
-            (r"(?m)^[[:space:]]*(?:async\s+)?def\s+(\w+)", SymbolKind::Function),
-            (r"(?m)^[[:space:]]*class\s+(\w+)", SymbolKind::Class),
-        ],
-        "js" | "jsx" => vec![
-            (r"(?m)^[[:space:]]*(?:export\s+)?(?:async\s+)?function\s+(\w+)", SymbolKind::Function),
-            (r"(?m)^[[:space:]]*(?:export\s+)?class\s+(\w+)", SymbolKind::Class),
-            (r"(?m)^[[:space:]]*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\(", SymbolKind::Function),
-        ],
-        "ts" | "tsx" => vec![
-            (r"(?m)^[[:space:]]*(?:export\s+)?(?:async\s+)?function\s+(\w+)", SymbolKind::Function),
-            (r"(?m)^[[:space:]]*(?:export\s+)?class\s+(\w+)", SymbolKind::Class),
-            (r"(?m)^[[:space:]]*(?:export\s+)?interface\s+(\w+)", SymbolKind::Interface),
-            (r"(?m)^[[:space:]]*(?:export\s+)?type\s+(\w+)", SymbolKind::Type),
-            (r"(?m)^[[:space:]]*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\(", SymbolKind::Function),
-        ],
-        "go" => vec![
-            (r"(?m)^func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(", SymbolKind::Function),
-            (r"(?m)^type\s+(\w+)\s+struct", SymbolKind::Struct),
-            (r"(?m)^type\s+(\w+)\s+interface", SymbolKind::Interface),
-        ],
-        _ => return Ok(Vec::new()),
+    let configs = repomap::lang_configs();
+    let lang_cfg = match configs.get(file_ext) {
+        Some(cfg) => cfg,
+        None => return Ok(Vec::new()), // unsupported language
     };
+
+    if content.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let source_bytes = content.as_bytes();
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+    let mut context = tree_sitter_tags::TagsContext::new();
 
     let mut symbols = Vec::new();
 
-    for (pattern, kind) in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            for cap in re.captures_iter(content) {
-                if let Some(name_match) = cap.get(1) {
-                    let name = name_match.as_str().to_string();
-                    let start_line = content[..name_match.start()].matches('\n').count() + 1;
-                    // Estimate end line (look for next blank line or definition)
-                    let end_line = start_line + 10; // rough estimate
+    match context.generate_tags(lang_cfg.config(), source_bytes, None) {
+        Ok((tag_iter, _)) => {
+            for tag_result in tag_iter {
+                if let Ok(tag) = tag_result {
+                    if !tag.is_definition {
+                        continue;
+                    }
 
-                    // Get the signature (first line of the match)
-                    let line_start = content[..cap.get(0).unwrap().start()]
-                        .rfind('\n')
-                        .map(|p| p + 1)
-                        .unwrap_or(0);
-                    let line_end = content[cap.get(0).unwrap().start()..]
-                        .find('\n')
-                        .map(|p| cap.get(0).unwrap().start() + p)
-                        .unwrap_or(content.len());
-                    let signature = content[line_start..line_end].trim().to_string();
+                    let name = match std::str::from_utf8(&source_bytes[tag.name_range.clone()]) {
+                        Ok(n) => n.to_string(),
+                        Err(_) => continue,
+                    };
+
+                    if name.len() < 2 {
+                        continue;
+                    }
+
+                    let start_line = tag.span.start.row + 1; // 1-indexed
+                    // Use the tag's span end row for end_line (accurate block boundary)
+                    let end_line = (tag.span.end.row + 1).min(total_lines);
+
+                    let signature = lines
+                        .get(tag.span.start.row)
+                        .map(|l| l.trim().to_string())
+                        .unwrap_or_default();
+
+                    // Map tree-sitter syntax type to our SymbolKind
+                    let type_name = lang_cfg.config().syntax_type_name(tag.syntax_type_id as u32);
+                    let kind = match type_name {
+                        "function" => SymbolKind::Function,
+                        "method" => SymbolKind::Method,
+                        "class" => SymbolKind::Class,
+                        "interface" => SymbolKind::Interface,
+                        "module" => SymbolKind::Module,
+                        "macro" => SymbolKind::Function,
+                        _ => SymbolKind::Function,
+                    };
 
                     symbols.push(Symbol {
                         name,
@@ -116,10 +119,51 @@ pub fn parse_definitions(content: &str, file_ext: &str) -> Result<Vec<Symbol>> {
                 }
             }
         }
+        Err(_) => return Ok(Vec::new()),
     }
 
     symbols.sort_by_key(|s| s.start_line);
     Ok(symbols)
+}
+
+/// Parse a file and extract references (calls, type usages, etc.) using tree-sitter-tags.
+pub fn parse_references(content: &str, file_ext: &str) -> Result<Vec<(String, usize)>> {
+    let configs = repomap::lang_configs();
+    let lang_cfg = match configs.get(file_ext) {
+        Some(cfg) => cfg,
+        None => return Ok(Vec::new()),
+    };
+
+    if content.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let source_bytes = content.as_bytes();
+    let mut context = tree_sitter_tags::TagsContext::new();
+    let mut refs = Vec::new();
+
+    match context.generate_tags(lang_cfg.config(), source_bytes, None) {
+        Ok((tag_iter, _)) => {
+            for tag_result in tag_iter {
+                if let Ok(tag) = tag_result {
+                    if tag.is_definition {
+                        continue;
+                    }
+                    let name = match std::str::from_utf8(&source_bytes[tag.name_range.clone()]) {
+                        Ok(n) => n.to_string(),
+                        Err(_) => continue,
+                    };
+                    if name.len() < 2 {
+                        continue;
+                    }
+                    refs.push((name, tag.span.start.row + 1));
+                }
+            }
+        }
+        Err(_) => {}
+    }
+
+    Ok(refs)
 }
 
 /// Find a symbol definition by name

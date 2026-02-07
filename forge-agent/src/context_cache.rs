@@ -57,7 +57,7 @@ impl ContextCache {
         let key = workspace.to_path_buf();
         self.repo_map.get_with(key, || {
             let start = std::time::Instant::now();
-            let mut builder = RepoMap::new(workspace.to_path_buf(), 2048);
+            let mut builder = RepoMap::new(workspace.to_path_buf(), 8192);
             let map = builder.build_from_directory();
             tracing::info!(
                 "[ContextCache] Built RepoMap in {:?} ({} chars)",

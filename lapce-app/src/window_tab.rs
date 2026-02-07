@@ -135,6 +135,7 @@ pub struct CommonData {
     pub keypress: RwSignal<KeyPressData>,
     pub completion: RwSignal<CompletionData>,
     pub inline_completion: RwSignal<InlineCompletionData>,
+    pub ai_completion: crate::ai_completion::AiCompletionData,
     pub hover: HoverData,
     pub register: RwSignal<Register>,
     pub find: Find,
@@ -197,6 +198,7 @@ pub struct WindowTabData {
     pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
     pub database: crate::database::DatabaseViewData,
     pub ai_chat: crate::ai_chat::AiChatData,
+    pub ai_diffs: crate::ai_diff::AiDiffStore,
     pub common: Rc<CommonData>,
 }
 
@@ -346,6 +348,7 @@ impl WindowTabData {
         let focus = cx.create_rw_signal(Focus::Workbench);
         let completion = cx.create_rw_signal(CompletionData::new(cx, config));
         let inline_completion = cx.create_rw_signal(InlineCompletionData::new(cx));
+        let ai_completion = crate::ai_completion::AiCompletionData::new(cx);
         let hover = HoverData::new(cx);
 
         let register = cx.create_rw_signal(Register::default());
@@ -378,6 +381,7 @@ impl WindowTabData {
             focus,
             completion,
             inline_completion,
+            ai_completion,
             hover,
             register,
             find,
@@ -594,6 +598,7 @@ impl WindowTabData {
             messages: cx.create_rw_signal(Vec::new()),
             database: crate::database::DatabaseViewData::new(cx, common.proxy.clone()),
             ai_chat: crate::ai_chat::AiChatData::new(cx, editors_for_chat, common.clone()),
+            ai_diffs: crate::ai_diff::AiDiffStore::new(cx),
             common,
         };
 
@@ -2735,33 +2740,37 @@ impl WindowTabData {
                 self.file_explorer.reload();
             }
             CoreNotification::AgentTextChunk { text, done } => {
-                use crate::ai_chat::{ChatEntryKind, ChatRole, new_message};
+                use crate::ai_chat::{ChatRole, new_message};
                 if !text.is_empty() {
-                    self.ai_chat.entries.update(|entries| {
-                        // Find the last assistant message (may not be the very
-                        // last entry if tool calls were interleaved).
-                        let found = entries.iter_mut().rev().any(|entry| {
-                            if let ChatEntryKind::Message {
-                                role: ChatRole::Assistant,
-                                content,
-                            } = &mut entry.kind
-                            {
-                                content.push_str(text);
-                                entry.version += 1;
-                                return true;
-                            }
-                            false
-                        });
-                        if !found {
-                            entries.push_back(new_message(
-                                ChatRole::Assistant,
-                                text.clone(),
-                            ));
-                        }
-                    });
+                    // Mark that we've received the first token (hides thinking indicator)
+                    if !self.ai_chat.has_first_token.get_untracked() {
+                        self.ai_chat.has_first_token.set(true);
+                    }
+
+                    // Accumulate into the streaming_text signal (plain text, fast)
+                    self.ai_chat.streaming_text.update(|s| s.push_str(text));
+
+                    // Trigger auto-scroll
+                    self.ai_chat.request_scroll_to_bottom();
                 }
                 if *done {
+                    // Streaming complete: finalize the assistant message entry
+                    let final_text = self.ai_chat.streaming_text.get_untracked();
+                    if !final_text.is_empty() {
+                        self.ai_chat.entries.update(|entries| {
+                            entries.push_back(new_message(
+                                ChatRole::Assistant,
+                                final_text,
+                            ));
+                        });
+                    }
+                    // Clear streaming state
+                    self.ai_chat.streaming_text.set(String::new());
+                    self.ai_chat.has_first_token.set(false);
                     self.ai_chat.is_loading.set(false);
+
+                    // One final scroll to show the rendered markdown
+                    self.ai_chat.request_scroll_to_bottom();
                 }
             }
             CoreNotification::AgentToolCallUpdate {
@@ -2780,11 +2789,34 @@ impl WindowTabData {
                     "error" => ToolCallStatus::Error,
                     _ => ToolCallStatus::Pending,
                 };
+
+                // If we have accumulated streaming text before a tool call,
+                // finalize it as an assistant message first.
+                let pending_text = self.ai_chat.streaming_text.get_untracked();
+                if !pending_text.is_empty() {
+                    use crate::ai_chat::{ChatRole, new_message};
+                    self.ai_chat.entries.update(|entries| {
+                        entries.push_back(new_message(
+                            ChatRole::Assistant,
+                            pending_text,
+                        ));
+                    });
+                    self.ai_chat.streaming_text.set(String::new());
+                }
+
                 self.ai_chat.entries.update(|entries| {
                     // Try to update an existing tool call entry
                     let found = entries.iter_mut().any(|entry| {
                         if let ChatEntryKind::ToolCall(tc) = &mut entry.kind {
                             if tc.id == *tool_call_id {
+                                if tc.status == ToolCallStatus::Running
+                                    && tc_status != ToolCallStatus::Running
+                                {
+                                    // Compute elapsed time on completion
+                                    let elapsed = tc.started_at.elapsed();
+                                    tc.elapsed_display =
+                                        format!("{:.1}s", elapsed.as_secs_f64());
+                                }
                                 tc.status = tc_status.clone();
                                 if let Some(out) = output {
                                     tc.output = Some(out.clone());
@@ -2802,9 +2834,19 @@ impl WindowTabData {
                             arguments: arguments.clone(),
                             status: tc_status,
                             output: output.clone(),
+                            started_at: std::time::Instant::now(),
+                            elapsed_display: String::new(),
                         }));
                     }
                 });
+
+                // Mark first token received (tool calls count as activity)
+                if !self.ai_chat.has_first_token.get_untracked() {
+                    self.ai_chat.has_first_token.set(true);
+                }
+
+                // Auto-scroll
+                self.ai_chat.request_scroll_to_bottom();
             }
             CoreNotification::AgentError { error } => {
                 use crate::ai_chat::{ChatRole, new_message};
@@ -2814,7 +2856,53 @@ impl WindowTabData {
                         format!("Error: {}", error),
                     ));
                 });
+                self.ai_chat.streaming_text.set(String::new());
+                self.ai_chat.has_first_token.set(false);
                 self.ai_chat.is_loading.set(false);
+            }
+            CoreNotification::AgentDiffPreview {
+                diff_id,
+                tool_call_id,
+                file_path,
+                old_content,
+                new_content,
+                hunks,
+            } => {
+                use crate::ai_diff::PendingDiff;
+                let diff = PendingDiff::new(
+                    diff_id.clone(),
+                    tool_call_id.clone(),
+                    file_path.clone(),
+                    old_content.clone(),
+                    new_content.clone(),
+                    hunks.clone(),
+                );
+                let hunk_count = diff.hunks.len();
+                self.ai_diffs.add_diff(diff);
+
+                // Also add a notification in the chat
+                use crate::ai_chat::{ChatRole, new_message};
+                self.ai_chat.entries.update(|entries| {
+                    entries.push_back(new_message(
+                        ChatRole::System,
+                        format!(
+                            "📝 Diff preview for `{}`: {} hunk(s) — accept/reject in editor or use Accept All/Reject All",
+                            file_path, hunk_count,
+                        ),
+                    ));
+                });
+                self.ai_chat.request_scroll_to_bottom();
+            }
+            CoreNotification::AgentDiffsDone {} => {
+                // All diffs for this turn have been sent
+                tracing::info!("All agent diffs received");
+            }
+            CoreNotification::AiInlineCompletionResponse {
+                request_id: _,
+                items: _,
+            } => {
+                // Ghost text completion response — handled below in inline completion system
+                // TODO: integrate with InlineCompletionData
             }
             _ => {}
         }

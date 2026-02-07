@@ -1,5 +1,6 @@
 #![allow(clippy::manual_clamp)]
 
+pub mod ai_completion;
 pub mod buffer;
 pub mod cli;
 pub mod database;

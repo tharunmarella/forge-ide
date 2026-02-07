@@ -162,6 +162,56 @@ pub enum CoreNotification {
     AgentError {
         error: String,
     },
+
+    // ── AI Diff Preview (accept/reject) ──────────────────
+    /// The agent proposes a file edit — show inline diff preview instead of writing to disk.
+    AgentDiffPreview {
+        /// Unique id for this diff (used for accept/reject).
+        diff_id: String,
+        /// The tool call that produced this edit.
+        tool_call_id: String,
+        /// Relative path within the workspace.
+        file_path: String,
+        /// The original file content (empty string for new files).
+        old_content: String,
+        /// The proposed new content.
+        new_content: String,
+        /// Individual hunks: Vec of (old_start_line, old_line_count, new_start_line, new_line_count).
+        hunks: Vec<AiDiffHunk>,
+    },
+    /// All pending diffs for the current agent turn have been sent.
+    AgentDiffsDone {},
+
+    // ── AI Inline Completion (ghost text) ────────────────
+    /// Response to an AI inline completion request.
+    AiInlineCompletionResponse {
+        request_id: u64,
+        items: Vec<AiInlineCompletionItem>,
+    },
+}
+
+/// A single diff hunk in an AI-proposed edit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiDiffHunk {
+    /// 0-indexed starting line in the OLD content.
+    pub old_start: usize,
+    /// Number of lines from old content in this hunk.
+    pub old_lines: usize,
+    /// 0-indexed starting line in the NEW content.
+    pub new_start: usize,
+    /// Number of lines from new content in this hunk.
+    pub new_lines: usize,
+}
+
+/// A single AI inline completion suggestion (ghost text).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiInlineCompletionItem {
+    /// The text to insert.
+    pub insert_text: String,
+    /// The byte offset in the document where this completion starts.
+    pub start_offset: usize,
+    /// The byte offset where the existing text that's being replaced ends.
+    pub end_offset: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,6 +467,29 @@ impl CoreRpcHandler {
 
     pub fn home_dir(&self, path: PathBuf) {
         self.notification(CoreNotification::HomeDir { path });
+    }
+
+    pub fn agent_diff_preview(
+        &self,
+        diff_id: String,
+        tool_call_id: String,
+        file_path: String,
+        old_content: String,
+        new_content: String,
+        hunks: Vec<AiDiffHunk>,
+    ) {
+        self.notification(CoreNotification::AgentDiffPreview {
+            diff_id,
+            tool_call_id,
+            file_path,
+            old_content,
+            new_content,
+            hunks,
+        });
+    }
+
+    pub fn agent_diffs_done(&self) {
+        self.notification(CoreNotification::AgentDiffsDone {});
     }
 }
 

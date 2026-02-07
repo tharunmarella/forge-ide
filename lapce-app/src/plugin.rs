@@ -979,6 +979,9 @@ pub fn plugin_info_view(plugin: PluginData, volt: VoltID) -> impl View {
                                     MarkdownContent::Image { .. } => {
                                         container(empty())
                                     }
+                                    MarkdownContent::MermaidDiagram { .. } => {
+                                        container(empty())
+                                    }
                                     MarkdownContent::Separator => {
                                         container(empty().style(move |s| {
                                             s.width_full()

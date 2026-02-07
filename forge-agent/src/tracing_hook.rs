@@ -161,12 +161,18 @@ where
     ) -> impl std::future::Future<Output = HookAction> + Send {
         let state = self.state.clone();
         let prompt_text = format!("{:?}", prompt);
-        let prompt_text = truncate(&prompt_text, 500);
+        let prompt_len = prompt_text.len();
         let history_len = history.len();
         async move {
             if let Ok(mut s) = state.lock() {
                 s.turn += 1;
                 s.completion_start = Some(Instant::now());
+
+                // For the first turn, log more of the prompt so we can see the
+                // enriched context during debugging. Subsequent turns (tool
+                // results) can stay shorter.
+                let preview_limit = if s.turn == 1 { 4000 } else { 800 };
+
                 let entry = TraceEntry {
                     timestamp: chrono::Utc::now()
                         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
@@ -175,7 +181,8 @@ where
                     event: "completion_call".to_string(),
                     turn: s.turn,
                     data: serde_json::json!({
-                        "prompt": truncate(&prompt_text, 500),
+                        "prompt": truncate(&prompt_text, preview_limit),
+                        "prompt_len": prompt_len,
                         "history_len": history_len,
                     }),
                 };

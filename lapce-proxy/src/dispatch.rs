@@ -61,6 +61,9 @@ pub struct Dispatcher {
     window_id: usize,
     tab_id: usize,
     db_manager: crate::database::connection_manager::ConnectionManager,
+    /// Stores pre-edit file snapshots keyed by diff_id: (relative_path, old_content).
+    /// Used to revert files when the user rejects an AI-proposed diff.
+    pending_diff_snapshots: Arc<Mutex<HashMap<String, (String, String)>>>,
 }
 
 impl ProxyHandler for Dispatcher {
@@ -2151,6 +2154,7 @@ impl ProxyHandler for Dispatcher {
                 let proxy_rpc = self.proxy_rpc.clone();
                 let core_rpc = self.core_rpc.clone();
                 let workspace = self.workspace.clone();
+                let diff_snapshots = self.pending_diff_snapshots.clone();
 
                 thread::spawn(move || {
                     let rt = match tokio::runtime::Runtime::new() {
@@ -2177,16 +2181,17 @@ impl ProxyHandler for Dispatcher {
                             prompt.len()
                         );
 
+                        let workspace_for_agent = workspace_path.clone();
                         let bridge: std::sync::Arc<dyn forge_agent::ProxyBridge> =
                             std::sync::Arc::new(forge_agent::StandaloneBridge::new(
-                                workspace_path,
+                                workspace_for_agent,
                             ));
 
                         let config = forge_agent::ForgeAgentConfig {
                             provider: provider.clone(),
                             model: model.clone(),
                             api_key: api_key.clone(),
-                            max_turns: 25,
+                            max_turns: 15,
                             ..Default::default()
                         };
 
@@ -2229,19 +2234,19 @@ impl ProxyHandler for Dispatcher {
                         let result: Result<String, String> = match provider.as_str() {
                             "gemini" => {
                                 match forge_agent::create_agent_gemini(&config, bridge) {
-                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone()).await,
+                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
                                     Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
                                 }
                             }
                             "anthropic" => {
                                 match forge_agent::create_agent_anthropic(&config, bridge) {
-                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone()).await,
+                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
                                     Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
                                 }
                             }
                             "openai" => {
                                 match forge_agent::create_agent_openai(&config, bridge) {
-                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone()).await,
+                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
                                     Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
                                 }
                             }
@@ -2289,6 +2294,113 @@ impl ProxyHandler for Dispatcher {
                     message: format!("Rejected: {tool_call_id}"),
                 }));
             }
+
+            // ── AI Diff Accept/Reject ─────────────────────────────
+            AgentDiffAccept { diff_id, accepted_hunks } => {
+                tracing::info!("Agent diff accepted: {diff_id}, hunks: {:?}", accepted_hunks);
+                // The diff has already been applied to disk by the tool.
+                // This acknowledges that the user wants to keep the changes.
+                // In a future iteration, we could revert-then-selectively-apply hunks.
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDiffAcceptResponse {
+                    diff_id,
+                    success: true,
+                    message: "Changes accepted".to_string(),
+                }));
+            }
+            AgentDiffReject { diff_id } => {
+                tracing::info!("Agent diff rejected: {diff_id}");
+                // The user wants to revert the changes.
+                // Look up the diff in our pending store and revert the file.
+                if let Some(snapshot) = self.pending_diff_snapshots.lock().remove(&diff_id) {
+                    let workspace = self.workspace.clone().unwrap_or_default();
+                    let full_path = workspace.join(&snapshot.0);
+                    match std::fs::write(&full_path, &snapshot.1) {
+                        Ok(_) => {
+                            tracing::info!("Reverted {} to pre-edit state", snapshot.0);
+                            self.respond_rpc(id, Ok(ProxyResponse::AgentDiffRejectResponse { diff_id }));
+                        }
+                        Err(e) => {
+                            self.respond_rpc(id, Err(RpcError {
+                                code: 0,
+                                message: format!("Failed to revert {}: {e}", snapshot.0),
+                            }));
+                        }
+                    }
+                } else {
+                    self.respond_rpc(id, Ok(ProxyResponse::AgentDiffRejectResponse { diff_id }));
+                }
+            }
+            AgentDiffAcceptAll {} => {
+                tracing::info!("Agent diff accept all");
+                self.pending_diff_snapshots.lock().clear();
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDiffAcceptResponse {
+                    diff_id: "all".to_string(),
+                    success: true,
+                    message: "All changes accepted".to_string(),
+                }));
+            }
+            AgentDiffRejectAll {} => {
+                tracing::info!("Agent diff reject all");
+                let snapshots: Vec<(String, String)> = {
+                    let mut store = self.pending_diff_snapshots.lock();
+                    let items: Vec<_> = store.drain().map(|(_, v)| v).collect();
+                    items
+                };
+                let workspace = self.workspace.clone().unwrap_or_default();
+                for (rel_path, old_content) in &snapshots {
+                    let full_path = workspace.join(rel_path);
+                    if let Err(e) = std::fs::write(&full_path, old_content) {
+                        tracing::error!("Failed to revert {}: {e}", rel_path);
+                    }
+                }
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDiffRejectResponse {
+                    diff_id: "all".to_string(),
+                }));
+            }
+
+            // ── AI Inline Completion (ghost text) ────────────────
+            AiInlineCompletion { request_id, path, position: _, prefix, suffix } => {
+                tracing::debug!("AI inline completion request: path={}", path.display());
+                let proxy_rpc = self.proxy_rpc.clone();
+                let path = path.clone();
+                let prefix = prefix.clone();
+                let suffix = suffix.clone();
+                let req_id = request_id;
+
+                thread::spawn(move || {
+                    let rt = match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        Ok(rt) => rt,
+                        Err(_) => {
+                            proxy_rpc.handle_response(
+                                id,
+                                Ok(ProxyResponse::AiInlineCompletionResponse {
+                                    request_id: req_id,
+                                    items: vec![],
+                                }),
+                            );
+                            return;
+                        }
+                    };
+
+                    let items = rt.block_on(async {
+                        crate::ai_completion::generate_completion(
+                            &path, &prefix, &suffix,
+                        )
+                        .await
+                    });
+
+                    proxy_rpc.handle_response(
+                        id,
+                        Ok(ProxyResponse::AiInlineCompletionResponse {
+                            request_id: req_id,
+                            items,
+                        }),
+                    );
+                });
+            }
         }
     }
 }
@@ -2301,11 +2413,17 @@ fn build_enriched_prompt(user_prompt: &str, workspace_path: &str) -> String {
 
 /// Stream an agent prompt, sending incremental text chunks as `CoreNotification`s.
 /// Returns the full accumulated response text on success.
+///
+/// File-editing tool calls (write_to_file, replace_in_file, apply_patch) are intercepted:
+/// before the tool runs we snapshot the file, after the tool runs we compute a diff and
+/// emit an `AgentDiffPreview` notification so the UI can show inline accept/reject.
 async fn run_streaming_agent<M>(
     agent: forge_agent::rig::agent::Agent<M>,
     prompt: &str,
     core_rpc: &CoreRpcHandler,
     hook: forge_agent::TracingHook,
+    pending_diff_snapshots: Arc<Mutex<HashMap<String, (String, String)>>>,
+    workspace_path: PathBuf,
 ) -> Result<String, String>
 where
     M: forge_agent::rig::completion::CompletionModel + 'static,
@@ -2313,9 +2431,19 @@ where
     use forge_agent::rig::streaming::{StreamingPrompt, StreamedAssistantContent, StreamedUserContent};
     use forge_agent::rig::agent::MultiTurnStreamItem;
     use futures_util::StreamExt;
+    use std::collections::HashMap;
+
+    const FILE_EDIT_TOOLS: &[&str] = &["write_to_file", "replace_in_file", "apply_patch"];
 
     let mut stream = agent.stream_prompt(prompt).with_hook(hook.clone()).await;
     let mut full_response = String::new();
+
+    // Track pre-edit file snapshots: tool_call_id -> (relative_path, old_content)
+    let mut pre_edit_snapshots: HashMap<String, (String, String)> = HashMap::new();
+    // Track tool_call_id -> tool_name for matching tool results
+    let mut tool_call_names: HashMap<String, String> = HashMap::new();
+    // Diff ID counter
+    let mut diff_counter: u64 = 0;
 
     while let Some(item) = stream.next().await {
         match item {
@@ -2331,11 +2459,28 @@ where
             Ok(MultiTurnStreamItem::StreamAssistantItem(
                 StreamedAssistantContent::ToolCall { tool_call, .. },
             )) => {
+                let tool_name = tool_call.function.name.clone();
                 let args = serde_json::to_string(&tool_call.function.arguments)
                     .unwrap_or_default();
+
+                // If this is a file-editing tool, snapshot the file BEFORE the edit
+                if FILE_EDIT_TOOLS.contains(&tool_name.as_str()) {
+                    if let Some(path) = tool_call.function.arguments.get("path").and_then(|v| v.as_str()) {
+                        // Try to read the current file content (may not exist for new files)
+                        let full_path = workspace_path.join(path);
+                        let old_content = std::fs::read_to_string(&full_path).unwrap_or_default();
+                        pre_edit_snapshots.insert(
+                            tool_call.id.clone(),
+                            (path.to_string(), old_content),
+                        );
+                    }
+                }
+
+                tool_call_names.insert(tool_call.id.clone(), tool_name.clone());
+
                 core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                     tool_call_id: tool_call.id.clone(),
-                    tool_name: tool_call.function.name.clone(),
+                    tool_name,
                     arguments: args,
                     status: "running".to_string(),
                     output: None,
@@ -2356,8 +2501,40 @@ where
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
+
+                let tc_id = tool_result.id.clone();
+
+                // Check if we have a pre-edit snapshot — means this was a file-editing tool
+                if let Some((rel_path, old_content)) = pre_edit_snapshots.remove(&tc_id) {
+                    // Read the file AFTER the edit to compute diff
+                    let full_path = workspace_path.join(&rel_path);
+                    let new_content = std::fs::read_to_string(&full_path).unwrap_or_default();
+
+                    // Only send diff if content actually changed
+                    if new_content != old_content {
+                        diff_counter += 1;
+                        let diff_id = format!("diff-{diff_counter}");
+                        let hunks = compute_diff_hunks(&old_content, &new_content);
+
+                        // Store the pre-edit snapshot so we can revert on reject
+                        pending_diff_snapshots.lock().insert(
+                            diff_id.clone(),
+                            (rel_path.clone(), old_content.clone()),
+                        );
+
+                        core_rpc.agent_diff_preview(
+                            diff_id,
+                            tc_id.clone(),
+                            rel_path,
+                            old_content,
+                            new_content,
+                            hunks,
+                        );
+                    }
+                }
+
                 core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                    tool_call_id: tool_result.id.clone(),
+                    tool_call_id: tc_id,
                     tool_name: String::new(),
                     arguments: String::new(),
                     status: "completed".to_string(),
@@ -2369,6 +2546,12 @@ where
                 if full_response.is_empty() {
                     full_response = final_resp.response().to_string();
                 }
+
+                // Signal that all diffs have been sent
+                if diff_counter > 0 {
+                    core_rpc.agent_diffs_done();
+                }
+
                 core_rpc.notification(CoreNotification::AgentTextChunk {
                     text: String::new(),
                     done: true,
@@ -2390,6 +2573,112 @@ where
     Ok(full_response)
 }
 
+/// Compute line-level diff hunks between old and new file content.
+/// Uses a simple LCS-based approach to identify changed regions.
+fn compute_diff_hunks(old_content: &str, new_content: &str) -> Vec<lapce_rpc::core::AiDiffHunk> {
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+
+    let m = old_lines.len();
+    let n = new_lines.len();
+
+    // Build LCS table
+    let mut table = vec![vec![0u32; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            if old_lines[i - 1] == new_lines[j - 1] {
+                table[i][j] = table[i - 1][j - 1] + 1;
+            } else {
+                table[i][j] = table[i - 1][j].max(table[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack to produce edit script
+    #[derive(PartialEq)]
+    enum Op { Keep, Insert, Delete }
+    let mut ops = Vec::new();
+    let (mut i, mut j) = (m, n);
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && old_lines[i - 1] == new_lines[j - 1] {
+            ops.push(Op::Keep);
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || table[i][j - 1] >= table[i - 1][j]) {
+            ops.push(Op::Insert);
+            j -= 1;
+        } else {
+            ops.push(Op::Delete);
+            i -= 1;
+        }
+    }
+    ops.reverse();
+
+    // Find contiguous changed regions
+    let mut changes: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut old_pos = 0usize;
+    let mut new_pos = 0usize;
+    let mut idx = 0;
+
+    while idx < ops.len() {
+        if ops[idx] == Op::Keep {
+            old_pos += 1;
+            new_pos += 1;
+            idx += 1;
+            continue;
+        }
+        let cs = old_pos;
+        let ns = new_pos;
+        while idx < ops.len() && ops[idx] != Op::Keep {
+            match ops[idx] {
+                Op::Delete => old_pos += 1,
+                Op::Insert => new_pos += 1,
+                _ => {}
+            }
+            idx += 1;
+        }
+        changes.push((cs, old_pos - cs, ns, new_pos - ns));
+    }
+
+    // Merge nearby changes with 3 lines of context into hunks
+    let context = 3usize;
+    let mut hunks = Vec::new();
+    let mut ci = 0;
+    while ci < changes.len() {
+        let (mut os, mut oc, mut ns, mut nc) = changes[ci];
+        let cb = os.min(context);
+        os -= cb;
+        ns -= cb;
+        oc += cb;
+        nc += cb;
+
+        while ci + 1 < changes.len() {
+            let (nos, noc, nns, nnc) = changes[ci + 1];
+            if nos.saturating_sub(os + oc) <= 2 * context {
+                oc = nos + noc - os;
+                nc = nns + nnc - ns;
+                ci += 1;
+            } else {
+                break;
+            }
+        }
+
+        let ca = (m - (os + oc)).min(context);
+        oc += ca;
+        nc += ca;
+
+        hunks.push(lapce_rpc::core::AiDiffHunk {
+            old_start: os,
+            old_lines: oc,
+            new_start: ns,
+            new_lines: nc,
+        });
+        ci += 1;
+    }
+
+    hunks
+}
+
 impl Dispatcher {
     pub fn new(core_rpc: CoreRpcHandler, proxy_rpc: ProxyRpcHandler) -> Self {
         let plugin_rpc =
@@ -2408,6 +2697,7 @@ impl Dispatcher {
             window_id: 1,
             tab_id: 1,
             db_manager: crate::database::connection_manager::ConnectionManager::new(),
+            pending_diff_snapshots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

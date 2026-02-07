@@ -1683,7 +1683,7 @@ impl EditorData {
         inline_completion.update(|c| c.status = InlineCompletionStatus::Started);
 
         self.common.proxy.get_inline_completions(
-            path,
+            path.clone(),
             position,
             trigger_kind,
             move |res| {
@@ -1699,6 +1699,75 @@ impl EditorData {
                         }
                     };
                     send(items);
+                }
+            },
+        );
+
+        // Also request AI inline completion (ghost text from AI model)
+        self.request_ai_completion(path, position, offset);
+    }
+
+    /// Request AI-powered inline completion.
+    fn request_ai_completion(
+        &self,
+        path: std::path::PathBuf,
+        position: lsp_types::Position,
+        offset: usize,
+    ) {
+        let ai_completion = &self.common.ai_completion;
+        if !ai_completion.should_request() {
+            return;
+        }
+
+        let doc = self.doc();
+        let text = doc.buffer.with_untracked(|b| b.to_string());
+        let (prefix, suffix) = ai_completion.extract_fim_context(&text, offset);
+        let request_id = ai_completion.next_request_id();
+
+        let inline_completion = self.common.inline_completion;
+        let ai_comp = self.common.ai_completion.clone();
+        let doc2 = self.doc();
+        let path_for_closure = path.clone();
+
+        let send_ai = create_ext_action(self.scope, move |items: Vec<InlineCompletionItem>| {
+            ai_comp.request_completed(request_id);
+            if !items.is_empty() {
+                // Only set if there are no LSP completions already showing
+                let has_lsp = inline_completion.with_untracked(|c| {
+                    c.status == InlineCompletionStatus::Active && !c.items.is_empty()
+                });
+                if !has_lsp {
+                    inline_completion.update(|c| {
+                        c.set_items(
+                            items.into_iter().collect(),
+                            offset,
+                            path_for_closure.clone(),
+                        );
+                        c.update_doc(&doc2, offset);
+                    });
+                }
+            }
+        });
+
+        self.common.proxy.request_async(
+            lapce_rpc::proxy::ProxyRequest::AiInlineCompletion {
+                request_id,
+                path: path.clone(),
+                position,
+                prefix,
+                suffix,
+            },
+            move |res| {
+                if let Ok(lapce_rpc::proxy::ProxyResponse::AiInlineCompletionResponse {
+                    request_id: _,
+                    items,
+                }) = res
+                {
+                    let items: Vec<InlineCompletionItem> = items
+                        .iter()
+                        .map(crate::ai_completion::AiCompletionData::to_inline_item)
+                        .collect();
+                    send_ai(items);
                 }
             },
         );

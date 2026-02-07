@@ -52,7 +52,7 @@ impl Agent {
         let context = Context::new(&workdir).await?;
         
         // Build repo map on startup (1024 token budget)
-        let mut repo_map_builder = RepoMap::new(workdir.clone(), 1024);
+        let mut repo_map_builder = RepoMap::new(workdir.clone(), 8192);
         let repo_map = repo_map_builder.build_from_directory();
         
         // Initialize embedding provider based on LLM provider
@@ -84,7 +84,7 @@ impl Agent {
         let context = Context::new(&workdir).await?;
         
         // Build repo map
-        let mut repo_map_builder = RepoMap::new(workdir.clone(), 1024);
+        let mut repo_map_builder = RepoMap::new(workdir.clone(), 8192);
         let repo_map = repo_map_builder.build_from_directory();
         
         // Initialize embedding provider

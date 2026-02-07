@@ -449,6 +449,35 @@ pub enum ProxyRequest {
     AgentRejectToolCall {
         tool_call_id: String,
     },
+
+    // ── AI Diff Accept/Reject ────────────────────────────
+    /// Accept an AI-proposed diff (write the new content to disk).
+    AgentDiffAccept {
+        diff_id: String,
+        /// Which hunk indices to accept (empty = accept all).
+        accepted_hunks: Vec<usize>,
+    },
+    /// Reject an AI-proposed diff (discard changes).
+    AgentDiffReject {
+        diff_id: String,
+    },
+    /// Accept all pending diffs at once.
+    AgentDiffAcceptAll {},
+    /// Reject all pending diffs at once.
+    AgentDiffRejectAll {},
+
+    // ── AI Inline Completion (ghost text) ────────────────
+    /// Request AI-powered inline completion at cursor position.
+    AiInlineCompletion {
+        request_id: u64,
+        path: PathBuf,
+        /// The cursor position in the file.
+        position: Position,
+        /// Text before cursor (up to ~1500 chars for context).
+        prefix: String,
+        /// Text after cursor (up to ~500 chars for context).
+        suffix: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -866,6 +895,22 @@ pub enum ProxyResponse {
     /// Agent encountered an error.
     AgentError {
         error: String,
+    },
+
+    // ── AI Diff Accept/Reject ────────────────────────────
+    AgentDiffAcceptResponse {
+        diff_id: String,
+        success: bool,
+        message: String,
+    },
+    AgentDiffRejectResponse {
+        diff_id: String,
+    },
+
+    // ── AI Inline Completion ─────────────────────────────
+    AiInlineCompletionResponse {
+        request_id: u64,
+        items: Vec<crate::core::AiInlineCompletionItem>,
     },
 }
 

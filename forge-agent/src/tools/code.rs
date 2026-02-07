@@ -145,8 +145,11 @@ pub async fn get_definition(args: &Value, workdir: &Path) -> ToolResult {
     ToolResult::err(format!("Definition for '{}' not found", symbol))
 }
 
-/// Find symbol references using regex search
-/// TODO: Wire to proxy LSP (GetReferences) for accurate results
+/// Find symbol references using tree-sitter-tags (with regex fallback).
+///
+/// First tries tree-sitter to find semantically-aware references (calls,
+/// type usages, implementations). Falls back to regex `\bsymbol\b` for
+/// languages without tree-sitter support.
 pub async fn find_references(args: &Value, workdir: &Path) -> ToolResult {
     let Some(symbol) = args.get("symbol").and_then(|v| v.as_str()) else {
         return ToolResult::err("Missing 'symbol' parameter");
@@ -154,13 +157,6 @@ pub async fn find_references(args: &Value, workdir: &Path) -> ToolResult {
 
     let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
     let search_path = workdir.join(path);
-
-    // Regex search
-    let pattern = format!(r"\b{}\b", regex::escape(symbol));
-    let regex = match regex::Regex::new(&pattern) {
-        Ok(r) => r,
-        Err(e) => return ToolResult::err(format!("Invalid symbol: {e}")),
-    };
 
     let mut results = Vec::new();
 
@@ -177,21 +173,71 @@ pub async fn find_references(args: &Value, workdir: &Path) -> ToolResult {
             continue;
         }
 
+        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
         if let Ok(content) = std::fs::read_to_string(file_path) {
             let rel_path = file_path.strip_prefix(workdir).unwrap_or(file_path);
-            
-            for (line_num, line) in content.lines().enumerate() {
-                if regex.is_match(line) {
-                    results.push(format!(
-                        "{}:{}:{}",
-                        rel_path.display(),
-                        line_num + 1,
-                        line.trim()
-                    ));
-                    
-                    if results.len() >= 50 {
-                        results.push("... (truncated)".to_string());
-                        return ToolResult::ok(results.join("\n"));
+            let lines: Vec<&str> = content.lines().collect();
+
+            // Try tree-sitter references first
+            let mut found_via_ts = false;
+            if let Ok(refs) = treesitter::parse_references(&content, ext) {
+                for (ref_name, line_num) in &refs {
+                    if ref_name == symbol {
+                        found_via_ts = true;
+                        let line_text = lines.get(line_num.saturating_sub(1))
+                            .map(|l| l.trim())
+                            .unwrap_or("");
+                        results.push(format!(
+                            "{}:{}:{}",
+                            rel_path.display(),
+                            line_num,
+                            line_text,
+                        ));
+                        if results.len() >= 50 {
+                            results.push("... (truncated)".to_string());
+                            return ToolResult::ok(results.join("\n"));
+                        }
+                    }
+                }
+            }
+
+            // Also check definitions (the symbol might be defined in another file)
+            if let Ok(defs) = treesitter::parse_definitions(&content, ext) {
+                for def in &defs {
+                    if def.name == symbol {
+                        found_via_ts = true;
+                        results.push(format!(
+                            "{}:{}: [definition] {}",
+                            rel_path.display(),
+                            def.start_line,
+                            def.signature,
+                        ));
+                        if results.len() >= 50 {
+                            results.push("... (truncated)".to_string());
+                            return ToolResult::ok(results.join("\n"));
+                        }
+                    }
+                }
+            }
+
+            // Regex fallback for unsupported languages
+            if !found_via_ts {
+                let pattern = format!(r"\b{}\b", regex::escape(symbol));
+                if let Ok(re) = regex::Regex::new(&pattern) {
+                    for (line_num, line) in content.lines().enumerate() {
+                        if re.is_match(line) {
+                            results.push(format!(
+                                "{}:{}:{}",
+                                rel_path.display(),
+                                line_num + 1,
+                                line.trim()
+                            ));
+                            if results.len() >= 50 {
+                                results.push("... (truncated)".to_string());
+                                return ToolResult::ok(results.join("\n"));
+                            }
+                        }
                     }
                 }
             }

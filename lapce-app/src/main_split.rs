@@ -39,7 +39,7 @@ use crate::{
     command::InternalCommand,
     doc::{DiagnosticData, Doc, DocContent, DocHistory, EditorDiagnostic},
     editor::{
-        EditorData,
+        EditorData, EditorViewKind,
         diff::DiffEditorData,
         location::{EditorLocation, EditorPosition},
     },
@@ -1244,6 +1244,12 @@ impl MainSplitData {
                 ) => {
                     if !is_same_diff_editor(diff_editor_id, left, right) {
                         if let Some(diff_editor) = diff_editors.get(diff_editor_id) {
+                            // Reset view kind to Normal before update_doc to
+                            // avoid compute_screen_lines running with stale
+                            // diff info that references the old document's
+                            // line numbers — which causes an infinite loop.
+                            diff_editor.left.kind.set(EditorViewKind::Normal);
+                            diff_editor.right.kind.set(EditorViewKind::Normal);
                             diff_editor.left.update_doc(left.clone());
                             diff_editor.right.update_doc(right.clone());
                         }
