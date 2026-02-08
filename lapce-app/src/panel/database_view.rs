@@ -833,6 +833,7 @@ fn connection_form_overlay(
                     s.position(Position::Absolute)
                         .inset(0.0)
                         .background(Color::from_rgba8(0, 0, 0, 128))
+                        .z_index(0)
                 })
                 .on_click_stop({
                     let db = db.clone();
@@ -868,20 +869,15 @@ fn connection_form_overlay(
                         }),
                         // PostgreSQL button
                         {
-                            label(move || {
-                                let selected = form_db_type.get() == DbType::Postgres;
-                                if selected { "[PostgreSQL]" } else { " PostgreSQL " }
-                            })
+                            svg(move || config.get().ui_svg(LapceIcons::DATABASE_POSTGRES))
                             .style(move |s| {
                                 let config = config.get();
                                 let selected = form_db_type.get() == DbType::Postgres;
-                                s.padding_horiz(12.0)
-                                    .padding_vert(4.0)
+                                s.size(32.0, 32.0)
+                                    .padding(8.0)
                                     .margin_right(8.0)
                                     .border_radius(4.0)
-                                    .font_size(config.ui.font_size() as f32)
                                     .cursor(CursorStyle::Pointer)
-                                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
                                     .apply_if(selected, |s| {
                                         s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
                                     })
@@ -897,19 +893,14 @@ fn connection_form_overlay(
                         },
                         // MongoDB button
                         {
-                            label(move || {
-                                let selected = form_db_type.get() == DbType::MongoDB;
-                                if selected { "[MongoDB]" } else { " MongoDB " }
-                            })
+                            svg(move || config.get().ui_svg(LapceIcons::DATABASE_MONGODB))
                             .style(move |s| {
                                 let config = config.get();
                                 let selected = form_db_type.get() == DbType::MongoDB;
-                                s.padding_horiz(12.0)
-                                    .padding_vert(4.0)
+                                s.size(32.0, 32.0)
+                                    .padding(8.0)
                                     .border_radius(4.0)
-                                    .font_size(config.ui.font_size() as f32)
                                     .cursor(CursorStyle::Pointer)
-                                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
                                     .apply_if(selected, |s| {
                                         s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
                                     })
@@ -1040,6 +1031,7 @@ fn connection_form_overlay(
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
                     .border(1.0)
                     .border_color(config.color(LapceColor::LAPCE_BORDER))
+                    .z_index(1)
             }),
         ))
         .style(|s| {
