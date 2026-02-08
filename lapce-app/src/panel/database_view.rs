@@ -897,14 +897,18 @@ fn connection_form_overlay(
                         }),
                         // PostgreSQL button
                         {
-                            container(
+                            stack((
                                 svg(move || config.get().ui_svg(LapceIcons::DATABASE_POSTGRES))
-                                    .style(move |s| {
-                                        let selected = form_db_type.get() == DbType::Postgres;
-                                        s.size(32.0, 32.0)
-                                            .apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.4)))
-                                    })
-                            )
+                                    .style(|s| s.size(32.0, 32.0)),
+                                // Grayscale overlay for unselected state
+                                empty().style(move |s| {
+                                    let selected = form_db_type.get() == DbType::Postgres;
+                                    s.position(Position::Absolute)
+                                        .inset(0.0)
+                                        .background(Color::from_rgba8(200, 200, 200, 180))
+                                        .apply_if(selected, |s| s.hide())
+                                }),
+                            ))
                             .style(move |s| {
                                 let config = config.get();
                                 let selected = form_db_type.get() == DbType::Postgres;
@@ -929,14 +933,18 @@ fn connection_form_overlay(
                         },
                         // MongoDB button
                         {
-                            container(
+                            stack((
                                 svg(move || config.get().ui_svg(LapceIcons::DATABASE_MONGODB))
-                                    .style(move |s| {
-                                        let selected = form_db_type.get() == DbType::MongoDB;
-                                        s.size(32.0, 32.0)
-                                            .apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.4)))
-                                    })
-                            )
+                                    .style(|s| s.size(32.0, 32.0)),
+                                // Grayscale overlay for unselected state
+                                empty().style(move |s| {
+                                    let selected = form_db_type.get() == DbType::MongoDB;
+                                    s.position(Position::Absolute)
+                                        .inset(0.0)
+                                        .background(Color::from_rgba8(200, 200, 200, 180))
+                                        .apply_if(selected, |s| s.hide())
+                                }),
+                            ))
                             .style(move |s| {
                                 let config = config.get();
                                 let selected = form_db_type.get() == DbType::MongoDB;
@@ -978,7 +986,7 @@ fn connection_form_overlay(
                     form_field("Name:", form_name, "My Database", config),
                     form_field("Host:", form_host, "localhost", config),
                     form_field("Port:", form_port, "5432", config),
-                    form_field("User:", form_user, "postgres", config),
+                    form_field("User:", form_user, "postgres / admin", config),
                     form_field("Password:", form_password, "", config),
                     form_field("Database:", form_database, "mydb", config),
                     // Action buttons
