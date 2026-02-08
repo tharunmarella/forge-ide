@@ -530,6 +530,7 @@ User request: {}"#,
         let ai_converting = self.ai_converting;
         let status_message = self.status_message;
 
+        let self_clone = self.clone();
         let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
             ai_converting.set(false);
             match result {
@@ -545,7 +546,10 @@ User request: {}"#,
                         .to_string();
                     
                     query_text.set(cleaned);
-                    status_message.set(Some("Query generated! Click Run to execute.".to_string()));
+                    status_message.set(Some("Executing query...".to_string()));
+                    
+                    // Automatically execute the generated query
+                    self_clone.execute_query();
                 }
                 Ok(ProxyResponse::AgentError { error }) => {
                     status_message.set(Some(format!("AI Error: {}", error)));

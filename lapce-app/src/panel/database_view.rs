@@ -315,7 +315,7 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                 stack((
                     // Query text input
                     text_input(query_text)
-                        .placeholder("Ask in natural language: 'show me all users' or write SQL/MongoDB query...")
+                        .placeholder("Ask in natural language: 'show me all users from the last month'...")
                         .style(move |s| {
                             let config = config.get();
                             s.flex_grow(1.0)
@@ -331,9 +331,9 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                     // Convert button (AI)
                     label(move || {
                         if ai_converting.get() {
-                            "Converting..."
+                            "⏳ Running..."
                         } else {
-                            "✨ Convert"
+                            "✨ Ask AI"
                         }
                     })
                         .style(move |s| {
