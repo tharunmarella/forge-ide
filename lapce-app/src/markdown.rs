@@ -107,8 +107,14 @@ pub fn parse_markdown_sized(
 
                             if is_mermaid {
                                 // Render mermaid diagram to SVG inline
+                                // Use a dark theme so diagrams look good in the
+                                // IDE's dark UI.
                                 let mermaid_src = last_text.as_ref();
-                                match mermaid_rs_renderer::render(mermaid_src) {
+                                let opts = mermaid_rs_renderer::RenderOptions {
+                                    theme: dark_mermaid_theme(),
+                                    layout: mermaid_rs_renderer::LayoutConfig::default(),
+                                };
+                                match mermaid_rs_renderer::render_with_options(mermaid_src, opts) {
                                     Ok(svg_string) => {
                                         // Flush any pending text before the diagram
                                         if builder_dirty {
@@ -400,4 +406,100 @@ pub fn from_plaintext(
         None,
     );
     vec![MarkdownContent::Text(text_layout)]
+}
+
+/// A dark Mermaid theme that looks good on the IDE's dark background.
+fn dark_mermaid_theme() -> mermaid_rs_renderer::Theme {
+    mermaid_rs_renderer::Theme {
+        font_family: "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif"
+            .to_string(),
+        font_size: 14.0,
+        // Node fill – dark slate
+        primary_color: "#1E293B".to_string(),
+        // Text on nodes – light
+        primary_text_color: "#E2E8F0".to_string(),
+        // Node border
+        primary_border_color: "#475569".to_string(),
+        // Edge / arrow colour
+        line_color: "#94A3B8".to_string(),
+        secondary_color: "#334155".to_string(),
+        tertiary_color: "#1E293B".to_string(),
+        edge_label_background: "none".to_string(),
+        // Subgraph / cluster
+        cluster_background: "#0F172A".to_string(),
+        cluster_border: "#334155".to_string(),
+        // SVG background – transparent so the container bg shows through
+        background: "transparent".to_string(),
+        // Sequence diagram
+        sequence_actor_fill: "#1E293B".to_string(),
+        sequence_actor_border: "#475569".to_string(),
+        sequence_actor_line: "#64748B".to_string(),
+        sequence_note_fill: "#422006".to_string(),
+        sequence_note_border: "#92400E".to_string(),
+        sequence_activation_fill: "#334155".to_string(),
+        sequence_activation_border: "#475569".to_string(),
+        text_color: "#CBD5E1".to_string(),
+        // Git graph – reuse defaults
+        git_colors: [
+            "hsl(240, 100%, 46.2745098039%)".to_string(),
+            "hsl(60, 100%, 43.5294117647%)".to_string(),
+            "hsl(80, 100%, 46.2745098039%)".to_string(),
+            "hsl(210, 100%, 46.2745098039%)".to_string(),
+            "hsl(180, 100%, 46.2745098039%)".to_string(),
+            "hsl(150, 100%, 46.2745098039%)".to_string(),
+            "hsl(300, 100%, 46.2745098039%)".to_string(),
+            "hsl(0, 100%, 46.2745098039%)".to_string(),
+        ],
+        git_inv_colors: [
+            "hsl(60, 100%, 3.7254901961%)".to_string(),
+            "rgb(0, 0, 160.5)".to_string(),
+            "rgb(48.8333333334, 0, 146.5000000001)".to_string(),
+            "rgb(146.5000000001, 73.2500000001, 0)".to_string(),
+            "rgb(146.5000000001, 0, 0)".to_string(),
+            "rgb(146.5000000001, 0, 73.2500000001)".to_string(),
+            "rgb(0, 146.5000000001, 0)".to_string(),
+            "rgb(0, 146.5000000001, 146.5000000001)".to_string(),
+        ],
+        git_branch_label_colors: [
+            "#ffffff".to_string(),
+            "black".to_string(),
+            "black".to_string(),
+            "#ffffff".to_string(),
+            "black".to_string(),
+            "black".to_string(),
+            "black".to_string(),
+            "black".to_string(),
+        ],
+        git_commit_label_color: "#CBD5E1".to_string(),
+        git_commit_label_background: "#1E293B".to_string(),
+        git_tag_label_color: "#CBD5E1".to_string(),
+        git_tag_label_background: "#1E293B".to_string(),
+        git_tag_label_border: "#475569".to_string(),
+        // Pie chart – dark-friendly palette
+        pie_colors: [
+            "#3B82F6".to_string(),
+            "#10B981".to_string(),
+            "#F59E0B".to_string(),
+            "#EF4444".to_string(),
+            "#8B5CF6".to_string(),
+            "#EC4899".to_string(),
+            "#06B6D4".to_string(),
+            "#F97316".to_string(),
+            "#14B8A6".to_string(),
+            "#6366F1".to_string(),
+            "#A855F7".to_string(),
+            "#84CC16".to_string(),
+        ],
+        pie_title_text_size: 25.0,
+        pie_title_text_color: "#E2E8F0".to_string(),
+        pie_section_text_size: 17.0,
+        pie_section_text_color: "#E2E8F0".to_string(),
+        pie_legend_text_size: 17.0,
+        pie_legend_text_color: "#E2E8F0".to_string(),
+        pie_stroke_color: "#0F172A".to_string(),
+        pie_stroke_width: 1.6,
+        pie_outer_stroke_width: 1.6,
+        pie_outer_stroke_color: "#334155".to_string(),
+        pie_opacity: 0.85,
+    }
 }

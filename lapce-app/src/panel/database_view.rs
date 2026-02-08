@@ -489,10 +489,13 @@ fn data_grid_view(
                         }
                     },
                 )
-                .style(|s| s.width_full().min_width_full())
+                .style(|s| s.min_width_full())
             },
         )
-        .style(|s| s.width_full().height_full()),
+        .style(|s| {
+            s.width_full()
+                .height_full()
+        }),
     )
     .style(|s| s.width_full().height_full())
 }
@@ -557,8 +560,7 @@ fn data_table(
             )
             .style(move |s| {
                 let config = config.get();
-                s.width_full()
-                    .border_bottom(2.0)
+                s.border_bottom(2.0)
                     .border_color(config.color(LapceColor::LAPCE_BORDER))
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
             })
@@ -604,8 +606,7 @@ fn data_table(
                         } else {
                             config.color(LapceColor::PANEL_BACKGROUND)
                         };
-                        s.width_full()
-                            .border_bottom(1.0)
+                        s.border_bottom(1.0)
                             .border_color(config.color(LapceColor::LAPCE_BORDER))
                             .background(bg)
                             .hover(|s| {
@@ -614,10 +615,10 @@ fn data_table(
                     })
                 },
             )
-            .style(|s| s.flex_col().width_full())
+            .style(|s| s.flex_col())
         },
     ))
-    .style(|s| s.flex_col().width_full())
+    .style(|s| s.flex_col())
 }
 
 /// Table structure view

@@ -275,11 +275,13 @@ fn chat_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let chat_data_clear = chat_data.clone();
     let wtd = window_tab_data.clone();
 
+    let internal_command = window_tab_data.common.internal_command;
+
     stack((
         // ── Header ──────────────────────────────────────────
         chat_header(config, chat_data_clear),
         // ── Message list (scrollable) with auto-scroll ──────
-        chat_message_list(config, chat_data.clone()),
+        chat_message_list(config, chat_data.clone(), internal_command),
         // ── AI Diff toolbar (only shown when pending diffs exist) ──
         ai_diff_toolbar(wtd),
         // ── Input area at the bottom ────────────────────────
@@ -480,6 +482,7 @@ fn model_dropdown_trigger(
 fn chat_message_list(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
+    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
 ) -> impl View {
     let entries = chat_data.entries;
     let chat_data_dropdown = chat_data.clone();
@@ -501,7 +504,7 @@ fn chat_message_list(
                         entries.iter().cloned().collect::<Vec<_>>()
                     },
                     |entry: &ChatEntry| entry.key(),
-                    move |entry| chat_entry_view(config, entry),
+                    move |entry| chat_entry_view(config, entry, internal_command),
                 )
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
 
@@ -693,12 +696,24 @@ fn model_dropdown_panel(
 fn chat_entry_view(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     entry: ChatEntry,
+    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
 ) -> impl View {
     match entry.kind {
         ChatEntryKind::Message { role, content } => {
             message_bubble(config, role, content).into_any()
         }
-        ChatEntryKind::ToolCall(tc) => tool_call_card(config, tc).into_any(),
+        ChatEntryKind::ToolCall(tc) => {
+            // File-related tools get a special clickable file block
+            let is_file_tool = matches!(
+                tc.name.as_str(),
+                "read_file" | "write_to_file" | "replace_in_file" | "apply_patch" | "delete_file"
+            );
+            if is_file_tool {
+                file_tool_card(config, tc, internal_command).into_any()
+            } else {
+                tool_call_card(config, tc).into_any()
+            }
+        }
     }
 }
 
@@ -837,6 +852,162 @@ fn message_bubble(
             )
             .apply_if(!is_user, |s| {
                 s.background(config.color(LapceColor::EDITOR_BACKGROUND))
+            })
+    })
+}
+
+/// A clickable file block for file-related tool calls (read, write, replace, etc.).
+///
+/// Shows:  [file icon]  filename  [status icon]
+///
+/// Clicking opens the file in the editor.
+fn file_tool_card(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    tc: ChatToolCall,
+    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+) -> impl View {
+    let is_success = tc.status == ToolCallStatus::Success;
+    let is_error = tc.status == ToolCallStatus::Error;
+    let is_running = tc.status == ToolCallStatus::Running;
+
+    // Extract file path from the JSON arguments
+    let file_path: Option<std::path::PathBuf> = serde_json::from_str::<serde_json::Value>(&tc.arguments)
+        .ok()
+        .and_then(|v| v.get("path").and_then(|p| p.as_str()).map(std::path::PathBuf::from));
+
+    // Display: just the filename (or relative path if short enough)
+    let display_name = file_path
+        .as_ref()
+        .map(|p| {
+            let s = p.to_string_lossy();
+            if s.len() > 40 {
+                // Show …/last_two_components
+                let components: Vec<_> = p.components().collect();
+                if components.len() > 2 {
+                    format!(
+                        "…/{}",
+                        components[components.len() - 2..]
+                            .iter()
+                            .map(|c| c.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    )
+                } else {
+                    s.to_string()
+                }
+            } else {
+                s.to_string()
+            }
+        })
+        .unwrap_or_else(|| tc.name.clone());
+
+    // Action label
+    let action = match tc.name.as_str() {
+        "read_file" => "Read",
+        "write_to_file" => "Created",
+        "replace_in_file" => "Edited",
+        "apply_patch" => "Patched",
+        "delete_file" => "Deleted",
+        _ => "",
+    };
+
+    // Status icon
+    let status_icon = match &tc.status {
+        ToolCallStatus::Pending => "\u{25CB}",
+        ToolCallStatus::Running => "\u{25CF}",
+        ToolCallStatus::Success => "\u{2713}",
+        ToolCallStatus::Error => "\u{2717}",
+    };
+
+    let click_path = file_path.clone();
+
+    container(
+        stack((
+            // File icon (SVG)
+            {
+                let file_icon_cfg = config;
+                svg(move || {
+                    let cfg = file_icon_cfg.get();
+                    cfg.ui_svg(LapceIcons::FILE)
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.size(14.0, 14.0)
+                        .margin_right(6.0)
+                        .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                })
+            },
+            // File name
+            label(move || display_name.clone()).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                    .font_bold()
+                    .flex_grow(1.0)
+                    .min_width(0.0)
+                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
+            }),
+            // Action label
+            label(move || action.to_string()).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .margin_right(6.0)
+                    .color(config.color(LapceColor::EDITOR_DIM))
+            }),
+            // Status icon
+            label(move || status_icon.to_string()).style(move |s| {
+                let config = config.get();
+                let color = if is_running {
+                    config.color(LapceColor::LAPCE_ICON_ACTIVE)
+                } else if is_success {
+                    config.color(LapceColor::EDITOR_FOREGROUND)
+                } else if is_error {
+                    config.color(LapceColor::LAPCE_ERROR)
+                } else {
+                    config.color(LapceColor::EDITOR_DIM)
+                };
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .color(color)
+            }),
+        ))
+        .on_click_stop(move |_| {
+            if let Some(ref path) = click_path {
+                internal_command.send(crate::command::InternalCommand::OpenFile {
+                    path: path.clone(),
+                });
+            }
+        })
+        .style(move |s| {
+            s.items_center()
+                .width_pct(100.0)
+                .cursor(if file_path.is_some() {
+                    CursorStyle::Pointer
+                } else {
+                    CursorStyle::Default
+                })
+        }),
+    )
+    .style(move |s| {
+        let config = config.get();
+        s.padding_horiz(10.0)
+            .padding_vert(6.0)
+            .margin_horiz(8.0)
+            .margin_vert(2.0)
+            .width_pct(100.0)
+            .min_width(0.0)
+            .border_radius(6.0)
+            .border(1.0)
+            .border_color(
+                config
+                    .color(LapceColor::LAPCE_BORDER)
+                    .multiply_alpha(0.5),
+            )
+            .background(
+                config
+                    .color(LapceColor::PANEL_BACKGROUND)
+                    .multiply_alpha(0.6),
+            )
+            .hover(|s| {
+                s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
             })
     })
 }
