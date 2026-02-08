@@ -916,7 +916,7 @@ fn connection_form_overlay(
                     stack((
                         label(|| "Type:").style(move |s| {
                             let config = config.get();
-                            s.width(140.0)
+                            s.width(130.0)
                                 .font_size(config.ui.font_size() as f32)
                                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                         }),
@@ -1116,7 +1116,7 @@ fn connection_form_overlay(
             )
             .style(move |s| {
                 let config = config.get();
-                s.width(600.0)
+                s.width(800.0)
                     .padding(24.0)
                     .border_radius(8.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
@@ -1152,7 +1152,7 @@ fn form_field(
     stack((
         label(move || label_text).style(move |s| {
             let config = config.get();
-            s.width(140.0)
+            s.width(130.0)
                 .font_size(config.ui.font_size() as f32)
                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                 .items_start()
