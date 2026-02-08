@@ -4,7 +4,7 @@ use floem::{
     IntoView, View,
     event::{EventListener, EventPropagation},
     peniko::Color,
-    reactive::{SignalGet, SignalUpdate, SignalWith},
+    reactive::{SignalGet, SignalUpdate, SignalWith, create_memo},
     style::{CursorStyle, Display, FlexDirection, Position},
     views::{
         Decorators, container, dyn_stack, empty, label, scroll, stack, svg, text,
@@ -135,20 +135,37 @@ fn connection_tree_item(
     let conn_name = conn.config.name.clone();
     let db_type = conn.config.db_type.clone();
     let db_type_icon = db_type.clone();
-    let is_connected = conn.connected;
-    let is_expanded = conn.expanded;
-    let schema = conn.schema.clone();
-    let config_clone = conn.config.clone();
+    
+    // Create reactive signals for this connection's state
+    let connections = db_data.connections;
+    let cid_for_connected = conn_id.clone();
+    let is_connected = create_memo(move |_| {
+        connections.with(|conns| {
+            conns.iter()
+                .find(|c| c.config.id == cid_for_connected)
+                .map(|c| c.connected)
+                .unwrap_or(false)
+        })
+    });
+    
+    let cid_for_expanded = conn_id.clone();
+    let is_expanded = create_memo(move |_| {
+        connections.with(|conns| {
+            conns.iter()
+                .find(|c| c.config.id == cid_for_expanded)
+                .map(|c| c.expanded)
+                .unwrap_or(false)
+        })
+    });
 
     stack((
         // Connection header row
         {
             let db = db_data.clone();
             let cid = conn_id.clone();
-            let cfg = config_clone.clone();
             stack((
                 // Expand/collapse indicator
-                label(move || if is_expanded { "▼" } else { "▶" }).style(move |s| {
+                label(move || if is_expanded.get() { "▼" } else { "▶" }).style(move |s| {
                     let config = config.get();
                     s.font_size(config.ui.font_size() as f32 * 0.7)
                         .color(config.color(LapceColor::EDITOR_DIM))
@@ -164,7 +181,7 @@ fn connection_tree_item(
                     }
                 }).style(move |s| {
                     let config = config.get();
-                    let color = if is_connected {
+                    let color = if is_connected.get() {
                         config.color(LapceColor::LAPCE_ICON_ACTIVE)
                     } else {
                         config.color(LapceColor::EDITOR_DIM)
@@ -204,7 +221,7 @@ fn connection_tree_item(
                     })
             })
             .on_click_stop(move |_| {
-                if is_connected {
+                if is_connected.get_untracked() {
                     db.toggle_connection_expanded(&cid);
                 } else {
                     db.connect(cid.clone());
@@ -215,63 +232,63 @@ fn connection_tree_item(
         {
             let db = db_data.clone();
             let cid = conn_id.clone();
-            if is_expanded {
-                if let Some(schema) = schema {
-                    let tables = schema.tables;
-                    container(
-                        dyn_stack(
-                            move || tables.clone(),
-                            move |t| t.name.clone(),
-                            move |table_info| {
-                                let db = db.clone();
-                                let cid = cid.clone();
-                                let tname = table_info.name.clone();
-                                let ttype = table_info.table_type.clone();
-                                let row_count = table_info.row_count;
+            let cid_for_tables = conn_id.clone();
+            container(
+                dyn_stack(
+                    move || {
+                        connections.with(|conns| {
+                            conns.iter()
+                                .find(|c| c.config.id == cid_for_tables)
+                                .filter(|c| c.expanded)
+                                .and_then(|c| c.schema.as_ref())
+                                .map(|s| s.tables.clone())
+                                .unwrap_or_default()
+                        })
+                    },
+                    move |t| t.name.clone(),
+                    move |table_info| {
+                        let db = db.clone();
+                        let cid = cid.clone();
+                        let tname = table_info.name.clone();
+                        let ttype = table_info.table_type.clone();
+                        let row_count = table_info.row_count;
 
-                                label(move || {
-                                    let count_str = row_count
-                                        .map(|c| format!(" ({})", c))
-                                        .unwrap_or_default();
-                                    format!("  {} {}{}", 
-                                        if ttype == "collection" { "📁" } else { "📄" },
-                                        tname, count_str)
+                        label(move || {
+                            let count_str = row_count
+                                .map(|c| format!(" ({})", c))
+                                .unwrap_or_default();
+                            format!("  {} {}{}", 
+                                if ttype == "collection" { "📁" } else { "📄" },
+                                tname, count_str)
+                        })
+                        .style(move |s| {
+                            let config = config.get();
+                            s.width_full()
+                                .padding_vert(3.0)
+                                .padding_left(32.0)
+                                .padding_right(8.0)
+                                .font_size(config.ui.font_size() as f32 * 0.9)
+                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                .cursor(CursorStyle::Pointer)
+                                .text_ellipsis()
+                                .hover(|s| {
+                                    s.background(
+                                        config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                    )
                                 })
-                                .style(move |s| {
-                                    let config = config.get();
-                                    s.width_full()
-                                        .padding_vert(3.0)
-                                        .padding_left(32.0)
-                                        .padding_right(8.0)
-                                        .font_size(config.ui.font_size() as f32 * 0.9)
-                                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                                        .cursor(CursorStyle::Pointer)
-                                        .text_ellipsis()
-                                        .hover(|s| {
-                                            s.background(
-                                                config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                                            )
-                                        })
-                                })
-                                .on_click_stop({
-                                    let db = db.clone();
-                                    let cid = cid.clone();
-                                    let tname = table_info.name.clone();
-                                    move |_| {
-                                        db.load_table_data(cid.clone(), tname.clone());
-                                    }
-                                })
-                            },
-                        )
-                        .style(|s| s.flex_col().width_full()),
-                    )
-                    .into_any()
-                } else {
-                    empty().into_any()
-                }
-            } else {
-                empty().into_any()
-            }
+                        })
+                        .on_click_stop({
+                            let db = db.clone();
+                            let cid = cid.clone();
+                            let tname = table_info.name.clone();
+                            move |_| {
+                                db.load_table_data(cid.clone(), tname.clone());
+                            }
+                        })
+                    },
+                )
+                .style(|s| s.flex_col().width_full())
+            )
         },
     ))
     .style(|s| s.flex_col().width_full())
