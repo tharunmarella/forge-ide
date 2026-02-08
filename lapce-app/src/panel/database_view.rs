@@ -453,7 +453,7 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                     .style(|s| s.width_full().height_full())
                 },
             )
-            .style(|s| s.width_full().flex_grow(1.0)),
+            .style(|s| s.width_full().flex_grow(1.0).min_height(0.0)),
             // Pagination bar
             {
                 let db = db_data.clone();
