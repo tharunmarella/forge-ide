@@ -504,12 +504,32 @@ fn data_table(
 ) -> impl View {
     let columns = result.columns.clone();
     let rows = result.rows.clone();
-    let col_count = columns.len();
+    let _col_count = columns.len();
+    
+    // Calculate column widths based on content
+    let col_widths: Vec<f32> = columns.iter().enumerate().map(|(col_idx, col)| {
+        // Start with header width (name + data type)
+        let header_len = col.name.len() + col.data_type.len();
+        let mut max_len = header_len.max(10);
+        
+        // Sample first 100 rows to estimate width
+        for row in rows.iter().take(100) {
+            if let Some(val) = row.get(col_idx) {
+                let val_str = json_value_to_display(val);
+                max_len = max_len.max(val_str.len());
+            }
+        }
+        
+        // Convert characters to pixels (approximate: 8px per char + padding)
+        let width = (max_len.min(50) as f32 * 8.0 + 16.0).max(120.0).min(400.0);
+        width
+    }).collect();
 
     stack((
         // Header row
         {
             let cols = columns.clone();
+            let widths = col_widths.clone();
             container(
                 dyn_stack(
                     move || cols.clone().into_iter().enumerate().collect::<Vec<_>>(),
@@ -517,11 +537,11 @@ fn data_table(
                     move |(i, col)| {
                         let name = col.name.clone();
                         let dtype = col.data_type.clone();
+                        let width = widths.get(i).copied().unwrap_or(120.0);
                         label(move || format!("{}\n{}", name, dtype))
                             .style(move |s| {
                                 let config = config.get();
-                                s.min_width(120.0)
-                                    .max_width(300.0)
+                                s.width(width)
                                     .padding_horiz(8.0)
                                     .padding_vert(6.0)
                                     .font_size(config.ui.font_size() as f32 * 0.85)
@@ -529,6 +549,7 @@ fn data_table(
                                     .color(config.color(LapceColor::EDITOR_FOREGROUND))
                                     .border_right(1.0)
                                     .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                    .flex_shrink(0.0)
                             })
                     },
                 )
@@ -544,22 +565,25 @@ fn data_table(
         },
         // Data rows
         {
+            let widths = col_widths.clone();
             dyn_stack(
                 move || rows.clone().into_iter().enumerate().collect::<Vec<_>>(),
                 move |&(i, _)| i,
                 move |(row_idx, row)| {
                     let is_even = row_idx % 2 == 0;
+                    let widths = widths.clone();
                     container(
                         dyn_stack(
                             move || row.clone().into_iter().enumerate().collect::<Vec<_>>(),
                             move |&(i, _)| i,
-                            move |(_, val)| {
+                            move |(_i, val)| {
+                                let col_idx = _i;
                                 let display_val = json_value_to_display(&val);
+                                let width = widths.get(col_idx).copied().unwrap_or(120.0);
                                 label(move || display_val.clone())
                                     .style(move |s| {
                                         let config = config.get();
-                                        s.min_width(120.0)
-                                            .max_width(300.0)
+                                        s.width(width)
                                             .padding_horiz(8.0)
                                             .padding_vert(4.0)
                                             .font_size(config.ui.font_size() as f32 * 0.85)
@@ -567,6 +591,7 @@ fn data_table(
                                             .border_right(1.0)
                                             .border_color(config.color(LapceColor::LAPCE_BORDER))
                                             .text_ellipsis()
+                                            .flex_shrink(0.0)
                                     })
                             },
                         )
