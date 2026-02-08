@@ -844,6 +844,14 @@ fn connection_form_overlay(
             }
             
             if let Some(parsed) = parse_connection_string(&conn_str) {
+                // Clear fields first to reset cursor position, then set new values
+                form_host.set(String::new());
+                form_port.set(String::new());
+                form_user.set(String::new());
+                form_password.set(String::new());
+                form_database.set(String::new());
+                
+                // Small delay to ensure clear happens first (using batch update)
                 form_db_type.set(parsed.db_type);
                 form_host.set(parsed.host);
                 form_port.set(parsed.port.to_string());
@@ -908,7 +916,7 @@ fn connection_form_overlay(
                     stack((
                         label(|| "Type:").style(move |s| {
                             let config = config.get();
-                            s.width(100.0)
+                            s.width(140.0)
                                 .font_size(config.ui.font_size() as f32)
                                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                         }),
@@ -1108,7 +1116,7 @@ fn connection_form_overlay(
             )
             .style(move |s| {
                 let config = config.get();
-                s.width(450.0)
+                s.width(600.0)
                     .padding(24.0)
                     .border_radius(8.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
@@ -1144,7 +1152,7 @@ fn form_field(
     stack((
         label(move || label_text).style(move |s| {
             let config = config.get();
-            s.width(100.0)
+            s.width(140.0)
                 .font_size(config.ui.font_size() as f32)
                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                 .items_start()
