@@ -801,6 +801,7 @@ fn connection_form_overlay(
 
     // Form state signals
     let scope = db_data.scope;
+    let form_connection_string = scope.create_rw_signal(String::new());
     let form_name = scope.create_rw_signal(String::new());
     let form_host = scope.create_rw_signal("localhost".to_string());
     let form_port = scope.create_rw_signal("5432".to_string());
@@ -808,6 +809,33 @@ fn connection_form_overlay(
     let form_password = scope.create_rw_signal(String::new());
     let form_database = scope.create_rw_signal(String::new());
     let form_db_type = scope.create_rw_signal(DbType::Postgres);
+
+    // Parse connection string and populate fields
+    {
+        let form_connection_string = form_connection_string;
+        let form_db_type = form_db_type;
+        let form_host = form_host;
+        let form_port = form_port;
+        let form_user = form_user;
+        let form_password = form_password;
+        let form_database = form_database;
+        
+        scope.create_effect(move |_| {
+            let conn_str = form_connection_string.get();
+            if conn_str.is_empty() {
+                return;
+            }
+            
+            if let Some(parsed) = parse_connection_string(&conn_str) {
+                form_db_type.set(parsed.db_type);
+                form_host.set(parsed.host);
+                form_port.set(parsed.port.to_string());
+                form_user.set(parsed.user);
+                form_password.set(parsed.password);
+                form_database.set(parsed.database);
+            }
+        });
+    }
 
     // Sync form state when editing changes
     {
@@ -869,15 +897,22 @@ fn connection_form_overlay(
                         }),
                         // PostgreSQL button
                         {
-                            svg(move || config.get().ui_svg(LapceIcons::DATABASE_POSTGRES))
+                            container(
+                                svg(move || config.get().ui_svg(LapceIcons::DATABASE_POSTGRES))
+                                    .style(move |s| {
+                                        let selected = form_db_type.get() == DbType::Postgres;
+                                        s.apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.3)))
+                                    })
+                            )
                             .style(move |s| {
                                 let config = config.get();
                                 let selected = form_db_type.get() == DbType::Postgres;
-                                s.size(32.0, 32.0)
-                                    .padding(8.0)
+                                s.size(48.0, 48.0)
                                     .margin_right(8.0)
                                     .border_radius(4.0)
                                     .cursor(CursorStyle::Pointer)
+                                    .items_center()
+                                    .justify_center()
                                     .apply_if(selected, |s| {
                                         s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
                                     })
@@ -893,14 +928,21 @@ fn connection_form_overlay(
                         },
                         // MongoDB button
                         {
-                            svg(move || config.get().ui_svg(LapceIcons::DATABASE_MONGODB))
+                            container(
+                                svg(move || config.get().ui_svg(LapceIcons::DATABASE_MONGODB))
+                                    .style(move |s| {
+                                        let selected = form_db_type.get() == DbType::MongoDB;
+                                        s.apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.3)))
+                                    })
+                            )
                             .style(move |s| {
                                 let config = config.get();
                                 let selected = form_db_type.get() == DbType::MongoDB;
-                                s.size(32.0, 32.0)
-                                    .padding(8.0)
+                                s.size(48.0, 48.0)
                                     .border_radius(4.0)
                                     .cursor(CursorStyle::Pointer)
+                                    .items_center()
+                                    .justify_center()
                                     .apply_if(selected, |s| {
                                         s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
                                     })
@@ -916,6 +958,20 @@ fn connection_form_overlay(
                         },
                     ))
                     .style(|s| s.flex_row().items_center().margin_bottom(8.0)),
+                    // Connection String field (optional - auto-fills other fields)
+                    form_field("Connection String:", form_connection_string, "postgresql://user:password@localhost:5432/dbname or mongodb://...", config),
+                    // Divider text
+                    container(
+                        label(|| "— OR —")
+                    )
+                    .style(move |s| {
+                        let config = config.get();
+                        s.width_full()
+                            .justify_center()
+                            .font_size(config.ui.font_size() as f32 * 0.9)
+                            .color(config.color(LapceColor::EDITOR_DIM))
+                            .margin_vert(8.0)
+                    }),
                     // Form fields
                     form_field("Name:", form_name, "My Database", config),
                     form_field("Host:", form_host, "localhost", config),
@@ -1082,6 +1138,8 @@ fn form_field(
                     .background(config.color(LapceColor::EDITOR_BACKGROUND))
                     .color(config.color(LapceColor::EDITOR_FOREGROUND))
                     .font_size(config.ui.font_size() as f32)
+                    .cursor(CursorStyle::Text)
+                    .set(floem::style::CursorColor, config.color(LapceColor::TERMINAL_CURSOR))
             }),
     ))
     .style(|s| s.flex_row().items_start().margin_bottom(12.0).width_full())
@@ -1128,4 +1186,145 @@ fn json_value_to_display(val: &serde_json::Value) -> String {
             serde_json::to_string(obj).unwrap_or_else(|_| "{}".to_string())
         }
     }
+}
+
+/// Parse a connection string and extract database connection details
+/// Supports PostgreSQL and MongoDB connection string formats
+fn parse_connection_string(conn_str: &str) -> Option<ParsedConnection> {
+    let conn_str = conn_str.trim();
+    
+    // Try PostgreSQL format: postgresql://[user[:password]@]host[:port][/database]
+    if conn_str.starts_with("postgresql://") || conn_str.starts_with("postgres://") {
+        return parse_postgres_connection_string(conn_str);
+    }
+    
+    // Try MongoDB format: mongodb://[username:password@]host[:port][/database]
+    if conn_str.starts_with("mongodb://") || conn_str.starts_with("mongodb+srv://") {
+        return parse_mongodb_connection_string(conn_str);
+    }
+    
+    None
+}
+
+struct ParsedConnection {
+    db_type: DbType,
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    database: String,
+}
+
+fn parse_postgres_connection_string(conn_str: &str) -> Option<ParsedConnection> {
+    // Remove protocol prefix
+    let without_protocol = conn_str
+        .strip_prefix("postgresql://")
+        .or_else(|| conn_str.strip_prefix("postgres://"))?;
+    
+    // Split by @ to separate credentials from host/db
+    let (credentials, host_and_db) = if let Some(at_pos) = without_protocol.find('@') {
+        let (creds, rest) = without_protocol.split_at(at_pos);
+        (Some(creds), &rest[1..]) // Skip the @ character
+    } else {
+        (None, without_protocol)
+    };
+    
+    // Parse credentials (user:password)
+    let (user, password) = if let Some(creds) = credentials {
+        if let Some(colon_pos) = creds.find(':') {
+            let (u, p) = creds.split_at(colon_pos);
+            (u.to_string(), p[1..].to_string()) // Skip the : character
+        } else {
+            (creds.to_string(), String::new())
+        }
+    } else {
+        (String::new(), String::new())
+    };
+    
+    // Split host/port from database
+    let (host_port, database) = if let Some(slash_pos) = host_and_db.find('/') {
+        let (hp, db) = host_and_db.split_at(slash_pos);
+        (hp, db[1..].to_string()) // Skip the / character
+    } else {
+        (host_and_db, String::new())
+    };
+    
+    // Parse host and port
+    let (host, port) = if let Some(colon_pos) = host_port.rfind(':') {
+        let (h, p) = host_port.split_at(colon_pos);
+        let port = p[1..].parse::<u16>().unwrap_or(5432);
+        (h.to_string(), port)
+    } else {
+        (host_port.to_string(), 5432)
+    };
+    
+    Some(ParsedConnection {
+        db_type: DbType::Postgres,
+        host,
+        port,
+        user,
+        password,
+        database,
+    })
+}
+
+fn parse_mongodb_connection_string(conn_str: &str) -> Option<ParsedConnection> {
+    // Remove protocol prefix
+    let without_protocol = conn_str
+        .strip_prefix("mongodb+srv://")
+        .or_else(|| conn_str.strip_prefix("mongodb://"))?;
+    
+    // Split by @ to separate credentials from host/db
+    let (credentials, host_and_db) = if let Some(at_pos) = without_protocol.find('@') {
+        let (creds, rest) = without_protocol.split_at(at_pos);
+        (Some(creds), &rest[1..]) // Skip the @ character
+    } else {
+        (None, without_protocol)
+    };
+    
+    // Parse credentials (username:password)
+    let (user, password) = if let Some(creds) = credentials {
+        if let Some(colon_pos) = creds.find(':') {
+            let (u, p) = creds.split_at(colon_pos);
+            (u.to_string(), p[1..].to_string()) // Skip the : character
+        } else {
+            (creds.to_string(), String::new())
+        }
+    } else {
+        (String::new(), String::new())
+    };
+    
+    // Remove query parameters if present
+    let host_and_db = if let Some(question_pos) = host_and_db.find('?') {
+        &host_and_db[..question_pos]
+    } else {
+        host_and_db
+    };
+    
+    // Split host/port from database
+    let (host_port, database) = if let Some(slash_pos) = host_and_db.find('/') {
+        let (hp, db) = host_and_db.split_at(slash_pos);
+        (hp, db[1..].to_string()) // Skip the / character
+    } else {
+        (host_and_db, String::new())
+    };
+    
+    // Parse host and port (MongoDB can have multiple hosts, just take the first one)
+    let first_host = host_port.split(',').next().unwrap_or(host_port);
+    let (host, port) = if let Some(colon_pos) = first_host.rfind(':') {
+        let (h, p) = first_host.split_at(colon_pos);
+        let port = p[1..].parse::<u16>().unwrap_or(27017);
+        (h.to_string(), port)
+    } else {
+        (first_host.to_string(), 27017)
+    };
+    
+    Some(ParsedConnection {
+        db_type: DbType::MongoDB,
+        host,
+        port,
+        user,
+        password,
+        database,
+    })
 }
