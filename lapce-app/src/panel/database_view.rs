@@ -901,7 +901,8 @@ fn connection_form_overlay(
                                 svg(move || config.get().ui_svg(LapceIcons::DATABASE_POSTGRES))
                                     .style(move |s| {
                                         let selected = form_db_type.get() == DbType::Postgres;
-                                        s.apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.3)))
+                                        s.size(32.0, 32.0)
+                                            .apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.4)))
                                     })
                             )
                             .style(move |s| {
@@ -932,7 +933,8 @@ fn connection_form_overlay(
                                 svg(move || config.get().ui_svg(LapceIcons::DATABASE_MONGODB))
                                     .style(move |s| {
                                         let selected = form_db_type.get() == DbType::MongoDB;
-                                        s.apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.3)))
+                                        s.size(32.0, 32.0)
+                                            .apply_if(!selected, |s| s.color(Color::WHITE.multiply_alpha(0.4)))
                                     })
                             )
                             .style(move |s| {
@@ -959,7 +961,7 @@ fn connection_form_overlay(
                     ))
                     .style(|s| s.flex_row().items_center().margin_bottom(8.0)),
                     // Connection String field (optional - auto-fills other fields)
-                    form_field("Connection String:", form_connection_string, "postgresql://user:password@localhost:5432/dbname or mongodb://...", config),
+                    form_field("Connection String:", form_connection_string, "postgresql://user:pass@host:port/db", config),
                     // Divider text
                     container(
                         label(|| "— OR —")
