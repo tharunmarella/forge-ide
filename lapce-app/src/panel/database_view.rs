@@ -319,6 +319,8 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                         .style(move |s| {
                             let config = config.get();
                             s.flex_grow(1.0)
+                                .min_width(0.0)
+                                .max_width_pct(70.0)
                                 .height(32.0)
                                 .padding_horiz(8.0)
                                 .border(1.0)
@@ -327,6 +329,8 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                                 .background(config.color(LapceColor::EDITOR_BACKGROUND))
                                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                                 .font_size(config.ui.font_size() as f32)
+                                .cursor(CursorStyle::Text)
+                                .set(floem::style::CursorColor, config.color(LapceColor::TERMINAL_CURSOR))
                         }),
                     // Convert button (AI)
                     label(move || {
@@ -349,6 +353,7 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                                 .border(1.0)
                                 .border_color(config.color(LapceColor::LAPCE_BORDER))
                                 .cursor(if is_converting { CursorStyle::Default } else { CursorStyle::Pointer })
+                                .flex_shrink(0.0)
                                 .apply_if(is_converting, |s| {
                                     s.color(config.color(LapceColor::EDITOR_DIM))
                                 })
@@ -377,6 +382,7 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                                 .background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
                                 .cursor(CursorStyle::Pointer)
+                                .flex_shrink(0.0)
                                 .hover(|s| {
                                     s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
                                 })
