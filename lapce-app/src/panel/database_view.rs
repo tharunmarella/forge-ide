@@ -509,40 +509,37 @@ fn data_grid_view(
 ) -> impl View {
     let table_data = db_data.table_data;
 
-    container(
-        scroll(
-            {
-                dyn_stack(
-                    move || {
-                        let data = table_data.get();
-                        vec![data]
-                    },
-                    move |data| {
-                        data.as_ref()
-                            .map(|d| d.columns.len())
-                            .unwrap_or(0)
-                    },
-                    move |data| {
-                        if let Some(result) = data {
-                            data_table(result, config).into_any()
-                        } else {
-                            label(|| "No data").style(move |s| {
-                                let config = config.get();
-                                s.padding(20.0)
-                                    .color(config.color(LapceColor::EDITOR_DIM))
-                            }).into_any()
-                        }
-                    },
-                )
-                .style(|s| s.min_width_full())
+    scroll(
+        dyn_stack(
+            move || {
+                let data = table_data.get();
+                vec![data]
+            },
+            move |data| {
+                data.as_ref()
+                    .map(|d| d.columns.len())
+                    .unwrap_or(0)
+            },
+            move |data| {
+                if let Some(result) = data {
+                    data_table(result, config).into_any()
+                } else {
+                    label(|| "No data").style(move |s| {
+                        let config = config.get();
+                        s.padding(20.0)
+                            .color(config.color(LapceColor::EDITOR_DIM))
+                    }).into_any()
+                }
             },
         )
-        .style(|s| {
-            s.width_full()
-                .height_full()
-        }),
+        .style(|s| s.flex_col())
     )
-    .style(|s| s.width_full().height_full())
+    .style(|s| {
+        s.width_full()
+            .height_full()
+            .absolute()
+            .inset(0.0)
+    })
 }
 
 /// Renders the actual data table with header and rows
@@ -579,28 +576,45 @@ fn data_table(
             let cols = columns.clone();
             let widths = col_widths.clone();
             container(
-                dyn_stack(
-                    move || cols.clone().into_iter().enumerate().collect::<Vec<_>>(),
-                    move |&(i, _)| i,
-                    move |(i, col)| {
-                        let name = col.name.clone();
-                        let dtype = col.data_type.clone();
-                        let width = widths.get(i).copied().unwrap_or(120.0);
-                        label(move || format!("{}\n{}", name, dtype))
-                            .style(move |s| {
-                                let config = config.get();
-                                s.width(width)
-                                    .padding_horiz(8.0)
-                                    .padding_vert(6.0)
-                                    .font_size(config.ui.font_size() as f32 * 0.85)
-                                    .font_weight(floem::text::Weight::BOLD)
-                                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                                    .border_right(1.0)
-                                    .border_color(config.color(LapceColor::LAPCE_BORDER))
-                                    .flex_shrink(0.0)
-                            })
-                    },
-                )
+                stack((
+                    // Row number header
+                    label(|| "#")
+                        .style(move |s| {
+                            let config = config.get();
+                            s.width(50.0)
+                                .padding_horiz(8.0)
+                                .padding_vert(6.0)
+                                .font_size(config.ui.font_size() as f32 * 0.85)
+                                .font_weight(floem::text::Weight::BOLD)
+                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                .border_right(1.0)
+                                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                .flex_shrink(0.0)
+                        }),
+                    // Data column headers
+                    dyn_stack(
+                        move || cols.clone().into_iter().enumerate().collect::<Vec<_>>(),
+                        move |&(i, _)| i,
+                        move |(i, col)| {
+                            let name = col.name.clone();
+                            let dtype = col.data_type.clone();
+                            let width = widths.get(i).copied().unwrap_or(120.0);
+                            label(move || format!("{}\n{}", name, dtype))
+                                .style(move |s| {
+                                    let config = config.get();
+                                    s.width(width)
+                                        .padding_horiz(8.0)
+                                        .padding_vert(6.0)
+                                        .font_size(config.ui.font_size() as f32 * 0.85)
+                                        .font_weight(floem::text::Weight::BOLD)
+                                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                        .border_right(1.0)
+                                        .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                        .flex_shrink(0.0)
+                                })
+                        },
+                    ),
+                ))
                 .style(|s| s.flex_row()),
             )
             .style(move |s| {
@@ -620,28 +634,44 @@ fn data_table(
                     let is_even = row_idx % 2 == 0;
                     let widths = widths.clone();
                     container(
-                        dyn_stack(
-                            move || row.clone().into_iter().enumerate().collect::<Vec<_>>(),
-                            move |&(i, _)| i,
-                            move |(_i, val)| {
-                                let col_idx = _i;
-                                let display_val = json_value_to_display(&val);
-                                let width = widths.get(col_idx).copied().unwrap_or(120.0);
-                                label(move || display_val.clone())
-                                    .style(move |s| {
-                                        let config = config.get();
-                                        s.width(width)
-                                            .padding_horiz(8.0)
-                                            .padding_vert(4.0)
-                                            .font_size(config.ui.font_size() as f32 * 0.85)
-                                            .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                                            .border_right(1.0)
-                                            .border_color(config.color(LapceColor::LAPCE_BORDER))
-                                            .text_ellipsis()
-                                            .flex_shrink(0.0)
-                                    })
-                            },
-                        )
+                        stack((
+                            // Row number column
+                            label(move || format!("{}", row_idx + 1))
+                                .style(move |s| {
+                                    let config = config.get();
+                                    s.width(50.0)
+                                        .padding_horiz(8.0)
+                                        .padding_vert(4.0)
+                                        .font_size(config.ui.font_size() as f32 * 0.85)
+                                        .color(config.color(LapceColor::EDITOR_DIM))
+                                        .border_right(1.0)
+                                        .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                        .flex_shrink(0.0)
+                                }),
+                            // Data columns
+                            dyn_stack(
+                                move || row.clone().into_iter().enumerate().collect::<Vec<_>>(),
+                                move |&(i, _)| i,
+                                move |(_i, val)| {
+                                    let col_idx = _i;
+                                    let display_val = json_value_to_display(&val);
+                                    let width = widths.get(col_idx).copied().unwrap_or(120.0);
+                                    label(move || display_val.clone())
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            s.width(width)
+                                                .padding_horiz(8.0)
+                                                .padding_vert(4.0)
+                                                .font_size(config.ui.font_size() as f32 * 0.85)
+                                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                                .border_right(1.0)
+                                                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                                .text_ellipsis()
+                                                .flex_shrink(0.0)
+                                        })
+                                },
+                            ),
+                        ))
                         .style(|s| s.flex_row()),
                     )
                     .style(move |s| {
