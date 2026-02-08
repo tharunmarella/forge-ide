@@ -6,7 +6,8 @@ use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
 use lapce_rpc::db::{
     DbConnectionConfig, DbQueryResult, DbSchema, DbTableStructure, DbType,
 };
-use lapce_rpc::proxy::{ProxyResponse, ProxyRpcHandler};
+use lapce_rpc::proxy::{ProxyRequest, ProxyResponse, ProxyRpcHandler};
+use crate::ai_chat::AiKeysConfig;
 
 /// Represents the current active view in the database manager
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +70,10 @@ pub struct DatabaseViewData {
     pub show_connection_form: RwSignal<bool>,
     /// Connection form: the config being edited
     pub editing_connection: RwSignal<Option<DbConnectionConfig>>,
+    /// AI keys configuration
+    pub ai_keys_config: RwSignal<AiKeysConfig>,
+    /// Whether AI query conversion is in progress
+    pub ai_converting: RwSignal<bool>,
     /// Proxy RPC handler
     proxy: ProxyRpcHandler,
 }
@@ -90,6 +95,8 @@ impl DatabaseViewData {
             selected_table: cx.create_rw_signal(None),
             show_connection_form: cx.create_rw_signal(false),
             editing_connection: cx.create_rw_signal(None),
+            ai_keys_config: cx.create_rw_signal(AiKeysConfig::load()),
+            ai_converting: cx.create_rw_signal(false),
             proxy,
         };
 
@@ -449,6 +456,118 @@ impl DatabaseViewData {
         {
             self.load_table_data(connection_id, table);
         }
+    }
+
+    /// Convert natural language query to SQL/MongoDB using AI
+    pub fn convert_nl_to_query(&self) {
+        let nl_query = self.query_text.get();
+        if nl_query.trim().is_empty() {
+            return;
+        }
+
+        // Get active connection to determine database type and schema
+        let active_conn = match self.active_connection_id.get() {
+            Some(id) => {
+                let conns = self.connections.get();
+                match conns.iter().find(|c| c.config.id == id) {
+                    Some(conn) => conn.clone(),
+                    None => {
+                        self.status_message.set(Some("No active connection".to_string()));
+                        return;
+                    }
+                }
+            }
+            None => {
+                self.status_message.set(Some("No active connection".to_string()));
+                return;
+            }
+        };
+
+        // Get AI configuration
+        let keys_config = self.ai_keys_config.get();
+        let provider = keys_config.defaults.provider.clone();
+        let model = keys_config.defaults.model.clone();
+        let api_key = match keys_config.key_for(&provider) {
+            Some(key) => key.to_string(),
+            None => {
+                self.status_message.set(Some(format!("No API key configured for {}", provider)));
+                return;
+            }
+        };
+
+        // Build context prompt with schema information
+        let mut context = String::new();
+        context.push_str(&format!("Database Type: {:?}\n", active_conn.config.db_type));
+        context.push_str(&format!("Database: {}\n", active_conn.config.database));
+        
+        if let Some(schema) = &active_conn.schema {
+            context.push_str("\nAvailable Tables/Collections:\n");
+            for table in &schema.tables {
+                context.push_str(&format!("- {}\n", table.name));
+            }
+        }
+
+        let system_prompt = format!(
+            r#"You are a database query assistant. Convert natural language requests into valid database queries.
+
+{}
+
+Rules:
+- For PostgreSQL: Generate valid SQL SELECT statements
+- For MongoDB: Generate valid MongoDB query JSON
+- Return ONLY the query, no explanations
+- Use proper table/collection names from the schema
+- Be concise and accurate
+
+User request: {}"#,
+            context, nl_query
+        );
+
+        self.ai_converting.set(true);
+        self.status_message.set(Some("Converting to query...".to_string()));
+
+        let query_text = self.query_text;
+        let ai_converting = self.ai_converting;
+        let status_message = self.status_message;
+
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
+            ai_converting.set(false);
+            match result {
+                Ok(ProxyResponse::AgentDone { message }) => {
+                    // Clean up the response - remove markdown code blocks if present
+                    let cleaned = message
+                        .trim()
+                        .trim_start_matches("```sql")
+                        .trim_start_matches("```json")
+                        .trim_start_matches("```")
+                        .trim_end_matches("```")
+                        .trim()
+                        .to_string();
+                    
+                    query_text.set(cleaned);
+                    status_message.set(Some("Query generated! Click Run to execute.".to_string()));
+                }
+                Ok(ProxyResponse::AgentError { error }) => {
+                    status_message.set(Some(format!("AI Error: {}", error)));
+                }
+                Err(e) => {
+                    status_message.set(Some(format!("Error: {}", e.message)));
+                }
+                _ => {
+                    status_message.set(Some("Unexpected response".to_string()));
+                }
+            }
+        });
+
+        self.proxy.request_async(
+            ProxyRequest::AgentPrompt {
+                prompt: system_prompt,
+                provider,
+                model,
+                api_key,
+            },
+            send,
+        );
     }
 
     /// Toggle connection tree expansion

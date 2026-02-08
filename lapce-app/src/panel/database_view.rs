@@ -310,10 +310,12 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
             // Toolbar area with query input + execute
             {
                 let db = db_data.clone();
+                let db_convert = db_data.clone();
+                let ai_converting = db_data.ai_converting;
                 stack((
                     // Query text input
                     text_input(query_text)
-                        .placeholder("Enter SQL query or MongoDB filter JSON...")
+                        .placeholder("Ask in natural language: 'show me all users' or write SQL/MongoDB query...")
                         .style(move |s| {
                             let config = config.get();
                             s.flex_grow(1.0)
@@ -325,6 +327,43 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                                 .background(config.color(LapceColor::EDITOR_BACKGROUND))
                                 .color(config.color(LapceColor::EDITOR_FOREGROUND))
                                 .font_size(config.ui.font_size() as f32)
+                        }),
+                    // Convert button (AI)
+                    label(move || {
+                        if ai_converting.get() {
+                            "Converting..."
+                        } else {
+                            "✨ Convert"
+                        }
+                    })
+                        .style(move |s| {
+                            let config = config.get();
+                            let is_converting = ai_converting.get();
+                            s.padding_horiz(16.0)
+                                .padding_vert(6.0)
+                                .margin_left(8.0)
+                                .border_radius(4.0)
+                                .font_size(config.ui.font_size() as f32)
+                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                .background(config.color(LapceColor::PANEL_BACKGROUND))
+                                .border(1.0)
+                                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                .cursor(if is_converting { CursorStyle::Default } else { CursorStyle::Pointer })
+                                .apply_if(is_converting, |s| {
+                                    s.color(config.color(LapceColor::EDITOR_DIM))
+                                })
+                                .hover(move |s| {
+                                    if !is_converting {
+                                        s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                                    } else {
+                                        s
+                                    }
+                                })
+                        })
+                        .on_click_stop(move |_| {
+                            if !ai_converting.get_untracked() {
+                                db_convert.convert_nl_to_query();
+                            }
                         }),
                     // Execute button
                     label(|| "Run")
