@@ -4,8 +4,8 @@
 pkill -9 lapce 2>/dev/null
 
 # Set Langfuse environment variables
-export LANGFUSE_PUBLIC_KEY="pk-lf-7806f2ce-cc93-4ea0-8c1e-2aba09b9b9e9"
-export LANGFUSE_SECRET_KEY="sk-lf-0f8be63d-5ea1-4291-ae14-a4dbff3eb46d"
+export LANGFUSE_PUBLIC_KEY="pk-lf-f77359de-9119-4542-8224-35017647723a"
+export LANGFUSE_SECRET_KEY="sk-lf-e2e3fd5c-6f06-43fa-ab75-7757a6a66dc9"
 export LANGFUSE_BASE_URL="https://us.cloud.langfuse.com"
 
 # Navigate to project directory
