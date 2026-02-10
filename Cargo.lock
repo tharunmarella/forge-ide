@@ -2344,6 +2344,7 @@ dependencies = [
  "futures",
  "futures-util",
  "ignore",
+ "langfuse-client-base",
  "langfuse-ergonomic",
  "lapce-rpc",
  "moka",

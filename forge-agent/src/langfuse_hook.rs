@@ -26,6 +26,8 @@ struct LangfuseState {
     trace_id: String,
     #[cfg(feature = "langfuse")]
     base_url: String,
+    #[cfg(feature = "langfuse")]
+    project_id: String,
     session_start: Instant,
     turn: u32,
     /// Map of internal_call_id -> (observation_id, start_time)
@@ -71,6 +73,22 @@ impl LangfuseHook {
         user_id: Option<String>,
         metadata: serde_json::Value,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // Fetch the project ID for correct trace URLs
+        let project_id = {
+            use langfuse_client_base::apis::projects_api;
+            match projects_api::projects_get()
+                .configuration(client.configuration())
+                .call()
+                .await
+            {
+                Ok(projects) => projects.data.first().map(|p| p.id.clone()).unwrap_or_default(),
+                Err(e) => {
+                    tracing::warn!("[Langfuse] Failed to fetch project ID: {}", e);
+                    String::new()
+                }
+            }
+        };
+
         // Create the trace in Langfuse
         let trace_builder = client
             .trace()
@@ -78,20 +96,21 @@ impl LangfuseHook {
             .user_id(user_id.as_deref().unwrap_or(""))
             .metadata(metadata.clone())
             .tags(vec!["forge-agent".to_string(), "ai-coding".to_string()]);
-        
+
         let trace = trace_builder.call().await?;
         let trace_id = trace.id.clone();
         let base_url = std::env::var("LANGFUSE_BASE_URL")
             .unwrap_or_else(|_| "https://cloud.langfuse.com".to_string());
-        
+
         tracing::info!("[Langfuse] Trace created: {}", trace_id);
-        tracing::info!("[Langfuse] View at: {}/trace/{}", base_url, trace_id);
-        
+        tracing::info!("[Langfuse] View at: {}/project/{}/traces/{}", base_url, project_id, trace_id);
+
         Ok(Self {
             state: Arc::new(Mutex::new(LangfuseState {
                 client,
                 trace_id,
                 base_url,
+                project_id,
                 session_start: Instant::now(),
                 turn: 0,
                 pending_tool_calls: HashMap::new(),
@@ -128,7 +147,11 @@ impl LangfuseHook {
     #[cfg(feature = "langfuse")]
     pub async fn trace_url(&self) -> String {
         let state = self.state.lock().await;
-        format!("{}/trace/{}", state.base_url, state.trace_id)
+        if state.project_id.is_empty() {
+            format!("{}/trace/{}", state.base_url, state.trace_id)
+        } else {
+            format!("{}/project/{}/traces/{}", state.base_url, state.project_id, state.trace_id)
+        }
     }
     
     /// Mark the session as complete
