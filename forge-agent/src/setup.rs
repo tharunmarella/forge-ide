@@ -108,8 +108,14 @@ pub const PROVIDERS: &[Provider] = &[
     },
 ];
 
-/// Check if setup is needed (no API key configured)
+/// Check if setup is needed.
+/// Returns false if signed into forge-search (no API key needed).
 pub fn needs_setup(config: &Config) -> bool {
+    // If forge-search auth token exists, setup is not needed
+    if crate::forge_search::is_authenticated() {
+        return false;
+    }
+    // Fallback: check for direct API key
     config.api_key().is_none()
 }
 

@@ -3,11 +3,14 @@ pub mod bridge_standalone;
 pub mod context_cache;
 pub mod edit_fixer;
 pub mod forge_agent;
+pub mod forge_search;
 pub mod loop_detection;
 pub mod output_masking;
 pub mod project_memory;
 pub mod rig_tools;
 pub mod tracing_hook;
+pub mod langfuse_hook;
+pub mod langfuse_util;
 
 // Legacy modules (kept for reference, will migrate incrementally)
 pub mod api;
@@ -31,6 +34,8 @@ pub use forge_agent::{
 // rig_tools is already pub mod above
 
 pub use tracing_hook::TracingHook;
+pub use langfuse_hook::LangfuseHook;
+pub use langfuse_util::{create_langfuse_client, is_langfuse_enabled};
 
 // Re-export rig types that the IDE will need
 pub use rig;

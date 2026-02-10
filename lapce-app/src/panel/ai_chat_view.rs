@@ -24,7 +24,7 @@ use floem::{
     style::CursorStyle,
     views::{
         Decorators, container, dyn_stack, empty, label, rich_text, scroll, stack,
-        svg, text_input,
+        svg,
     },
 };
 
@@ -52,12 +52,12 @@ pub fn ai_chat_panel(
 
     let keys_config = chat_data.keys_config;
 
-    // Reactive: rebuild when keys change
+    // Reactive: rebuild when keys or forge-auth change (track keys_config so adding a key updates the view)
     container(
         dyn_stack(
             move || {
-                let has_key = keys_config.with(|c| c.has_any_key());
-                // Return a single-element vec with true/false so dyn_stack re-renders
+                let _ = keys_config.with(|_| ()); // track so UI updates when API keys change
+                let has_key = chat_data.has_any_key(); // forge-auth.json (same path as agent) or API keys
                 vec![has_key]
             },
             |v| *v,
@@ -81,19 +81,12 @@ pub fn ai_chat_panel(
 
 fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let config = window_tab_data.common.config;
-    let chat_data = window_tab_data.ai_chat.clone();
-
-    let selected_provider = create_rw_signal("gemini".to_string());
-    let api_key_text = create_rw_signal("".to_string());
-
-    let chat_data_save = chat_data.clone();
-    let selected_provider_save = selected_provider;
-    let api_key_save = api_key_text;
+    let _chat_data = window_tab_data.ai_chat.clone();
 
     container(
         stack((
             // ── Title ──
-            label(|| "Configure AI Provider".to_string()).style(move |s| {
+            label(|| "Welcome to Forge AI".to_string()).style(move |s| {
                 let config = config.get();
                 s.font_size(config.ui.font_size() as f32 + 4.0)
                     .font_bold()
@@ -101,99 +94,89 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                     .color(config.color(LapceColor::PANEL_FOREGROUND))
             }),
             // ── Description ──
-            label(|| "Enter an API key to get started with Forge AI.".to_string())
+            label(|| "Sign in to get AI-powered code intelligence.".to_string())
                 .style(move |s| {
                     let config = config.get();
                     s.font_size(config.ui.font_size() as f32)
-                        .margin_bottom(20.0)
+                        .margin_bottom(8.0)
                         .color(config.color(LapceColor::EDITOR_DIM))
                 }),
-            // ── Provider selector ──
-            label(|| "Provider".to_string()).style(move |s| {
-                let config = config.get();
-                s.font_size(config.ui.font_size() as f32)
-                    .font_bold()
-                    .margin_bottom(8.0)
-                    .color(config.color(LapceColor::PANEL_FOREGROUND))
-            }),
-            provider_selector(config, selected_provider),
-            // ── API Key input ──
-            label(|| "API Key".to_string()).style(move |s| {
-                let config = config.get();
-                s.font_size(config.ui.font_size() as f32)
-                    .font_bold()
-                    .margin_top(16.0)
-                    .margin_bottom(8.0)
-                    .color(config.color(LapceColor::PANEL_FOREGROUND))
-            }),
-            container(
-                text_input(api_key_text)
-                    .placeholder("Paste your API key here...")
-                    .keyboard_navigable()
-                    .style(move |s: floem::style::Style| {
-                        let config = config.get();
-                        s.width_pct(100.0)
-                            .min_height(36.0)
-                            .padding_horiz(10.0)
-                            .padding_vert(8.0)
-                            .background(config.color(LapceColor::EDITOR_BACKGROUND))
-                            .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                            .font_size(config.ui.font_size() as f32)
-                            .cursor(CursorStyle::Text)
-                    }),
-            )
+            label(|| "Semantic search, call tracing, impact analysis, and chat.".to_string())
+                .style(move |s| {
+                    let config = config.get();
+                    s.font_size(config.ui.font_size() as f32)
+                        .margin_bottom(24.0)
+                        .color(config.color(LapceColor::EDITOR_DIM))
+                }),
+            // ── Sign in with GitHub (primary) ──
+            stack((
+                svg(move || {
+                    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5c.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34c-.46-1.16-1.11-1.47-1.11-1.47c-.91-.62.07-.6.07-.6c1 .07 1.53 1.03 1.53 1.03c.87 1.52 2.34 1.07 2.91.83c.09-.65.35-1.09.63-1.34c-2.22-.25-4.55-1.11-4.55-4.92c0-1.11.38-2 1.03-2.71c-.1-.25-.45-1.29.1-2.64c0 0 .84-.27 2.75 1.02c.79-.22 1.65-.33 2.5-.33s1.71.11 2.5.33c1.91-1.29 2.75-1.02 2.75-1.02c.55 1.35.2 2.39.1 2.64c.65.71 1.03 1.6 1.03 2.71c0 3.82-2.34 4.66-4.57 4.91c.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2"/></svg>"#;
+                    svg_str.to_string()
+                }).style(|s| s.width(20.0).height(20.0).margin_right(8.0)),
+                label(|| "Sign in with GitHub".to_string()),
+            ))
+            .style(|s| s.flex_row().items_center().justify_center())
+            .on_click_stop(move |_| {
+                let base = std::env::var("FORGE_SEARCH_URL")
+                    .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+                let url = format!("{}/auth/github?state=forge-ide", base);
+                let _ = open::that(&url);
+            })
             .style(move |s| {
                 let config = config.get();
-                s.width_pct(100.0)
+                s.padding_horiz(24.0)
+                    .padding_vert(12.0)
+                    .width_pct(100.0)
+                    .justify_center()
+                    .font_bold()
+                    .font_size(config.ui.font_size() as f32)
+                    .cursor(CursorStyle::Pointer)
+                    .color(config.color(LapceColor::PANEL_FOREGROUND))
+                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
                     .border(1.0)
-                    .border_color(config.color(LapceColor::LAPCE_BORDER))
+                    .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                    .hover(|s| {
+                        s.background(
+                            config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.2),
+                        )
+                    })
             }),
-            // ── Help text ──
-            {
-                let selected = selected_provider;
-                label(move || {
-                    let prov = selected.get();
-                    match prov.as_str() {
-                        "gemini" => "Get a Gemini key at ai.google.dev".to_string(),
-                        "anthropic" => "Get a Claude key at console.anthropic.com".to_string(),
-                        "openai" => "Get an OpenAI key at platform.openai.com".to_string(),
-                        _ => String::new(),
-                    }
-                })
-                .style(move |s| {
-                    let config = config.get();
-                    s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                        .margin_top(6.0)
-                        .margin_bottom(20.0)
-                        .color(config.color(LapceColor::EDITOR_DIM))
-                })
-            },
-            // ── Save button ──
-            label(|| "Save & Start".to_string())
-                .on_click_stop(move |_| {
-                    let provider = selected_provider_save.get_untracked();
-                    let key = api_key_save.get_untracked();
-                    if !key.trim().is_empty() {
-                        chat_data_save.save_provider_key(&provider, key.trim());
-                    }
-                })
-                .style(move |s| {
-                    let config = config.get();
-                    s.padding_horiz(24.0)
-                        .padding_vert(10.0)
-                        .font_bold()
-                        .font_size(config.ui.font_size() as f32)
-                        .cursor(CursorStyle::Pointer)
-                        .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                        .background(config.color(LapceColor::EDITOR_BACKGROUND))
-                        .border(1.0)
-                        .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+            // ── Sign in with Google ──
+            stack((
+                svg(move || {
+                    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81"/></svg>"#;
+                    svg_str.to_string()
+                }).style(|s| s.width(20.0).height(20.0).margin_right(8.0)),
+                label(|| "Sign in with Google".to_string()),
+            ))
+            .style(|s| s.flex_row().items_center().justify_center())
+            .on_click_stop(move |_| {
+                let base = std::env::var("FORGE_SEARCH_URL")
+                    .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+                let url = format!("{}/auth/google?state=forge-ide", base);
+                let _ = open::that(&url);
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding_horiz(24.0)
+                    .padding_vert(12.0)
+                    .width_pct(100.0)
+                    .justify_center()
+                    .margin_top(8.0)
+                    .font_size(config.ui.font_size() as f32)
+                    .cursor(CursorStyle::Pointer)
+                    .color(config.color(LapceColor::EDITOR_DIM))
+                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                    .border(1.0)
+                        .border_color(config.color(LapceColor::LAPCE_BORDER))
                         .hover(|s| {
                             s.background(
-                                config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.2),
+                                config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.3),
                             )
                         })
                 }),
+            // ── No API key fallback — just SSO ──
         ))
         .style(|s| {
             s.flex_col()
@@ -382,15 +365,16 @@ fn ai_diff_toolbar(window_tab_data: Rc<WindowTabData>) -> impl View {
     })
 }
 
-/// Header with title, model dropdown, and clear button.
+/// Header with title, index status badge, and clear button.
 fn chat_header(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
 ) -> impl View {
-    let model = chat_data.model;
-    let dropdown_open = chat_data.dropdown_open;
-    let _chat_data_dropdown = chat_data.clone();
     let chat_data_clear = chat_data.clone();
+    let chat_data_badge = chat_data.clone();
+
+    // Kick off a background index status check
+    chat_data.refresh_index_status();
 
     container(
         stack((
@@ -412,8 +396,8 @@ fn chat_header(
                 }),
             ))
             .style(|s| s.items_center()),
-            // Model dropdown trigger
-            model_dropdown_trigger(config, model, dropdown_open),
+            // Index status badge with Index button + progress bar
+            index_status_badge(config, chat_data_badge),
             // Spacer
             empty().style(|s| s.flex_grow(1.0)),
             // Clear button
@@ -448,33 +432,115 @@ fn chat_header(
     })
 }
 
-/// The clickable model badge + dropdown overlay.
-fn model_dropdown_trigger(
+/// Index status area: shows status label, "Index" button when not indexed,
+/// and a progress bar during indexing.  All three layers are always present;
+/// visibility is toggled reactively so there's no dyn_stack rebuild issue.
+fn index_status_badge(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
-    model: floem::reactive::RwSignal<String>,
-    dropdown_open: floem::reactive::RwSignal<bool>,
+    chat_data: AiChatData,
 ) -> impl View {
-    // Just the clickable badge; the dropdown panel is rendered in the chat view overlay
-    label(move || {
-        let m = model.get();
-        format!("{} ▾", m)
-    })
-    .on_click_stop(move |_| {
-        dropdown_open.update(|v| *v = !*v);
-    })
-    .style(move |s| {
-        let config = config.get();
-        s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-            .padding_horiz(8.0)
-            .padding_vert(3.0)
-            .cursor(CursorStyle::Pointer)
-            .background(config.color(LapceColor::EDITOR_BACKGROUND))
-            .color(config.color(LapceColor::EDITOR_DIM))
-            .border(1.0)
-            .border_color(config.color(LapceColor::LAPCE_BORDER))
-            .hover(|s| {
-                s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+    let index_status = chat_data.index_status;
+    let index_progress = chat_data.index_progress;
+    let chat_data_click = chat_data.clone();
+
+    stack((
+        // ── Layer 1: status label (always rendered, hidden during indexing) ──
+        label(move || index_status.get())
+            .style(move |s| {
+                let config = config.get();
+                let status = index_status.get();
+                let progress = index_progress.get();
+                let is_indexing = progress >= 0.0;
+                // "N symbols indexed" = success; "Not indexed" = not success
+                let is_indexed = status.contains("symbols indexed");
+                let color = if is_indexed {
+                    config.color(LapceColor::LAPCE_ICON_ACTIVE)
+                } else {
+                    config.color(LapceColor::EDITOR_DIM)
+                };
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .padding_horiz(8.0)
+                    .padding_vert(3.0)
+                    .color(color)
+                    .apply_if(is_indexing, |s| s.hide())
+            }),
+
+        // ── Layer 2: "Index" button (visible only when not indexed and idle) ──
+        label(|| "Index".to_string())
+            .on_click_stop(move |_| {
+                chat_data_click.start_indexing();
             })
+            .style(move |s| {
+                let config = config.get();
+                let status = index_status.get();
+                let progress = index_progress.get();
+                let is_indexed = status.contains("symbols indexed"); // "Not indexed" is not indexed
+                let is_indexing = progress >= 0.0;
+                let is_checking = status.contains("Checking") || status.contains("Scanning");
+                let show = !is_indexed && !is_indexing && !is_checking;
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .padding_horiz(8.0)
+                    .padding_vert(2.0)
+                    .margin_left(4.0)
+                    .cursor(CursorStyle::Pointer)
+                    .font_bold()
+                    .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                    .border(1.0)
+                    .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                    .hover(|s| {
+                        s.background(
+                            config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.2),
+                        )
+                    })
+                    .apply_if(!show, |s| s.hide())
+            }),
+
+        // ── Layer 3: progress bar (visible only during indexing) ──
+        index_progress_view(config, index_status, index_progress),
+    ))
+    .style(|s| s.flex_row().items_center())
+}
+
+/// Progress bar shown during codebase indexing.
+fn index_progress_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    index_status: floem::reactive::RwSignal<String>,
+    index_progress: floem::reactive::RwSignal<f64>,
+) -> impl View {
+    stack((
+        // Status text (e.g. "Indexing… 23/120 files")
+        label(move || index_status.get())
+            .style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                    .margin_right(6.0)
+            }),
+        // Progress bar track
+        container(
+            // Progress bar fill
+            empty().style(move |s| {
+                let progress = index_progress.get().max(0.0).min(1.0);
+                let config = config.get();
+                s.height(4.0)
+                    .width_pct(progress * 100.0)
+                    .background(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                    .border_radius(2.0)
+            }),
+        )
+        .style(move |s| {
+            let config = config.get();
+            s.width(80.0)
+                .height(4.0)
+                .background(config.color(LapceColor::LAPCE_BORDER))
+                .border_radius(2.0)
+        }),
+    ))
+    .style(move |s| {
+        let is_indexing = index_progress.get() >= 0.0;
+        s.flex_row().items_center()
+            .apply_if(!is_indexing, |s| s.hide())
     })
 }
 

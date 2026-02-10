@@ -15,7 +15,11 @@
 # Logs
 *.log
 
+# Forge local data (embeddings DB, traces)
+.forge/
+
 # Environment files
 .env
 .env.local
 reference-repositories/
+.env

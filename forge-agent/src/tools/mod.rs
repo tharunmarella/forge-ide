@@ -1,13 +1,14 @@
 mod execute;
 mod files;
-mod search;
+pub(crate) mod search;
 mod code;
 pub(crate) mod web;
-mod embeddings;
-mod embeddings_store;
+mod embeddings;       // Legacy: kept for backward compat, prefer forge-search
+mod embeddings_store; // Legacy: kept for backward compat, prefer forge-search
 mod treesitter;
 pub mod lint;
 
+// Legacy re-exports — prefer forge_search::client() for new code
 pub use embeddings::{EmbeddingProvider, EmbeddingStore};
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 

@@ -702,11 +702,21 @@ TIPS: Write queries as natural language questions. Use 'path' to scope to a dire
         if let Some(p) = args.path {
             json["path"] = serde_json::json!(p);
         }
-        // tools::semantic() uses EmbeddingDb (rusqlite) which is !Send.
-        // Use block_in_place so the non-Send future can run on this thread.
+        // tools::semantic() uses EmbeddingDb (rusqlite Connection) which is !Send.
+        // We spawn a dedicated thread with its own single-threaded tokio runtime
+        // so this works on both multi_thread and current_thread runtimes.
         let workdir = self.bridge.workspace_root().to_path_buf();
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(tools::semantic(&json, &workdir))
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build tokio runtime for codebase_search");
+            let result = rt.block_on(tools::semantic(&json, &workdir));
+            let _ = tx.send(result);
+        });
+        let result = rx.await.unwrap_or_else(|_| {
+            tools::ToolResult::err("codebase_search thread panicked")
         });
         to_result(result)
     }

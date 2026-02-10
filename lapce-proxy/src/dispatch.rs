@@ -2195,7 +2195,7 @@ impl ProxyHandler for Dispatcher {
                             ..Default::default()
                         };
 
-                        // Create a per-session trace file
+                        // Create a per-session trace file (fallback/local tracing)
                         let trace_dir = directories::BaseDirs::new()
                             .map(|d| d.data_local_dir().to_path_buf())
                             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
@@ -2207,7 +2207,7 @@ impl ProxyHandler for Dispatcher {
                         );
                         let hook = match forge_agent::TracingHook::new(trace_dir.join(&trace_filename)) {
                             Ok(h) => {
-                                tracing::info!("[FORGE] Trace file: {}", h.trace_path.display());
+                                tracing::info!("[FORGE] Local trace file: {}", h.trace_path.display());
                                 h
                             }
                             Err(e) => {
@@ -2215,6 +2215,47 @@ impl ProxyHandler for Dispatcher {
                                 forge_agent::TracingHook::new(
                                     std::path::PathBuf::from("/tmp").join("forge-traces").join(&trace_filename)
                                 ).expect("fallback trace must work")
+                            }
+                        };
+
+                        // Try to initialize Langfuse (optional, requires env vars + feature flag)
+                        #[cfg(feature = "langfuse")]
+                        let _langfuse_hook = {
+                            tracing::info!("[FORGE] Checking Langfuse configuration...");
+                            tracing::info!("[FORGE] LANGFUSE_PUBLIC_KEY present: {}", std::env::var("LANGFUSE_PUBLIC_KEY").is_ok());
+                            tracing::info!("[FORGE] LANGFUSE_SECRET_KEY present: {}", std::env::var("LANGFUSE_SECRET_KEY").is_ok());
+                            
+                            if forge_agent::is_langfuse_enabled() {
+                                tracing::info!("[FORGE] Langfuse observability enabled");
+                                if let Some(client) = forge_agent::create_langfuse_client() {
+                                    match forge_agent::LangfuseHook::new(
+                                        client,
+                                        format!("forge-agent-{}", provider),
+                                        None, // user_id
+                                        serde_json::json!({
+                                            "provider": &provider,
+                                            "model": &model,
+                                            "workspace": &workspace_display,
+                                            "prompt_len": prompt.len(),
+                                        })
+                                    ).await {
+                                        Ok(lf_hook) => {
+                                            let url = lf_hook.trace_url().await;
+                                            tracing::info!("[FORGE] Langfuse trace: {}", url);
+                                            Some(lf_hook)
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("[FORGE] Failed to create Langfuse hook: {}", e);
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    tracing::warn!("[FORGE] Failed to create Langfuse client");
+                                    None
+                                }
+                            } else {
+                                tracing::info!("[FORGE] Langfuse not configured");
+                                None
                             }
                         };
 
@@ -2231,26 +2272,85 @@ impl ProxyHandler for Dispatcher {
                             &workspace_display,
                         );
 
-                        let result: Result<String, String> = match provider.as_str() {
-                            "gemini" => {
-                                match forge_agent::create_agent_gemini(&config, bridge) {
-                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
-                                    Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
+                        // ── forge-search: call cloud /chat endpoint (no local LLM) ──
+                        // This branch handles the case where the user signed in via
+                        // OAuth and has no API keys.  The UI sends provider="forge-search".
+                        let result: Result<String, String> = if provider == "forge-search" {
+                            let fs_client = forge_agent::forge_search::client();
+                            let workspace_id = workspace_path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "default".to_string());
+
+                            match fs_client.chat(&workspace_id, &enriched_prompt, true, false).await {
+                                Ok(resp) => {
+                                    let answer = resp["answer"]
+                                        .as_str()
+                                        .unwrap_or("(no answer)")
+                                        .to_string();
+                                    // Send the full answer as a single text chunk so the
+                                    // UI streaming pipeline picks it up.
+                                    core_rpc.notification(CoreNotification::AgentTextChunk {
+                                        text: answer.clone(),
+                                        done: false,
+                                    });
+                                    core_rpc.notification(CoreNotification::AgentTextChunk {
+                                        text: String::new(),
+                                        done: true,
+                                    });
+                                    Ok(answer)
                                 }
+                                Err(e) => Err(format!("Forge Search error: {e}")),
                             }
-                            "anthropic" => {
-                                match forge_agent::create_agent_anthropic(&config, bridge) {
-                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
-                                    Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
+                        } else {
+                            // ── Standard provider path (Gemini / Anthropic / OpenAI) ──
+                            #[cfg(feature = "langfuse")]
+                            let r: Result<String, String> = match provider.as_str() {
+                                "gemini" => {
+                                    match forge_agent::create_agent_gemini(&config, bridge) {
+                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), _langfuse_hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
+                                        Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
+                                    }
                                 }
-                            }
-                            "openai" => {
-                                match forge_agent::create_agent_openai(&config, bridge) {
-                                    Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
-                                    Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
+                                "anthropic" => {
+                                    match forge_agent::create_agent_anthropic(&config, bridge) {
+                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), _langfuse_hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
+                                        Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
+                                    }
                                 }
-                            }
-                            other => Err(format!("Unknown provider: {other}")),
+                                "openai" => {
+                                    match forge_agent::create_agent_openai(&config, bridge) {
+                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), _langfuse_hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
+                                        Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
+                                    }
+                                }
+                                other => Err(format!("Unknown provider: {other}")),
+                            };
+
+                            #[cfg(not(feature = "langfuse"))]
+                            let r: Result<String, String> = match provider.as_str() {
+                                "gemini" => {
+                                    match forge_agent::create_agent_gemini(&config, bridge) {
+                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), None, diff_snapshots.clone(), workspace_path.clone()).await,
+                                        Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
+                                    }
+                                }
+                                "anthropic" => {
+                                    match forge_agent::create_agent_anthropic(&config, bridge) {
+                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), None, diff_snapshots.clone(), workspace_path.clone()).await,
+                                        Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
+                                    }
+                                }
+                                "openai" => {
+                                    match forge_agent::create_agent_openai(&config, bridge) {
+                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), None, diff_snapshots.clone(), workspace_path.clone()).await,
+                                        Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
+                                    }
+                                }
+                                other => Err(format!("Unknown provider: {other}")),
+                            };
+
+                            r
                         };
 
                         match result {
@@ -2422,6 +2522,7 @@ async fn run_streaming_agent<M>(
     prompt: &str,
     core_rpc: &CoreRpcHandler,
     hook: forge_agent::TracingHook,
+    langfuse_hook: Option<forge_agent::LangfuseHook>,
     pending_diff_snapshots: Arc<Mutex<HashMap<String, (String, String)>>>,
     workspace_path: PathBuf,
 ) -> Result<String, String>
@@ -2435,7 +2536,19 @@ where
 
     const FILE_EDIT_TOOLS: &[&str] = &["write_to_file", "replace_in_file", "apply_patch"];
 
-    let mut stream = agent.stream_prompt(prompt).with_hook(hook.clone()).await;
+    // Add both hooks to the agent stream
+    let mut stream_builder = agent.stream_prompt(prompt).with_hook(hook.clone());
+    
+    // Add Langfuse hook if available
+    #[cfg(feature = "langfuse")]
+    let mut stream = if let Some(lf_hook) = langfuse_hook {
+        stream_builder.with_hook(lf_hook).await
+    } else {
+        stream_builder.await
+    };
+    
+    #[cfg(not(feature = "langfuse"))]
+    let mut stream = stream_builder.await;
     let mut full_response = String::new();
 
     // Track pre-edit file snapshots: tool_call_id -> (relative_path, old_content)

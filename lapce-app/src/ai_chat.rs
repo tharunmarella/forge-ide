@@ -235,6 +235,13 @@ pub struct AiChatData {
     /// Counter incremented each time we want to trigger a scroll.
     /// The view reacts to changes in this signal.
     pub scroll_trigger: RwSignal<u64>,
+
+    // ── Index status ────────────────────────────────────────────
+    /// Human-readable codebase index status shown in the header.
+    /// e.g. "Not indexed", "Indexing…", "42 files · 318 symbols"
+    pub index_status: RwSignal<String>,
+    /// Index progress: 0.0..1.0 while indexing, -1.0 when idle.
+    pub index_progress: RwSignal<f64>,
 }
 
 impl AiChatData {
@@ -258,11 +265,35 @@ impl AiChatData {
             has_first_token: cx.create_rw_signal(false),
             scroll_to_bottom: cx.create_rw_signal(None),
             scroll_trigger: cx.create_rw_signal(0),
+            index_status: cx.create_rw_signal("Checking…".to_string()),
+            index_progress: cx.create_rw_signal(-1.0),
         }
     }
 
-    /// Whether any API key is configured.
+    /// Whether user can chat — either signed into forge-search or has an API key.
+    ///
+    /// The forge-auth.json token is saved into the Lapce config directory
+    /// (e.g. `~/Library/Application Support/dev.lapce.Lapce-Nightly/`) by the
+    /// OAuth callback.  We check that path first, then fall back to checking
+    /// whether the user has pasted a raw API key into ai-keys.toml.
     pub fn has_any_key(&self) -> bool {
+        // Primary: forge-search auth token in Lapce's own config dir
+        if let Some(dir) = lapce_core::directory::Directory::config_directory() {
+            if dir.join("forge-auth.json").exists() {
+                return true;
+            }
+        }
+
+        // Also check the forge-agent config dir (dirs::config_dir()/forge-ide/)
+        // in case the token was placed there manually for testing.
+        if dirs::config_dir()
+            .map(|d| d.join("forge-ide").join("forge-auth.json"))
+            .map_or(false, |p| p.exists())
+        {
+            return true;
+        }
+
+        // Fallback: check for direct API keys
         self.keys_config.with_untracked(|c| c.has_any_key())
     }
 
@@ -313,12 +344,21 @@ impl AiChatData {
             return;
         }
 
+        // Determine if forge-search auth is available (no API key needed).
+        let forge_search_auth = self.is_forge_search_authenticated();
+
         // Read current provider/model/key
-        let provider = self.provider.get_untracked();
-        let model = self.model.get_untracked();
-        let api_key = self
-            .keys_config
-            .with_untracked(|c| c.key_for(&provider).unwrap_or("").to_string());
+        let (provider, model, api_key) = if forge_search_auth {
+            // Route through forge-search — no API key required.
+            ("forge-search".to_string(), "forge-search".to_string(), String::new())
+        } else {
+            let provider = self.provider.get_untracked();
+            let model = self.model.get_untracked();
+            let api_key = self
+                .keys_config
+                .with_untracked(|c| c.key_for(&provider).unwrap_or("").to_string());
+            (provider, model, api_key)
+        };
 
         // Add user message
         self.entries.update(|entries| {
@@ -331,7 +371,8 @@ impl AiChatData {
         self.has_first_token.set(false);
         self.streaming_text.set(String::new());
 
-        if api_key.is_empty() {
+        // Only check API key when NOT using forge-search
+        if !forge_search_auth && api_key.is_empty() {
             self.entries.update(|entries| {
                 entries.push_back(new_message(
                     ChatRole::System,
@@ -392,6 +433,24 @@ impl AiChatData {
         );
     }
 
+    /// Check if forge-search auth token exists (file on disk, no network).
+    fn is_forge_search_authenticated(&self) -> bool {
+        // Check Lapce's own config dir (where OAuth callback saves the token)
+        if let Some(dir) = lapce_core::directory::Directory::config_directory() {
+            if dir.join("forge-auth.json").exists() {
+                return true;
+            }
+        }
+        // Also check the forge-agent config dir
+        if dirs::config_dir()
+            .map(|d| d.join("forge-ide").join("forge-auth.json"))
+            .map_or(false, |p| p.exists())
+        {
+            return true;
+        }
+        false
+    }
+
     pub fn clear_chat(&self) {
         self.entries.update(|entries| entries.clear());
         self.streaming_text.set(String::new());
@@ -402,6 +461,309 @@ impl AiChatData {
     /// Trigger the scroll-to-bottom signal.
     pub fn request_scroll_to_bottom(&self) {
         self.scroll_trigger.update(|v| *v += 1);
+    }
+
+    /// Fire a background request to forge-search `/health` to update the
+    /// index status badge in the header.  Safe to call multiple times.
+    pub fn refresh_index_status(&self) {
+        if !self.is_forge_search_authenticated() {
+            self.index_status.set("Not connected".to_string());
+            return;
+        }
+
+        // Read the auth token from disk
+        let token = Self::read_forge_token();
+        let base_url = std::env::var("FORGE_SEARCH_URL")
+            .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+
+        // Derive workspace_id from the open workspace path
+        let workspace_name = self
+            .common
+            .workspace
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "default".to_string());
+
+        let index_status = self.index_status;
+
+        let send = create_ext_action(self.scope, move |status: String| {
+            index_status.set(status);
+        });
+
+        std::thread::spawn(move || {
+            let client = match reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => {
+                    send("Error".to_string());
+                    return;
+                }
+            };
+
+            // 1. Health check
+            let health_url = format!("{}/health", base_url);
+            match client.get(&health_url).send() {
+                Ok(resp) if resp.status().is_success() => {}
+                _ => {
+                    send("Server offline".to_string());
+                    return;
+                }
+            }
+
+            // 2. Search with a tiny query to get total_nodes (workspace stats)
+            let search_url = format!("{}/search", base_url);
+            let mut req = client.post(&search_url).json(&serde_json::json!({
+                "workspace_id": workspace_name,
+                "query": "__ping__",
+                "top_k": 1,
+            }));
+            if !token.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", token));
+            }
+
+            match req.send() {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(body) = resp.json::<serde_json::Value>() {
+                        let total = body["total_nodes"].as_i64().unwrap_or(0);
+                        if total > 0 {
+                            send(format!("{} symbols indexed", total));
+                        } else {
+                            send("Not indexed".to_string());
+                        }
+                    } else {
+                        send("Connected".to_string());
+                    }
+                }
+                Ok(resp) if resp.status().as_u16() == 401 => {
+                    send("Auth expired".to_string());
+                }
+                _ => {
+                    send("Not indexed".to_string());
+                }
+            }
+        });
+    }
+
+    /// Start indexing the workspace codebase via forge-search.
+    /// Walks source files, sends them in batches, and updates progress.
+    pub fn start_indexing(&self) {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+        use floem::reactive::with_scope;
+
+        // Prevent double-indexing
+        if self.index_progress.get_untracked() >= 0.0 {
+            return;
+        }
+
+        let token = Self::read_forge_token();
+        let base_url = std::env::var("FORGE_SEARCH_URL")
+            .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+
+        let workspace_path = match self.common.workspace.path.as_ref() {
+            Some(p) => p.clone(),
+            None => {
+                self.index_status.set("No workspace open".to_string());
+                return;
+            }
+        };
+
+        let workspace_name = workspace_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "default".to_string());
+
+        let index_status = self.index_status;
+        let index_progress = self.index_progress;
+
+        // Use the ExtSendTrigger + Arc<Mutex<VecDeque>> pattern from floem
+        // so we can push multiple updates from a background thread.
+        let cx = self.scope.create_child();
+        let trigger = with_scope(cx, floem::ext_event::ExtSendTrigger::new);
+        let data: Arc<Mutex<VecDeque<(String, f64)>>> = Arc::new(Mutex::new(VecDeque::new()));
+
+        {
+            let data = data.clone();
+            cx.create_effect(move |_| {
+                trigger.track();
+                while let Some((status, progress)) = data.lock().unwrap().pop_front() {
+                    index_status.set(status);
+                    index_progress.set(progress);
+                }
+            });
+        }
+
+        let data_send = data.clone();
+
+        std::thread::spawn(move || {
+            // Helper: push an update and poke the UI
+            let send = |status: String, progress: f64| {
+                data_send.lock().unwrap().push_back((status, progress));
+                floem::ext_event::register_ext_trigger(trigger);
+            };
+
+            send("Scanning files…".to_string(), 0.0);
+
+            // ── Collect source files ──
+            let ignored_dirs: &[&str] = &[
+                "node_modules", "target", "dist", "build", ".git", "__pycache__",
+                "vendor", ".next", "out", "coverage", ".cache", ".turbo",
+                "reference-repos", "venv", ".venv", "env",
+            ];
+            let code_ext: &[&str] = &[
+                ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
+                ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
+            ];
+
+            let mut files: Vec<serde_json::Value> = Vec::new();
+
+            for entry in walkdir::WalkDir::new(&workspace_path)
+                .max_depth(8)
+                .into_iter()
+                .filter_entry(|e| {
+                    if e.file_type().is_dir() {
+                        let name = e.file_name().to_string_lossy();
+                        return !name.starts_with('.') && !ignored_dirs.contains(&name.as_ref());
+                    }
+                    true
+                })
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_file())
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy();
+                    code_ext.iter().any(|ext| name.ends_with(ext))
+                        && !name.starts_with("test_")
+                        && !name.starts_with("bench_")
+                        && !name.ends_with("_test.go")
+                })
+                .take(500)
+            {
+                let path = entry.path();
+                let rel_path = path
+                    .strip_prefix(&workspace_path)
+                    .unwrap_or(path);
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    if content.len() < 100_000 {
+                        files.push(serde_json::json!({
+                            "path": rel_path.display().to_string(),
+                            "content": content,
+                        }));
+                    }
+                }
+            }
+
+            if files.is_empty() {
+                send("No source files found".to_string(), -1.0);
+                return;
+            }
+
+            let total = files.len();
+            send(format!("Indexing {total} files…"), 0.05);
+
+            // ── Send in batches ──
+            let client = match reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => {
+                    send("Index failed".to_string(), -1.0);
+                    return;
+                }
+            };
+
+            let batch_size = 50;
+            let mut sent = 0usize;
+            let mut total_symbols = 0i64;
+
+            for batch in files.chunks(batch_size) {
+                let index_url = format!("{}/index", base_url);
+                let mut req = client.post(&index_url).json(&serde_json::json!({
+                    "workspace_id": workspace_name,
+                    "files": batch,
+                }));
+                if !token.is_empty() {
+                    req = req.header("Authorization", format!("Bearer {}", token));
+                }
+
+                match req.send() {
+                    Ok(resp) if resp.status().is_success() => {
+                        if let Ok(body) = resp.json::<serde_json::Value>() {
+                            total_symbols += body["nodes_created"].as_i64().unwrap_or(0);
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        send(format!("Index error: {status}"), -1.0);
+                        return;
+                    }
+                    Err(e) => {
+                        send(format!("Network error: {e}"), -1.0);
+                        return;
+                    }
+                }
+
+                sent += batch.len();
+                let progress = sent as f64 / total as f64;
+                send(format!("Indexing… {sent}/{total} files"), progress.min(0.99));
+            }
+
+            // ── Done — fetch final stats ──
+            let search_url = format!("{}/search", base_url);
+            let mut req = client.post(&search_url).json(&serde_json::json!({
+                "workspace_id": workspace_name,
+                "query": "__ping__",
+                "top_k": 1,
+            }));
+            if !token.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", token));
+            }
+
+            let final_status = match req.send() {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(body) = resp.json::<serde_json::Value>() {
+                        let n = body["total_nodes"].as_i64().unwrap_or(total_symbols);
+                        format!("{} symbols indexed", n)
+                    } else {
+                        format!("{} symbols indexed", total_symbols)
+                    }
+                }
+                _ => format!("{} symbols indexed", total_symbols),
+            };
+
+            send(final_status, -1.0); // -1.0 = done, hide progress bar
+        });
+    }
+
+    /// Read the forge-search JWT from disk (checks both Lapce and agent config dirs).
+    fn read_forge_token() -> String {
+        // Lapce config dir first
+        if let Some(dir) = Directory::config_directory() {
+            let path = dir.join("forge-auth.json");
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(t) = v["token"].as_str() {
+                        return t.to_string();
+                    }
+                }
+            }
+        }
+        // Agent config dir
+        if let Some(dir) = dirs::config_dir() {
+            let path = dir.join("forge-ide").join("forge-auth.json");
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(t) = v["token"].as_str() {
+                        return t.to_string();
+                    }
+                }
+            }
+        }
+        String::new()
     }
 }
 

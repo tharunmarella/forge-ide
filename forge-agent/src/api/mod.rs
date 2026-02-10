@@ -62,9 +62,6 @@ impl Agent {
             config.base_url.as_deref(),
         );
         
-        // Start background indexing
-        tools::start_background_indexing(workdir.clone());
-        
         // Create new session
         let session = Session::new(workdir.clone(), &config.provider, &config.model);
         
@@ -93,9 +90,6 @@ impl Agent {
             config.api_key().as_deref(),
             config.base_url.as_deref(),
         );
-        
-        // Start background indexing
-        tools::start_background_indexing(workdir.clone());
         
         // Load existing session
         let session = Session::load(session_id)?;

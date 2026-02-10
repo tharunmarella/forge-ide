@@ -21,6 +21,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# JWT token decoding (for forge-search auth)
+base64 = "0.22"
+
 # File walking
 walkdir = "2"
 ignore = "0.4"
@@ -59,6 +62,9 @@ shellexpand = "3"
 urlencoding = "2"
 petgraph = "0.6"
 
+# Langfuse observability
+langfuse-ergonomic = { version = "0.6", optional = true }
+
 # IDE integration - communicate with proxy
 lapce-rpc = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -71,6 +77,10 @@ directories = "5"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+default = []
+langfuse = ["langfuse-ergonomic"]
 
 [[bin]]
 name = "forge-cli"
