@@ -84,6 +84,7 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let config = window_tab_data.common.config;
     let chat_data = window_tab_data.ai_chat.clone();
     let scope = chat_data.scope;
+    let keys_config = chat_data.keys_config;
     
     // Signal to show "Waiting for authentication..." status
     let auth_status = scope.create_rw_signal(String::new());
@@ -123,7 +124,7 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
             ))
             .style(|s| s.flex_row().items_center().justify_center())
             .on_click_stop(move |_| {
-                start_oauth_flow(scope, "github", auth_status);
+                start_oauth_flow(scope, "github", auth_status, keys_config);
             })
             .style(move |s| {
                 let config = config.get();
@@ -154,7 +155,7 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
             ))
             .style(|s| s.flex_row().items_center().justify_center())
             .on_click_stop(move |_| {
-                start_oauth_flow(scope, "google", auth_status);
+                start_oauth_flow(scope, "google", auth_status, keys_config);
             })
             .style(move |s| {
                 let config = config.get();
@@ -217,6 +218,7 @@ fn start_oauth_flow(
     scope: Scope,
     provider: &'static str,
     auth_status: floem::reactive::RwSignal<String>,
+    keys_config: floem::reactive::RwSignal<crate::ai_chat::AiKeysConfig>,
 ) {
     use lapce_core::directory::Directory;
     
@@ -252,6 +254,10 @@ fn start_oauth_flow(
                         let _ = std::fs::write(dir.join("forge-auth.json"), content);
                     }
                 }
+                // Trigger keys_config signal so dyn_stack re-evaluates has_any_key()
+                // which will now find the forge-auth.json file on disk.
+                // A no-op update still notifies all subscribers of the signal.
+                keys_config.update(|_| {});
                 auth_status.set(format!("Signed in as {}", email));
             }
             Err(e) => {
