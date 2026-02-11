@@ -554,26 +554,24 @@ fn chat_header(
     })
 }
 
-/// Index status area: shows status label, "Index" button when not indexed,
-/// and a progress bar during indexing.  All three layers are always present;
-/// visibility is toggled reactively so there's no dyn_stack rebuild issue.
+/// Index status area: shows status label and progress bar during indexing.
+/// Auto-indexing happens on first message, so no manual button needed.
 fn index_status_badge(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
 ) -> impl View {
     let index_status = chat_data.index_status;
     let index_progress = chat_data.index_progress;
-    let chat_data_click = chat_data.clone();
 
     stack((
-        // ── Layer 1: status label (always rendered, hidden during indexing) ──
+        // ── Layer 1: status label (hidden during indexing) ──
         label(move || index_status.get())
             .style(move |s| {
                 let config = config.get();
                 let status = index_status.get();
                 let progress = index_progress.get();
                 let is_indexing = progress >= 0.0;
-                // "N symbols indexed" = success; "Not indexed" = not success
+                // "N symbols indexed" = success; otherwise dim
                 let is_indexed = status.contains("symbols indexed");
                 let color = if is_indexed {
                     config.color(LapceColor::LAPCE_ICON_ACTIVE)
@@ -587,38 +585,7 @@ fn index_status_badge(
                     .apply_if(is_indexing, |s| s.hide())
             }),
 
-        // ── Layer 2: "Index" button (visible only when not indexed and idle) ──
-        label(|| "Index".to_string())
-            .on_click_stop(move |_| {
-                chat_data_click.start_indexing();
-            })
-            .style(move |s| {
-                let config = config.get();
-                let status = index_status.get();
-                let progress = index_progress.get();
-                let is_indexed = status.contains("symbols indexed"); // "Not indexed" is not indexed
-                let is_indexing = progress >= 0.0;
-                let is_checking = status.contains("Checking") || status.contains("Scanning");
-                let show = !is_indexed && !is_indexing && !is_checking;
-                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                    .padding_horiz(8.0)
-                    .padding_vert(2.0)
-                    .margin_left(4.0)
-                    .cursor(CursorStyle::Pointer)
-                    .font_bold()
-                    .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
-                    .border(1.0)
-                    .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                    .hover(|s| {
-                        s.background(
-                            config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.2),
-                        )
-                    })
-                    .apply_if(!show, |s| s.hide())
-            }),
-
-        // ── Layer 3: progress bar (visible only during indexing) ──
+        // ── Layer 2: progress bar (visible only during indexing) ──
         index_progress_view(config, index_status, index_progress),
     ))
     .style(|s| s.flex_row().items_center())

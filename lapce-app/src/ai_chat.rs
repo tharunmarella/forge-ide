@@ -353,6 +353,17 @@ impl AiChatData {
         // Determine if forge-search auth is available (no API key needed).
         let forge_search_auth = self.is_forge_search_authenticated();
 
+        // Auto-index on first message if not indexed (only for forge-search)
+        if forge_search_auth {
+            let status = self.index_status.get_untracked();
+            let is_indexed = status.contains("symbols indexed");
+            let is_indexing = self.index_progress.get_untracked() >= 0.0;
+            if !is_indexed && !is_indexing {
+                // Trigger background indexing - doesn't block the message
+                self.start_indexing();
+            }
+        }
+
         // Read current provider/model/key
         let (provider, model, api_key) = if forge_search_auth {
             // Route through forge-search — no API key required.
