@@ -10,8 +10,7 @@ description = "AI coding agent for forge-ide"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "fs"] }
 futures = "0.3"
 
-# LLM framework -- provides multi-provider client, agent loop, tool trait, streaming
-rig-core = { version = "0.30", default-features = false, features = ["reqwest-rustls"] }
+# Schema generation for tool definitions
 schemars = "0.8"
 
 # HTTP (still needed for web tools, context7 fetching)
@@ -62,9 +61,6 @@ shellexpand = "3"
 urlencoding = "2"
 petgraph = "0.6"
 
-# Langfuse observability
-langfuse-ergonomic = { version = "0.6", optional = true }
-langfuse-client-base = { version = "0.5", optional = true }
 
 # IDE integration - communicate with proxy
 lapce-rpc = { workspace = true }
@@ -81,7 +77,6 @@ tempfile = "3"
 
 [features]
 default = []
-langfuse = ["langfuse-ergonomic", "langfuse-client-base"]
 
 [[bin]]
 name = "forge-cli"

@@ -485,6 +485,22 @@ impl Doc {
             .buffer
             .try_update(|buffer| buffer.reload(content, set_pristine))
             .unwrap();
+
+        // Update cursors of all editors using this document to reflect the change.
+        // This prevents crashes when external file changes shorten the document
+        // and editors have cursors beyond the new end of file.
+        let buffer_id = self.buffer_id;
+        self.editors.with_editors_untracked(|editors| {
+            for editor in editors.values() {
+                // Check if this editor uses our document by comparing buffer_id
+                if editor.doc().buffer_id == buffer_id {
+                    editor.cursor().update(|cursor| {
+                        cursor.apply_delta(&delta.1);
+                    });
+                }
+            }
+        });
+
         self.apply_deltas(&[delta]);
     }
 

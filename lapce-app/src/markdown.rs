@@ -33,6 +33,10 @@ pub fn parse_markdown_sized(
     config: &LapceConfig,
     font_size: f32,
 ) -> Vec<MarkdownContent> {
+    // Pre-process: wrap unfenced mermaid diagrams in proper code fences
+    let text = wrap_unfenced_mermaid(text);
+    let text = text.as_str();
+
     let mut res = Vec::new();
 
     let mut current_text = String::new();
@@ -449,4 +453,52 @@ fn render_mermaid_png(source: &str) -> Option<Vec<u8>> {
 
     let bytes = resp.bytes().ok()?;
     Some(bytes.to_vec())
+}
+
+/// Detect unfenced Mermaid diagrams and wrap them in proper code fences.
+/// This handles cases where the LLM outputs raw mermaid syntax without ```mermaid fences.
+fn wrap_unfenced_mermaid(text: &str) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    // Patterns that indicate the start of a mermaid diagram
+    // Must be at the start of a line and not already inside a code fence
+    static MERMAID_START: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?m)^(graph\s+(?:TD|TB|BT|RL|LR)|flowchart\s+(?:TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|sankey-beta|xychart-beta|block-beta)"
+        ).unwrap()
+    });
+
+    // Check if already inside a code fence
+    let has_mermaid_fence = text.contains("```mermaid");
+    if has_mermaid_fence {
+        return text.to_string();
+    }
+
+    // Find mermaid diagram blocks
+    if let Some(m) = MERMAID_START.find(text) {
+        let start = m.start();
+
+        // Find the end of the mermaid diagram (empty line or end of text)
+        // Look for two consecutive newlines or end of string
+        let remaining = &text[start..];
+        let end_offset = remaining
+            .find("\n\n")
+            .map(|i| i + 1) // Include one newline
+            .unwrap_or(remaining.len());
+
+        let diagram = remaining[..end_offset].trim();
+
+        // Reconstruct the text with the diagram wrapped
+        let before = &text[..start];
+        let after = if start + end_offset < text.len() {
+            &text[start + end_offset..]
+        } else {
+            ""
+        };
+
+        return format!("{}```mermaid\n{}\n```\n{}", before, diagram, after);
+    }
+
+    text.to_string()
 }
