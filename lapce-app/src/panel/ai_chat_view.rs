@@ -17,9 +17,10 @@ use std::sync::atomic::AtomicU64;
 use floem::{
     IntoView, View,
     event::EventListener,
+    ext_event::create_ext_action,
     kurbo::{Point, Size},
     reactive::{
-        SignalGet, SignalUpdate, SignalWith, create_rw_signal,
+        Scope, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
     },
     style::CursorStyle,
     views::{
@@ -81,7 +82,11 @@ pub fn ai_chat_panel(
 
 fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let config = window_tab_data.common.config;
-    let _chat_data = window_tab_data.ai_chat.clone();
+    let chat_data = window_tab_data.ai_chat.clone();
+    let scope = chat_data.scope;
+    
+    // Signal to show "Waiting for authentication..." status
+    let auth_status = scope.create_rw_signal(String::new());
 
     container(
         stack((
@@ -118,10 +123,7 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
             ))
             .style(|s| s.flex_row().items_center().justify_center())
             .on_click_stop(move |_| {
-                let base = std::env::var("FORGE_SEARCH_URL")
-                    .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
-                let url = format!("{}/auth/github?state=forge-ide", base);
-                let _ = open::that(&url);
+                start_oauth_flow(scope, "github", auth_status);
             })
             .style(move |s| {
                 let config = config.get();
@@ -152,10 +154,7 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
             ))
             .style(|s| s.flex_row().items_center().justify_center())
             .on_click_stop(move |_| {
-                let base = std::env::var("FORGE_SEARCH_URL")
-                    .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
-                let url = format!("{}/auth/google?state=forge-ide", base);
-                let _ = open::that(&url);
+                start_oauth_flow(scope, "google", auth_status);
             })
             .style(move |s| {
                 let config = config.get();
@@ -176,7 +175,24 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                             )
                         })
                 }),
-            // ── No API key fallback — just SSO ──
+            // ── Auth status message ──
+            label(move || auth_status.get())
+                .style(move |s| {
+                    let config = config.get();
+                    let status = auth_status.get();
+                    s.margin_top(16.0)
+                        .font_size(config.ui.font_size() as f32 - 1.0)
+                        .color(if status.contains("Error") {
+                            config.color(LapceColor::LAPCE_ERROR)
+                        } else {
+                            config.color(LapceColor::EDITOR_DIM)
+                        })
+                        .display(if status.is_empty() {
+                            floem::style::Display::None
+                        } else {
+                            floem::style::Display::Flex
+                        })
+                }),
         ))
         .style(|s| {
             s.flex_col()
@@ -193,6 +209,106 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
             .items_center()
             .background(config.color(LapceColor::PANEL_BACKGROUND))
     })
+}
+
+/// Start OAuth flow with polling.
+/// Opens browser, then polls server for token.
+fn start_oauth_flow(
+    scope: Scope,
+    provider: &'static str,
+    auth_status: floem::reactive::RwSignal<String>,
+) {
+    use lapce_core::directory::Directory;
+    
+    // Generate unique session ID
+    let session_id = uuid::Uuid::new_v4().to_string();
+    
+    // Open browser with poll state
+    let base = std::env::var("FORGE_SEARCH_URL")
+        .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+    let url = format!("{}/auth/{}?state=poll-{}", base, provider, session_id);
+    
+    if let Err(e) = open::that(&url) {
+        auth_status.set(format!("Error opening browser: {}", e));
+        return;
+    }
+    
+    auth_status.set("Waiting for authentication... (complete sign-in in browser)".to_string());
+    
+    // Start polling in background
+    let poll_url = format!("{}/auth/poll/{}", base, session_id);
+    
+    let on_result = create_ext_action(scope, move |result: Result<(String, String, String), String>| {
+        match result {
+            Ok((token, email, name)) => {
+                // Save token to disk
+                if let Some(dir) = Directory::config_directory() {
+                    let auth_data = serde_json::json!({
+                        "token": token,
+                        "email": email,
+                        "name": name,
+                    });
+                    if let Ok(content) = serde_json::to_string_pretty(&auth_data) {
+                        let _ = std::fs::write(dir.join("forge-auth.json"), content);
+                    }
+                }
+                auth_status.set(format!("Signed in as {}", email));
+            }
+            Err(e) => {
+                auth_status.set(format!("Error: {}", e));
+            }
+        }
+    });
+    
+    std::thread::spawn(move || {
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                on_result(Err(format!("HTTP client error: {}", e)));
+                return;
+            }
+        };
+        
+        // Poll for up to 5 minutes (60 attempts, 5 seconds apart)
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            
+            match client.get(&poll_url).send() {
+                Ok(resp) => {
+                    if let Ok(json) = resp.json::<serde_json::Value>() {
+                        let status = json["status"].as_str().unwrap_or("pending");
+                        match status {
+                            "success" => {
+                                let token = json["token"].as_str().unwrap_or("").to_string();
+                                let email = json["email"].as_str().unwrap_or("").to_string();
+                                let name = json["name"].as_str().unwrap_or("").to_string();
+                                on_result(Ok((token, email, name)));
+                                return;
+                            }
+                            "expired" => {
+                                on_result(Err("Session expired. Please try again.".to_string()));
+                                return;
+                            }
+                            "pending" => {
+                                // Continue polling
+                            }
+                            _ => {
+                                // Continue polling
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Network error, continue polling
+                }
+            }
+        }
+        
+        on_result(Err("Authentication timed out. Please try again.".to_string()));
+    });
 }
 
 /// Provider selector: three clickable labels in a row.

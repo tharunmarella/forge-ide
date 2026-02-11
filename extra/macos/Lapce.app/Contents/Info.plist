@@ -54,5 +54,18 @@
     <string>An application in Lapce would like to access your reminders.</string>
     <key>NSSystemAdministrationUsageDescription</key>
     <string>An application in Lapce requires elevated permissions.</string>
+    
+    <!-- Custom URL scheme for OAuth callback -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>Forge IDE Auth</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>forge-ide</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
