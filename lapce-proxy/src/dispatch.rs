@@ -2261,14 +2261,16 @@ impl ProxyHandler for Dispatcher {
                         let attached_files = collect_relevant_files(&workspace_path);
                         
                         // Multi-turn loop: keep sending to brain until done
-                        let mut history: Option<serde_json::Value> = None;
+                        // Generate unique conversation_id for this chat session
+                        let conversation_id = format!("{}-{}", workspace_name, uuid::Uuid::new_v4());
                         let mut tool_results: Vec<serde_json::Value> = Vec::new();
                         let mut is_first_turn = true;
 
                         loop {
-                            // Build the request
+                            // Build the request - server tracks state via conversation_id
                             let mut chat_req = serde_json::json!({
                                 "workspace_id": workspace_name,
+                                "conversation_id": conversation_id,
                             });
                             
                             // First turn: send question + attached files
@@ -2280,22 +2282,18 @@ impl ProxyHandler for Dispatcher {
                                 is_first_turn = false;
                             }
                             
-                            // Subsequent turns: send tool results
+                            // Subsequent turns: only send tool results
+                            // (server-side ConversationStore preserves full history)
                             if !tool_results.is_empty() {
                                 chat_req["tool_results"] = serde_json::Value::Array(tool_results.clone());
                                 tool_results.clear();
-                            }
-                            
-                            // Always include history for context continuity
-                            if let Some(ref h) = history {
-                                chat_req["history"] = h.clone();
                             }
 
                             // Call the brain
                             match fs_client.chat_multi_turn(&chat_req).await {
                                 Ok(response) => {
-                                    // Update history for next turn
-                                    history = response.history;
+                                    // Server now tracks history via conversation_id
+                                    // (response.history is kept for debug/display only)
                                     
                                     match response.status.as_str() {
                                         "done" => {
