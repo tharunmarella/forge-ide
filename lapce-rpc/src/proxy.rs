@@ -486,6 +486,49 @@ pub enum ProxyRequest {
 
     /// Check if the workspace is indexed and get status.
     IndexStatus {},
+
+    // ── LSP Tools for AI Agent ────────────────────────────
+    /// Get definition location for symbol at position.
+    /// Used by AI agent to understand code structure.
+    LspGotoDefinition {
+        path: PathBuf,
+        position: Position,
+    },
+
+    /// Find all references to symbol at position.
+    /// Used by AI agent for refactoring analysis.
+    LspFindReferences {
+        path: PathBuf,
+        position: Position,
+        include_declaration: bool,
+    },
+
+    /// Get hover info (type signature, docs) for position.
+    /// Used by AI agent to understand types.
+    LspHover {
+        path: PathBuf,
+        position: Position,
+    },
+
+    /// Get current diagnostics (errors/warnings) for a file.
+    /// Used by AI agent to understand issues.
+    LspGetDiagnostics {
+        path: PathBuf,
+    },
+
+    /// Prepare rename - check if rename is valid and get range.
+    LspPrepareRename {
+        path: PathBuf,
+        position: Position,
+    },
+
+    /// Execute rename across workspace.
+    /// Used by AI agent for safe refactoring.
+    LspRename {
+        path: PathBuf,
+        position: Position,
+        new_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -928,6 +971,47 @@ pub enum ProxyResponse {
     IndexStatusResponse {
         is_indexed: bool,
         symbol_count: i64,
+    },
+
+    // ── LSP Tool Responses ────────────────────────────────
+    /// Response for LspGotoDefinition.
+    LspGotoDefinitionResponse {
+        /// List of locations where the symbol is defined.
+        locations: Vec<Location>,
+    },
+
+    /// Response for LspFindReferences.
+    LspFindReferencesResponse {
+        /// List of locations where the symbol is referenced.
+        locations: Vec<Location>,
+    },
+
+    /// Response for LspHover.
+    LspHoverResponse {
+        /// Hover contents (markdown), or None if no info.
+        contents: Option<String>,
+        /// Range of the symbol being hovered.
+        range: Option<lsp_types::Range>,
+    },
+
+    /// Response for LspGetDiagnostics.
+    LspDiagnosticsResponse {
+        /// Current diagnostics for the file.
+        diagnostics: Vec<Diagnostic>,
+    },
+
+    /// Response for LspPrepareRename.
+    LspPrepareRenameResponse {
+        /// Range of the symbol that can be renamed.
+        range: Option<lsp_types::Range>,
+        /// Placeholder text for the rename.
+        placeholder: Option<String>,
+    },
+
+    /// Response for LspRename.
+    LspRenameResponse {
+        /// The workspace edit to apply, or None if rename failed.
+        edit: Option<WorkspaceEdit>,
     },
 }
 

@@ -2329,13 +2329,34 @@ impl ProxyHandler for Dispatcher {
                                                     });
                                                     
                                                     // Execute tool locally ("Hands")
-                                                    let tool_call_obj = forge_agent::tools::ToolCall {
-                                                        name: tc.name.clone(),
-                                                        arguments: tc.args.clone(),
-                                                        thought_signature: None,
+                                                    // LSP tools need special handling since they require catalog_rpc
+                                                    // For now, return helpful guidance to use indexed data instead
+                                                    let result = match tc.name.as_str() {
+                                                        "lsp_go_to_definition" | "lsp_find_references" | "lsp_hover" | "lsp_rename" => {
+                                                            // LSP tools require synchronous access to the language server
+                                                            // which isn't available in this async context.
+                                                            // Guide the agent to use the indexed code graph instead.
+                                                            forge_agent::tools::ToolResult {
+                                                                output: format!(
+                                                                    "LSP tool '{}' is not yet available in cloud mode. \
+                                                                    Use 'codebase_search' for semantic search or \
+                                                                    'trace_call_chain' to find callers/callees. \
+                                                                    These use the pre-indexed code graph and are often faster.",
+                                                                    tc.name
+                                                                ),
+                                                                success: false,
+                                                                file_edit: None,
+                                                            }
+                                                        }
+                                                        _ => {
+                                                            let tool_call_obj = forge_agent::tools::ToolCall {
+                                                                name: tc.name.clone(),
+                                                                arguments: tc.args.clone(),
+                                                                thought_signature: None,
+                                                            };
+                                                            forge_agent::tools::execute(&tool_call_obj, &workspace_path, false).await
+                                                        }
                                                     };
-                                                    
-                                                    let result = forge_agent::tools::execute(&tool_call_obj, &workspace_path, false).await;
                                                     
                                                     // Notify UI about result
                                                     core_rpc.notification(CoreNotification::AgentToolCallUpdate {
@@ -2629,6 +2650,136 @@ impl ProxyHandler for Dispatcher {
                         );
                     });
                 });
+            }
+
+            // ── LSP Tools for AI Agent ────────────────────────────
+            LspGotoDefinition { path, position } => {
+                let proxy_rpc = self.proxy_rpc.clone();
+                self.catalog_rpc.get_definition(
+                    &path,
+                    position,
+                    move |_, result| {
+                        let locations = match result {
+                            Ok(response) => match response {
+                                lsp_types::GotoDefinitionResponse::Scalar(loc) => vec![loc],
+                                lsp_types::GotoDefinitionResponse::Array(locs) => locs,
+                                lsp_types::GotoDefinitionResponse::Link(links) => {
+                                    links.into_iter().map(|l| lsp_types::Location {
+                                        uri: l.target_uri,
+                                        range: l.target_selection_range,
+                                    }).collect()
+                                }
+                            },
+                            Err(_) => vec![],
+                        };
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::LspGotoDefinitionResponse { locations }),
+                        );
+                    },
+                );
+            }
+
+            LspFindReferences { path, position, include_declaration } => {
+                let proxy_rpc = self.proxy_rpc.clone();
+                // Note: include_declaration is passed but the underlying API may not use it
+                let _ = include_declaration;
+                self.catalog_rpc.get_references(
+                    &path,
+                    position,
+                    move |_, result| {
+                        let locations = result.unwrap_or_default();
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::LspFindReferencesResponse { locations }),
+                        );
+                    },
+                );
+            }
+
+            LspHover { path, position } => {
+                let proxy_rpc = self.proxy_rpc.clone();
+                self.catalog_rpc.hover(&path, position, move |_, result| {
+                    let (contents, range) = match result {
+                        Ok(hover) => {
+                            let text = match hover.contents {
+                                lsp_types::HoverContents::Scalar(content) => {
+                                    match content {
+                                        lsp_types::MarkedString::String(s) => s,
+                                        lsp_types::MarkedString::LanguageString(ls) => {
+                                            format!("```{}\n{}\n```", ls.language, ls.value)
+                                        }
+                                    }
+                                }
+                                lsp_types::HoverContents::Array(arr) => {
+                                    arr.into_iter().map(|c| match c {
+                                        lsp_types::MarkedString::String(s) => s,
+                                        lsp_types::MarkedString::LanguageString(ls) => {
+                                            format!("```{}\n{}\n```", ls.language, ls.value)
+                                        }
+                                    }).collect::<Vec<_>>().join("\n\n")
+                                }
+                                lsp_types::HoverContents::Markup(markup) => markup.value,
+                            };
+                            (Some(text), hover.range)
+                        }
+                        Err(_) => (None, None),
+                    };
+                    proxy_rpc.handle_response(
+                        id,
+                        Ok(ProxyResponse::LspHoverResponse { contents, range }),
+                    );
+                });
+            }
+
+            LspGetDiagnostics { path: _ } => {
+                // Diagnostics are pushed via CoreNotification::PublishDiagnostics
+                // and cached in the UI layer (lapce-app). For now, return empty.
+                // TODO: Add a diagnostics cache to catalog_rpc if needed.
+                self.proxy_rpc.handle_response(
+                    id,
+                    Ok(ProxyResponse::LspDiagnosticsResponse { diagnostics: vec![] }),
+                );
+            }
+
+            LspPrepareRename { path, position } => {
+                let proxy_rpc = self.proxy_rpc.clone();
+                self.catalog_rpc.prepare_rename(
+                    &path,
+                    position,
+                    move |_, result| {
+                        let (range, placeholder) = match result {
+                            Ok(response) => match response {
+                                lsp_types::PrepareRenameResponse::Range(r) => (Some(r), None),
+                                lsp_types::PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } => {
+                                    (Some(range), Some(placeholder))
+                                }
+                                lsp_types::PrepareRenameResponse::DefaultBehavior { .. } => (None, None),
+                            },
+                            Err(_) => (None, None),
+                        };
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::LspPrepareRenameResponse { range, placeholder }),
+                        );
+                    },
+                );
+            }
+
+            LspRename { path, position, new_name } => {
+                let proxy_rpc = self.proxy_rpc.clone();
+                self.catalog_rpc.rename(
+                    &path,
+                    position,
+                    new_name,
+                    move |_, result| {
+                        let edit = result.ok();
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::LspRenameResponse { edit }),
+                        );
+                    },
+                );
             }
         }
     }
