@@ -438,6 +438,8 @@ pub enum ProxyRequest {
         model: String,
         /// API key for the provider
         api_key: String,
+        /// Persistent conversation_id for multi-turn memory on the server
+        conversation_id: String,
     },
     /// Cancel an in-progress agent operation.
     AgentCancel {},

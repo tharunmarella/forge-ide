@@ -238,13 +238,26 @@ pub async fn read(args: &Value, workdir: &Path) -> ToolResult {
         
         ToolResult::ok(output)
     } else {
-        // Add line numbers
-        let output: String = content
-            .lines()
+        // Add line numbers, truncate very large files to prevent context window overflow
+        const MAX_READ_LINES: usize = 500;
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+        let truncated = total_lines > MAX_READ_LINES;
+        let display_lines = if truncated { MAX_READ_LINES } else { total_lines };
+        
+        let mut output: String = lines[..display_lines]
+            .iter()
             .enumerate()
             .map(|(i, line)| format!("{:4}|{}", i + 1, line))
             .collect::<Vec<_>>()
             .join("\n");
+        
+        if truncated {
+            output.push_str(&format!(
+                "\n\n... ({} more lines not shown. Use start_line/end_line to read specific sections.)",
+                total_lines - MAX_READ_LINES
+            ));
+        }
         
         ToolResult::ok(output)
     }

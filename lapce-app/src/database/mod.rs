@@ -569,6 +569,7 @@ User request: {}"#,
                 provider,
                 model,
                 api_key,
+                conversation_id: uuid::Uuid::new_v4().to_string(),
             },
             send,
         );

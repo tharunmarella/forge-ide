@@ -2191,8 +2191,8 @@ impl ProxyHandler for Dispatcher {
             }
 
             // ── AI Agent ─────────────────────────────────────────
-            AgentPrompt { prompt, provider: _, model: _, api_key: _ } => {
-                tracing::info!("Agent prompt received");
+            AgentPrompt { prompt, provider: _, model: _, api_key: _, conversation_id: conv_id } => {
+                tracing::info!("Agent prompt received, conv_id={conv_id}");
                 let proxy_rpc = self.proxy_rpc.clone();
                 let core_rpc = self.core_rpc.clone();
                 let workspace = self.workspace.clone();
@@ -2245,7 +2245,7 @@ impl ProxyHandler for Dispatcher {
                             format!("Workspace ready ({} symbols indexed)", symbol_count)
                         } else if symbol_count > 0 {
                             format!("Indexed {} symbols", symbol_count)
-                        } else {
+                                } else {
                             "Workspace indexed".to_string()
                         };
                         
@@ -2261,8 +2261,8 @@ impl ProxyHandler for Dispatcher {
                         let attached_files = collect_relevant_files(&workspace_path);
                         
                         // Multi-turn loop: keep sending to brain until done
-                        // Generate unique conversation_id for this chat session
-                        let conversation_id = format!("{}-{}", workspace_name, uuid::Uuid::new_v4());
+                        // Use conversation_id from the UI (persisted across messages)
+                        let conversation_id = format!("{}-{}", workspace_name, conv_id);
                         let mut tool_results: Vec<serde_json::Value> = Vec::new();
                         let mut is_first_turn = true;
 
@@ -2299,15 +2299,15 @@ impl ProxyHandler for Dispatcher {
                                         "done" => {
                                             // Agent is done, send final answer
                                             if let Some(answer) = &response.answer {
-                                                core_rpc.notification(CoreNotification::AgentTextChunk {
-                                                    text: answer.clone(),
-                                                    done: false,
-                                                });
+                                    core_rpc.notification(CoreNotification::AgentTextChunk {
+                                        text: answer.clone(),
+                                        done: false,
+                                    });
                                             }
-                                            core_rpc.notification(CoreNotification::AgentTextChunk {
-                                                text: String::new(),
-                                                done: true,
-                                            });
+                                    core_rpc.notification(CoreNotification::AgentTextChunk {
+                                        text: String::new(),
+                                        done: true,
+                                    });
                                             proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
                                                 message: response.answer.unwrap_or_default() 
                                             }));
@@ -2575,7 +2575,7 @@ impl ProxyHandler for Dispatcher {
                             move |sent, total| {
                                 let progress = if total > 0 {
                                     (sent as f64 / total as f64).min(0.99)
-                                } else {
+    } else {
                                     0.5
                                 };
                                 core_rpc_clone.notification(CoreNotification::IndexProgress {
@@ -2813,7 +2813,7 @@ fn collect_relevant_files(workspace_path: &Path) -> Vec<serde_json::Value> {
                 // Limit file size to avoid token explosion
                 let truncated = if content.len() > 4000 {
                     format!("{}...(truncated)", &content[..4000])
-                } else {
+            } else {
                     content
                 };
                 
@@ -2824,9 +2824,9 @@ fn collect_relevant_files(workspace_path: &Path) -> Vec<serde_json::Value> {
                 
                 // Limit to 3 files to avoid too much context
                 if files.len() >= 3 {
-                    break;
-                }
+                break;
             }
+        }
         }
     }
     

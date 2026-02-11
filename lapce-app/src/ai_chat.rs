@@ -236,6 +236,11 @@ pub struct AiChatData {
     /// The view reacts to changes in this signal.
     pub scroll_trigger: RwSignal<u64>,
 
+    // ── Conversation tracking ──────────────────────────────────
+    /// Persistent conversation_id for multi-turn chat memory.
+    /// Preserved across messages in the same session; reset on clear.
+    pub conversation_id: RwSignal<String>,
+
     // ── Index status ────────────────────────────────────────────
     /// Human-readable codebase index status shown in the header.
     /// e.g. "Not indexed", "Indexing…", "42 files · 318 symbols"
@@ -267,6 +272,7 @@ impl AiChatData {
             scroll_trigger: cx.create_rw_signal(0),
             index_status: cx.create_rw_signal("Checking…".to_string()),
             index_progress: cx.create_rw_signal(-1.0),
+            conversation_id: cx.create_rw_signal(uuid::Uuid::new_v4().to_string()),
         }
     }
 
@@ -422,12 +428,14 @@ impl AiChatData {
             is_loading.set(false);
         });
 
+        let conversation_id = self.conversation_id.get_untracked();
         self.common.proxy.request_async(
             lapce_rpc::proxy::ProxyRequest::AgentPrompt {
                 prompt: text,
                 provider,
                 model,
                 api_key,
+                conversation_id,
             },
             send,
         );
@@ -456,6 +464,8 @@ impl AiChatData {
         self.streaming_text.set(String::new());
         self.has_first_token.set(false);
         self.is_loading.set(false);
+        // New conversation = new conversation_id
+        self.conversation_id.set(uuid::Uuid::new_v4().to_string());
     }
 
     /// Trigger the scroll-to-bottom signal.

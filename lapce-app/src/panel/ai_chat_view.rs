@@ -24,7 +24,7 @@ use floem::{
     },
     style::CursorStyle,
     views::{
-        Decorators, container, dyn_stack, empty, label, rich_text, scroll, stack,
+        Decorators, container, dyn_stack, empty, img, label, rich_text, scroll, stack,
         svg,
     },
 };
@@ -981,15 +981,14 @@ fn message_bubble(
                             )
                             .style(|s| s.width_pct(100.0))
                             .into_any(),
-                            MarkdownContent::MermaidDiagram { svg: svg_str } => {
-                                // Render the Mermaid SVG inline
+                            MarkdownContent::MermaidDiagram { png_data, .. } => {
+                                // Render the Mermaid diagram as a PNG image
                                 container(
-                                    svg(move || svg_str.clone())
+                                    img(move || png_data.clone())
                                         .style(move |s| {
                                             let config = config.get();
                                             s.width_pct(100.0)
                                                 .min_height(80.0)
-                                                .max_height(500.0)
                                                 .padding(8.0)
                                                 .border_radius(6.0)
                                                 .border(1.0)
