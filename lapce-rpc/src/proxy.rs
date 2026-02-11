@@ -478,6 +478,14 @@ pub enum ProxyRequest {
         /// Text after cursor (up to ~500 chars for context).
         suffix: String,
     },
+
+    // ── Code Index ─────────────────────────────────────────
+    /// Start indexing the workspace for AI search.
+    /// Progress is reported via CoreNotification::IndexProgress.
+    IndexWorkspace {},
+
+    /// Check if the workspace is indexed and get status.
+    IndexStatus {},
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -911,6 +919,15 @@ pub enum ProxyResponse {
     AiInlineCompletionResponse {
         request_id: u64,
         items: Vec<crate::core::AiInlineCompletionItem>,
+    },
+
+    // ── Code Index ─────────────────────────────────────────
+    /// Indexing started successfully.
+    IndexStarted {},
+    /// Index status response.
+    IndexStatusResponse {
+        is_indexed: bool,
+        symbol_count: i64,
     },
 }
 

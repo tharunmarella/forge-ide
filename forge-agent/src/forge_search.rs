@@ -413,45 +413,117 @@ impl ForgeSearchClient {
         Ok(stream)
     }
 
+    // ── Workspace Status ─────────────────────────────────────────
+
+    /// Check if a workspace has been indexed (has symbols).
+    /// Returns (is_indexed, symbol_count).
+    pub async fn check_index_status(&self, workspace_id: &str) -> Result<(bool, i64)> {
+        // Do a minimal search to check if the workspace has any indexed content
+        let result = self.post("/search", &serde_json::json!({
+            "workspace_id": workspace_id,
+            "query": "_status_check_",
+            "top_k": 1,
+        })).await?;
+
+        let total_nodes = result.get("total_nodes")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        Ok((total_nodes > 0, total_nodes))
+    }
+
     // ── Scan (index whole project) ───────────────────────────────
 
-    pub async fn scan_directory(&self, workspace_id: &str, workdir: &Path) -> Result<serde_json::Value> {
+    /// Scan and index a workspace directory.
+    /// Returns IndexResult with stats.
+    pub async fn scan_directory(&self, workspace_id: &str, workdir: &Path) -> Result<IndexResult> {
+        self.scan_directory_with_progress(workspace_id, workdir, |_, _| {}).await
+    }
+
+    /// Scan and index with progress callback.
+    /// Callback receives (files_sent, total_files).
+    pub async fn scan_directory_with_progress<F>(
+        &self,
+        workspace_id: &str,
+        workdir: &Path,
+        mut on_progress: F,
+    ) -> Result<IndexResult>
+    where
+        F: FnMut(usize, usize),
+    {
         // Collect source files
-        let mut files = Vec::new();
-        for entry in WalkDir::new(workdir)
-            .max_depth(8)
-            .into_iter()
-            .filter_entry(|e| {
-                if e.file_type().is_dir() {
-                    let name = e.file_name().to_string_lossy();
-                    return !super::tools::search::should_skip_dir(&name);
-                }
-                true
-            })
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .filter(|e| {
-                let name = e.file_name().to_string_lossy();
-                super::tools::search::is_indexable_file(&name)
-            })
-            .take(500)
-        {
-            let path = entry.path();
-            let rel_path = path.strip_prefix(workdir).unwrap_or(path);
-            if let Ok(content) = std::fs::read_to_string(path) {
-                files.push(serde_json::json!({
-                    "path": rel_path.display().to_string(),
-                    "content": content,
-                }));
-            }
-        }
+        let files = collect_source_files(workdir);
 
         if files.is_empty() {
-            return Ok(serde_json::json!({"files_indexed": 0}));
+            return Ok(IndexResult {
+                files_indexed: 0,
+                nodes_created: 0,
+                relationships_created: 0,
+                embeddings_generated: 0,
+            });
         }
 
-        tracing::info!("Scanning {} files for workspace {}", files.len(), workspace_id);
-        self.index_files(workspace_id, files).await
+        let total = files.len();
+        tracing::info!("Scanning {} files for workspace {}", total, workspace_id);
+
+        // Send in batches of 50 for better progress feedback
+        const BATCH_SIZE: usize = 50;
+        let mut result = IndexResult::default();
+        let mut sent = 0usize;
+
+        for batch in files.chunks(BATCH_SIZE) {
+            let batch_vec: Vec<serde_json::Value> = batch.to_vec();
+            
+            match self.index_files(workspace_id, batch_vec).await {
+                Ok(resp) => {
+                    result.files_indexed += resp.get("files_indexed")
+                        .and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                    result.nodes_created += resp.get("nodes_created")
+                        .and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                    result.relationships_created += resp.get("relationships_created")
+                        .and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                    result.embeddings_generated += resp.get("embeddings_generated")
+                        .and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                }
+                Err(e) => {
+                    tracing::warn!("Batch index failed: {}", e);
+                    // Continue with other batches
+                }
+            }
+
+            sent += batch.len();
+            on_progress(sent, total);
+        }
+
+        tracing::info!(
+            "Indexing complete: {} files, {} symbols, {} edges",
+            result.files_indexed, result.nodes_created, result.relationships_created
+        );
+
+        Ok(result)
+    }
+
+    /// Start file watching for incremental updates.
+    /// The server will track file changes and re-index as needed.
+    pub async fn start_watching(&self, workspace_id: &str, root_path: &Path) -> Result<serde_json::Value> {
+        self.post("/watch", &serde_json::json!({
+            "workspace_id": workspace_id,
+            "root_path": root_path.display().to_string(),
+        })).await
+    }
+
+    /// Stop file watching for a workspace.
+    pub async fn stop_watching(&self, workspace_id: &str) -> Result<serde_json::Value> {
+        let url = format!("{}/watch/{}", self.base_url, workspace_id);
+        let token = self.auth.read().await.token.clone();
+
+        let mut req = self.http.delete(&url);
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let resp = req.send().await?;
+        Ok(resp.json().await?)
     }
 
     // ── Health ────────────────────────────────────────────────────
@@ -459,6 +531,99 @@ impl ForgeSearchClient {
     pub async fn health(&self) -> Result<serde_json::Value> {
         self.get("/health").await
     }
+}
+
+// ── Index Result ─────────────────────────────────────────────────
+
+/// Result of indexing operation
+#[derive(Debug, Clone, Default)]
+pub struct IndexResult {
+    pub files_indexed: usize,
+    pub nodes_created: usize,
+    pub relationships_created: usize,
+    pub embeddings_generated: usize,
+}
+
+// ── File Collection ──────────────────────────────────────────────
+
+/// Directories to skip when scanning for source files.
+const IGNORED_DIRS: &[&str] = &[
+    "node_modules", "target", "dist", "build", ".git", "__pycache__",
+    "vendor", ".next", "out", "coverage", ".cache", ".turbo",
+    "reference-repos", "venv", ".venv", "env", ".idea", ".vscode",
+];
+
+/// File extensions to index.
+const CODE_EXTENSIONS: &[&str] = &[
+    ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
+    ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
+    ".kt", ".scala", ".ex", ".exs", ".erl", ".hs",
+];
+
+/// Maximum file size to index (100KB).
+const MAX_FILE_SIZE: usize = 100_000;
+
+/// Maximum number of files to index per scan.
+const MAX_FILES: usize = 500;
+
+/// Check if a directory should be skipped.
+pub fn should_skip_dir(name: &str) -> bool {
+    name.starts_with('.') || IGNORED_DIRS.contains(&name)
+}
+
+/// Check if a file should be indexed based on extension.
+pub fn is_indexable_file(name: &str) -> bool {
+    CODE_EXTENSIONS.iter().any(|ext| name.ends_with(ext))
+        && !name.starts_with("test_")
+        && !name.starts_with("bench_")
+        && !name.ends_with("_test.go")
+        && !name.ends_with(".test.ts")
+        && !name.ends_with(".test.js")
+        && !name.ends_with(".spec.ts")
+        && !name.ends_with(".spec.js")
+}
+
+/// Collect source files from a directory for indexing.
+pub fn collect_source_files(workdir: &Path) -> Vec<serde_json::Value> {
+    let mut files = Vec::new();
+
+    for entry in WalkDir::new(workdir)
+        .max_depth(8)
+        .into_iter()
+        .filter_entry(|e| {
+            if e.file_type().is_dir() {
+                let name = e.file_name().to_string_lossy();
+                return !should_skip_dir(&name);
+            }
+            true
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy();
+            is_indexable_file(&name)
+        })
+        .take(MAX_FILES)
+    {
+        let path = entry.path();
+        let rel_path = path.strip_prefix(workdir).unwrap_or(path);
+
+        // Check file size before reading
+        if let Ok(metadata) = path.metadata() {
+            if metadata.len() as usize > MAX_FILE_SIZE {
+                continue;
+            }
+        }
+
+        if let Ok(content) = std::fs::read_to_string(path) {
+            files.push(serde_json::json!({
+                "path": rel_path.display().to_string(),
+                "content": content,
+            }));
+        }
+    }
+
+    files
 }
 
 // ── JWT helper (decode claim without verification) ───────────────

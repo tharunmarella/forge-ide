@@ -72,10 +72,10 @@ async fn main() {
     let index_start = Instant::now();
     match client.scan_directory(workspace_id, &workspace_path).await {
         Ok(result) => {
-            let files = result.get("files_indexed").and_then(|v| v.as_i64()).unwrap_or(0);
             eprintln!(
-                "{CYAN}[index]{RESET} Indexed {} files in {:.1}s",
-                files,
+                "{CYAN}[index]{RESET} Indexed {} files ({} symbols) in {:.1}s",
+                result.files_indexed,
+                result.nodes_created,
                 index_start.elapsed().as_secs_f64(),
             );
         }

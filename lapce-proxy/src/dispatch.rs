@@ -1360,11 +1360,52 @@ impl ProxyHandler for Dispatcher {
                 create_parents,
             } => {
                 let buffer = self.buffers.get_mut(&path).unwrap();
+                let rope_clone = buffer.rope.clone();
+                let path_clone = path.clone();
+                let workspace = self.workspace.clone();
+                
                 let result = buffer
                     .save(rev, create_parents)
                     .map(|_r| {
                         self.catalog_rpc
-                            .did_save_text_document(&path, buffer.rope.clone());
+                            .did_save_text_document(&path, rope_clone.clone());
+                        
+                        // ── Incremental Re-index on Save ──
+                        // Fire-and-forget: update the cloud index for this file
+                        if forge_agent::forge_search::is_indexable_file(
+                            &path_clone.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        ) {
+                            let file_content = rope_clone.to_string();
+                            let file_path = path_clone.clone();
+                            let ws = workspace.clone();
+                            
+                            tokio::spawn(async move {
+                                let workspace_id = ws
+                                    .as_ref()
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("default");
+                                
+                                let rel_path = ws.as_ref()
+                                    .and_then(|ws| file_path.strip_prefix(ws).ok())
+                                    .map(|p| p.display().to_string())
+                                    .unwrap_or_else(|| file_path.display().to_string());
+                                
+                                let client = forge_agent::forge_search::client();
+                                if let Err(e) = client.index_file(
+                                    workspace_id,
+                                    &rel_path,
+                                    &file_content
+                                ).await {
+                                    tracing::debug!("Incremental index failed for {}: {}", rel_path, e);
+                                } else {
+                                    tracing::trace!("Re-indexed {}", rel_path);
+                                }
+                            });
+                        }
+                        
                         ProxyResponse::SaveResponse {}
                     })
                     .map_err(|e| RpcError {
@@ -2186,6 +2227,36 @@ impl ProxyHandler for Dispatcher {
                         
                         let fs_client = forge_agent::forge_search::client();
                         
+                        // ── Auto-Index on First Use ──
+                        // Ensure workspace is indexed before any agent interaction.
+                        // This is fire-and-wait: we want the context ready before the LLM runs.
+                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                            tool_call_id: "_indexing".to_string(),
+                            tool_name: "Checking workspace index...".to_string(),
+                            arguments: String::new(),
+                            status: "pending".to_string(),
+                            output: None,
+                        });
+                        
+                        let (was_indexed, symbol_count) = 
+                            forge_agent::tools::ensure_indexed(&workspace_path).await;
+                        
+                        let index_msg = if was_indexed {
+                            format!("Workspace ready ({} symbols indexed)", symbol_count)
+                        } else if symbol_count > 0 {
+                            format!("Indexed {} symbols", symbol_count)
+                        } else {
+                            "Workspace indexed".to_string()
+                        };
+                        
+                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                            tool_call_id: "_indexing".to_string(),
+                            tool_name: index_msg,
+                            arguments: String::new(),
+                            status: "success".to_string(),
+                            output: None,
+                        });
+                        
                         // Collect open/relevant files to attach for context
                         let attached_files = collect_relevant_files(&workspace_path);
                         
@@ -2431,6 +2502,132 @@ impl ProxyHandler for Dispatcher {
                             items,
                         }),
                     );
+                });
+            }
+
+            // ── Code Index ─────────────────────────────────────────
+            IndexWorkspace {} => {
+                let workspace = self.workspace.clone();
+                let core_rpc = self.core_rpc.clone();
+                let proxy_rpc = self.proxy_rpc.clone();
+
+                thread::spawn(move || {
+                    let rt = match tokio::runtime::Runtime::new() {
+                        Ok(rt) => rt,
+                        Err(e) => {
+                            core_rpc.notification(CoreNotification::IndexProgress {
+                                status: format!("Error: {}", e),
+                                progress: -1.0,
+                            });
+                            proxy_rpc.handle_response(id, Ok(ProxyResponse::IndexStarted {}));
+                            return;
+                        }
+                    };
+
+                    rt.block_on(async move {
+                        let workspace_path = match workspace {
+                            Some(p) => p,
+                            None => {
+                                core_rpc.notification(CoreNotification::IndexProgress {
+                                    status: "No workspace open".to_string(),
+                                    progress: -1.0,
+                                });
+                                proxy_rpc.handle_response(id, Ok(ProxyResponse::IndexStarted {}));
+                                return;
+                            }
+                        };
+
+                        let workspace_id = workspace_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("default");
+
+                        core_rpc.notification(CoreNotification::IndexProgress {
+                            status: "Scanning files...".to_string(),
+                            progress: 0.0,
+                        });
+
+                        let client = forge_agent::forge_search::client();
+                        let core_rpc_clone = core_rpc.clone();
+
+                        match client.scan_directory_with_progress(
+                            workspace_id,
+                            &workspace_path,
+                            move |sent, total| {
+                                let progress = if total > 0 {
+                                    (sent as f64 / total as f64).min(0.99)
+                                } else {
+                                    0.5
+                                };
+                                core_rpc_clone.notification(CoreNotification::IndexProgress {
+                                    status: format!("Indexing {}/{} files...", sent, total),
+                                    progress,
+                                });
+                            }
+                        ).await {
+                            Ok(result) => {
+                                core_rpc.notification(CoreNotification::IndexProgress {
+                                    status: format!(
+                                        "{} symbols indexed",
+                                        result.nodes_created
+                                    ),
+                                    progress: -1.0, // Done
+                                });
+                            }
+                            Err(e) => {
+                                core_rpc.notification(CoreNotification::IndexProgress {
+                                    status: format!("Index error: {}", e),
+                                    progress: -1.0,
+                                });
+                            }
+                        }
+
+                        proxy_rpc.handle_response(id, Ok(ProxyResponse::IndexStarted {}));
+                    });
+                });
+            }
+
+            IndexStatus {} => {
+                let workspace = self.workspace.clone();
+                let proxy_rpc = self.proxy_rpc.clone();
+
+                thread::spawn(move || {
+                    let rt = match tokio::runtime::Runtime::new() {
+                        Ok(rt) => rt,
+                        Err(_) => {
+                            proxy_rpc.handle_response(
+                                id,
+                                Ok(ProxyResponse::IndexStatusResponse {
+                                    is_indexed: false,
+                                    symbol_count: 0,
+                                }),
+                            );
+                            return;
+                        }
+                    };
+
+                    rt.block_on(async move {
+                        let workspace_id = workspace
+                            .as_ref()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("default");
+
+                        let client = forge_agent::forge_search::client();
+
+                        let (is_indexed, symbol_count) = client
+                            .check_index_status(workspace_id)
+                            .await
+                            .unwrap_or((false, 0));
+
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::IndexStatusResponse {
+                                is_indexed,
+                                symbol_count,
+                            }),
+                        );
+                    });
                 });
             }
         }

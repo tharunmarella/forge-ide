@@ -12,7 +12,6 @@ pub mod lint;
 pub use embeddings::{EmbeddingProvider, EmbeddingStore};
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
@@ -22,6 +21,9 @@ pub use files::*;
 pub use search::*;
 pub use code::*;
 pub use web::*;
+
+// Re-export ensure_indexed for external callers (lapce-proxy)
+pub use search::ensure_indexed;
 
 /// All available tools
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

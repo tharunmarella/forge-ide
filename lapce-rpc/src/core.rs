@@ -188,6 +188,15 @@ pub enum CoreNotification {
         request_id: u64,
         items: Vec<AiInlineCompletionItem>,
     },
+
+    // ── Code Index ─────────────────────────────────────────
+    /// Progress update for workspace indexing.
+    IndexProgress {
+        /// Current status message (e.g., "Indexing 10/50 files...")
+        status: String,
+        /// Progress as a fraction (0.0 to 1.0), or -1.0 when done/error.
+        progress: f64,
+    },
 }
 
 /// A single diff hunk in an AI-proposed edit.

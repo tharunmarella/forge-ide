@@ -549,194 +549,27 @@ impl AiChatData {
     }
 
     /// Start indexing the workspace codebase via forge-search.
-    /// Walks source files, sends them in batches, and updates progress.
+    /// Uses the consolidated proxy RPC to avoid code duplication.
+    /// Progress updates arrive via CoreNotification::IndexProgress.
     pub fn start_indexing(&self) {
-        use std::collections::VecDeque;
-        use std::sync::{Arc, Mutex};
-        use floem::reactive::with_scope;
-
         // Prevent double-indexing
         if self.index_progress.get_untracked() >= 0.0 {
             return;
         }
 
-        let token = Self::read_forge_token();
-        let base_url = std::env::var("FORGE_SEARCH_URL")
-            .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+        // Set initial progress to indicate indexing started
+        self.index_status.set("Starting index...".to_string());
+        self.index_progress.set(0.0);
 
-        let workspace_path = match self.common.workspace.path.as_ref() {
-            Some(p) => p.clone(),
-            None => {
-                self.index_status.set("No workspace open".to_string());
-                return;
-            }
-        };
-
-        let workspace_name = workspace_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "default".to_string());
-
-        let index_status = self.index_status;
-        let index_progress = self.index_progress;
-
-        // Use the ExtSendTrigger + Arc<Mutex<VecDeque>> pattern from floem
-        // so we can push multiple updates from a background thread.
-        let cx = self.scope.create_child();
-        let trigger = with_scope(cx, floem::ext_event::ExtSendTrigger::new);
-        let data: Arc<Mutex<VecDeque<(String, f64)>>> = Arc::new(Mutex::new(VecDeque::new()));
-
-        {
-            let data = data.clone();
-            cx.create_effect(move |_| {
-                trigger.track();
-                while let Some((status, progress)) = data.lock().unwrap().pop_front() {
-                    index_status.set(status);
-                    index_progress.set(progress);
-                }
-            });
-        }
-
-        let data_send = data.clone();
-
-        std::thread::spawn(move || {
-            // Helper: push an update and poke the UI
-            let send = |status: String, progress: f64| {
-                data_send.lock().unwrap().push_back((status, progress));
-                floem::ext_event::register_ext_trigger(trigger);
-            };
-
-            send("Scanning files…".to_string(), 0.0);
-
-            // ── Collect source files ──
-            let ignored_dirs: &[&str] = &[
-                "node_modules", "target", "dist", "build", ".git", "__pycache__",
-                "vendor", ".next", "out", "coverage", ".cache", ".turbo",
-                "reference-repos", "venv", ".venv", "env",
-            ];
-            let code_ext: &[&str] = &[
-                ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
-                ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
-            ];
-
-            let mut files: Vec<serde_json::Value> = Vec::new();
-
-            for entry in walkdir::WalkDir::new(&workspace_path)
-                .max_depth(8)
-                .into_iter()
-                .filter_entry(|e| {
-                    if e.file_type().is_dir() {
-                        let name = e.file_name().to_string_lossy();
-                        return !name.starts_with('.') && !ignored_dirs.contains(&name.as_ref());
-                    }
-                    true
-                })
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().is_file())
-                .filter(|e| {
-                    let name = e.file_name().to_string_lossy();
-                    code_ext.iter().any(|ext| name.ends_with(ext))
-                        && !name.starts_with("test_")
-                        && !name.starts_with("bench_")
-                        && !name.ends_with("_test.go")
-                })
-                .take(500)
-            {
-                let path = entry.path();
-                let rel_path = path
-                    .strip_prefix(&workspace_path)
-                    .unwrap_or(path);
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    if content.len() < 100_000 {
-                        files.push(serde_json::json!({
-                            "path": rel_path.display().to_string(),
-                            "content": content,
-                        }));
-                    }
-                }
-            }
-
-            if files.is_empty() {
-                send("No source files found".to_string(), -1.0);
-                return;
-            }
-
-            let total = files.len();
-            send(format!("Indexing {total} files…"), 0.05);
-
-            // ── Send in batches ──
-            let client = match reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-            {
-                Ok(c) => c,
-                Err(_) => {
-                    send("Index failed".to_string(), -1.0);
-                    return;
-                }
-            };
-
-            let batch_size = 50;
-            let mut sent = 0usize;
-            let mut total_symbols = 0i64;
-
-            for batch in files.chunks(batch_size) {
-                let index_url = format!("{}/index", base_url);
-                let mut req = client.post(&index_url).json(&serde_json::json!({
-                    "workspace_id": workspace_name,
-                    "files": batch,
-                }));
-                if !token.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {}", token));
-                }
-
-                match req.send() {
-                    Ok(resp) if resp.status().is_success() => {
-                        if let Ok(body) = resp.json::<serde_json::Value>() {
-                            total_symbols += body["nodes_created"].as_i64().unwrap_or(0);
-                        }
-                    }
-                    Ok(resp) => {
-                        let status = resp.status();
-                        send(format!("Index error: {status}"), -1.0);
-                        return;
-                    }
-                    Err(e) => {
-                        send(format!("Network error: {e}"), -1.0);
-                        return;
-                    }
-                }
-
-                sent += batch.len();
-                let progress = sent as f64 / total as f64;
-                send(format!("Indexing… {sent}/{total} files"), progress.min(0.99));
-            }
-
-            // ── Done — fetch final stats ──
-            let search_url = format!("{}/search", base_url);
-            let mut req = client.post(&search_url).json(&serde_json::json!({
-                "workspace_id": workspace_name,
-                "query": "__ping__",
-                "top_k": 1,
-            }));
-            if !token.is_empty() {
-                req = req.header("Authorization", format!("Bearer {}", token));
-            }
-
-            let final_status = match req.send() {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(body) = resp.json::<serde_json::Value>() {
-                        let n = body["total_nodes"].as_i64().unwrap_or(total_symbols);
-                        format!("{} symbols indexed", n)
-                    } else {
-                        format!("{} symbols indexed", total_symbols)
-                    }
-                }
-                _ => format!("{} symbols indexed", total_symbols),
-            };
-
-            send(final_status, -1.0); // -1.0 = done, hide progress bar
-        });
+        // Send RPC to proxy - progress updates will come via CoreNotification::IndexProgress
+        // which is handled in window_tab.rs handle_core_notification
+        self.common.proxy.request_async(
+            lapce_rpc::proxy::ProxyRequest::IndexWorkspace {},
+            |_result| {
+                // Response just confirms indexing started.
+                // Actual progress/completion comes via CoreNotification.
+            },
+        );
     }
 
     /// Read the forge-search JWT from disk (checks both Lapce and agent config dirs).

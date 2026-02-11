@@ -2904,6 +2904,11 @@ impl WindowTabData {
                 // Ghost text completion response — handled below in inline completion system
                 // TODO: integrate with InlineCompletionData
             }
+            CoreNotification::IndexProgress { status, progress } => {
+                // Update the AI chat index status and progress
+                self.ai_chat.index_status.set(status.clone());
+                self.ai_chat.index_progress.set(*progress);
+            }
             _ => {}
         }
     }

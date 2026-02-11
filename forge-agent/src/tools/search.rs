@@ -106,106 +106,63 @@ pub fn trigger_cloud_index(workdir: &Path) {
         match client.scan_directory(&workspace_id, &workdir).await {
             Ok(result) => {
                 tracing::info!(
-                    "forge-search indexing complete: {} files indexed",
-                    result.get("files_indexed").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "forge-search indexing complete: {} files, {} symbols",
+                    result.files_indexed,
+                    result.nodes_created,
                 );
             }
             Err(e) => {
                 tracing::warn!("forge-search indexing failed: {}", e);
-                // Fallback to legacy cloud index if forge-search client fails
-                if let Ok(base_url) = std::env::var("FORGE_SEARCH_URL") {
-                    if !base_url.is_empty() {
-                        if let Err(e) = _do_cloud_index(&base_url, &workspace_id, &workdir).await {
-                            tracing::warn!("Legacy cloud indexing also failed: {}", e);
-                        }
-                    }
-                }
             }
         }
     });
 }
 
-async fn _do_cloud_index(
-    base_url: &str,
-    workspace_id: &str,
-    workdir: &Path,
-) -> anyhow::Result<()> {
-    let url = format!("{}/index", base_url.trim_end_matches('/'));
+/// Ensure workspace is indexed, indexing if needed.
+/// Returns (was_already_indexed, symbol_count).
+pub async fn ensure_indexed(workdir: &Path) -> (bool, i64) {
+    let workspace_id = workdir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("default");
 
-    // Collect source files
-    let mut files = Vec::new();
-    for entry in WalkDir::new(workdir)
-        .max_depth(8)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.file_type().is_dir() {
-                let name = e.file_name().to_string_lossy();
-                return !should_skip_dir(&name);
-            }
-            true
-        })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy();
-            is_indexable_file(&name)
-        })
-        .take(500)
-    {
-        let path = entry.path();
-        let rel_path = path.strip_prefix(workdir).unwrap_or(path);
-        if let Ok(content) = std::fs::read_to_string(path) {
-            files.push(serde_json::json!({
-                "path": rel_path.display().to_string(),
-                "content": content
-            }));
+    let client = crate::forge_search::client();
+
+    // Check if already indexed
+    match client.check_index_status(workspace_id).await {
+        Ok((true, count)) => {
+            tracing::debug!("Workspace {} already indexed ({} symbols)", workspace_id, count);
+            return (true, count);
+        }
+        Ok((false, _)) => {
+            tracing::info!("Workspace {} not indexed, starting indexing...", workspace_id);
+        }
+        Err(e) => {
+            tracing::warn!("Could not check index status: {}", e);
+            // Continue to index anyway
         }
     }
 
-    if files.is_empty() {
-        return Ok(());
+    // Index the workspace
+    match client.scan_directory(workspace_id, workdir).await {
+        Ok(result) => {
+            tracing::info!(
+                "Indexed {} files, {} symbols for workspace {}",
+                result.files_indexed,
+                result.nodes_created,
+                workspace_id
+            );
+            (false, result.nodes_created as i64)
+        }
+        Err(e) => {
+            tracing::error!("Failed to index workspace: {}", e);
+            (false, 0)
+        }
     }
-
-    tracing::info!("Sending {} files to cloud index API", files.len());
-
-    let payload = serde_json::json!({
-        "workspace_id": workspace_id,
-        "files": files
-    });
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
-
-    let resp = client.post(&url).json(&payload).send().await?;
-
-    if resp.status().is_success() {
-        let body: serde_json::Value = resp.json().await?;
-        tracing::info!(
-            "Cloud indexing complete: {} files, {} nodes",
-            body.get("files_indexed").and_then(|v| v.as_i64()).unwrap_or(0),
-            body.get("nodes_created").and_then(|v| v.as_i64()).unwrap_or(0),
-        );
-    } else {
-        tracing::warn!("Cloud index API returned status {}", resp.status());
-    }
-
-    Ok(())
 }
 
-/// Directories to always skip when walking the filesystem.
-/// These are commonly vendored, generated, or non-project directories.
-pub const IGNORED_DIRS: &[&str] = &[
-    "node_modules", "target", ".git", "__pycache__", ".next",
-    "dist", "build", "vendor", ".venv", "venv", ".tox",
-    "coverage", ".nyc_output", ".cache", ".turbo",
-    "reference-repos",
-];
-
-/// Returns true if a directory name should be skipped during walks.
-pub fn should_skip_dir(name: &str) -> bool {
-    name.starts_with('.') || IGNORED_DIRS.contains(&name)
-}
+// Re-export from forge_search for backwards compatibility
+pub use crate::forge_search::{should_skip_dir, is_indexable_file};
 
 // Global embedding provider config (set once on startup)
 static EMBEDDING_PROVIDER: OnceLock<StdRwLock<Option<EmbeddingProvider>>> = OnceLock::new();
@@ -451,31 +408,7 @@ async fn index_workspace(
     Ok(())
 }
 
-/// Check if a file should be indexed for semantic search.
-/// More selective than is_code_file -- skips test files, configs, etc.
-pub fn is_indexable_file(name: &str) -> bool {
-    // Must be a code file
-    let code_ext = [
-        ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
-        ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
-    ];
-    if !code_ext.iter().any(|ext| name.ends_with(ext)) {
-        return false;
-    }
-
-    // Skip test/bench/spec files (they pollute search results)
-    let skip_patterns = [
-        "test_", "_test.", ".test.", ".spec.", "_spec.",
-        "bench_", "_bench.", ".bench.",
-        "mock_", "_mock.",
-    ];
-    let name_lower = name.to_lowercase();
-    if skip_patterns.iter().any(|p| name_lower.contains(p)) {
-        return false;
-    }
-
-    true
-}
+// is_indexable_file is now in forge_search.rs and re-exported above
 
 fn is_code_file(name: &str) -> bool {
     let code_ext = [
