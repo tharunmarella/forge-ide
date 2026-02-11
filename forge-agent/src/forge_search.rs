@@ -88,6 +88,41 @@ impl AuthToken {
     }
 }
 
+// ── Chat Response Types ──────────────────────────────────────────
+
+/// Full chat response from the server
+#[derive(Debug, Clone)]
+pub struct ChatResponse {
+    pub answer: Option<String>,
+    pub tool_calls: Option<Vec<ToolCallInfo>>,
+    pub history: Option<serde_json::Value>,
+    pub status: String, // "done", "requires_action", "error"
+}
+
+/// Tool call info from the server
+#[derive(Debug, Clone)]
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub args: serde_json::Value,
+}
+
+/// Streaming chat chunk types (for legacy streaming API)
+#[derive(Debug, Clone)]
+pub enum ChatChunk {
+    Text(String),
+    ToolCall(ToolCallChunk),
+    Done,
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolCallChunk {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
 // ── Client ───────────────────────────────────────────────────────
 
 pub struct ForgeSearchClient {
@@ -274,6 +309,108 @@ impl ForgeSearchClient {
             "include_trace": include_trace,
             "include_impact": include_impact,
         })).await
+    }
+
+    /// Chat with multi-turn tool support.
+    /// Returns a ChatResponse with answer, tool_calls, history, and status.
+    pub async fn chat_multi_turn(&self, body: &serde_json::Value) -> Result<ChatResponse> {
+        let url = format!("{}/chat", self.base_url);
+        let token = self.auth.read().await.token.clone();
+
+        let mut req = self.http.post(&url).json(body);
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let resp = req.send().await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        
+        if !status.is_success() {
+            return Err(anyhow!("Chat failed ({}): {}", status, text));
+        }
+
+        // Parse the JSON response
+        let json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| anyhow!("Failed to parse chat response: {}", e))?;
+
+        let response = ChatResponse {
+            answer: json.get("answer").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            tool_calls: json.get("tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|tc| {
+                    Some(ToolCallInfo {
+                        id: tc.get("id")?.as_str()?.to_string(),
+                        name: tc.get("name")?.as_str()?.to_string(),
+                        args: tc.get("args").cloned().unwrap_or(serde_json::Value::Null),
+                    })
+                }).collect()),
+            history: json.get("history").cloned(),
+            status: json.get("status").and_then(|v| v.as_str()).unwrap_or("done").to_string(),
+        };
+
+        Ok(response)
+    }
+
+    /// Complex chat with streaming and tool support (legacy - kept for compatibility)
+    pub async fn chat_complex(&self, body: &serde_json::Value) -> Result<impl futures_util::Stream<Item = ChatChunk>> {
+        use futures_util::StreamExt;
+        
+        let url = format!("{}/chat", self.base_url);
+        let token = self.auth.read().await.token.clone();
+
+        let mut req = self.http.post(&url).json(body);
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Chat failed: {}", resp.status()));
+        }
+
+        let stream = resp.bytes_stream().map(|res| {
+            match res {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    
+                    // Try to parse as complete JSON response first
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        // Check for tool_calls
+                        if let Some(tool_calls) = json.get("tool_calls").and_then(|v| v.as_array()) {
+                            if let Some(tc) = tool_calls.first() {
+                                return ChatChunk::ToolCall(ToolCallChunk {
+                                    id: tc.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                                    name: tc.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                                    arguments: tc.get("args").cloned().unwrap_or(serde_json::Value::Null),
+                                });
+                            }
+                        }
+                        
+                        // Check for status
+                        let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                        if status == "done" {
+                            return ChatChunk::Done;
+                        }
+                        if status == "requires_action" {
+                            // IDE needs to execute tools, but we already handled tool_calls above
+                            return ChatChunk::Done;
+                        }
+                        
+                        // Return answer text
+                        if let Some(answer) = json.get("answer").and_then(|v| v.as_str()) {
+                            return ChatChunk::Text(answer.to_string());
+                        }
+                    }
+                    
+                    // Fallback: raw text
+                    ChatChunk::Text(text.to_string())
+                }
+                Err(e) => ChatChunk::Error(e.to_string()),
+            }
+        });
+
+        Ok(stream)
     }
 
     // ── Scan (index whole project) ───────────────────────────────

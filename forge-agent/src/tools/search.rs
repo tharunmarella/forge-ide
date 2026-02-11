@@ -21,7 +21,7 @@ async fn try_cloud_search(query: &str, workdir: &Path) -> Option<ToolResult> {
 
     tracing::info!("Trying forge-search for query: {}", query);
 
-    let body = match client.search(workspace_id, query, 10).await {
+    let body: serde_json::Value = match client.search(workspace_id, query, 10).await {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!("forge-search request failed: {}", e);
@@ -30,21 +30,21 @@ async fn try_cloud_search(query: &str, workdir: &Path) -> Option<ToolResult> {
     };
 
     // Format results from the API response
-    let results = body.get("results").and_then(|r| r.as_array())?;
+    let results = body.get("results").and_then(|r: &serde_json::Value| r.as_array())?;
     if results.is_empty() {
         return None;
     }
 
     let output: Vec<String> = results
         .iter()
-        .filter_map(|r| {
+        .filter_map(|r: &serde_json::Value| {
             let file_path = r.get("file_path")?.as_str()?;
             let name = r.get("name")?.as_str().unwrap_or("");
             let symbol_type = r.get("symbol_type")?.as_str().unwrap_or("unknown");
             let content = r.get("content")?.as_str().unwrap_or("");
-            let start_line = r.get("start_line").and_then(|v| v.as_i64()).unwrap_or(0);
-            let end_line = r.get("end_line").and_then(|v| v.as_i64()).unwrap_or(0);
-            let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let start_line = r.get("start_line").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0);
+            let end_line = r.get("end_line").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0);
+            let score = r.get("score").and_then(|v: &serde_json::Value| v.as_f64()).unwrap_or(0.0);
 
             // Format related symbols if present
             let related_str = r

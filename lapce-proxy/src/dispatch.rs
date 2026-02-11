@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+
 use alacritty_terminal::{event::WindowSize, event_loop::Msg};
 use anyhow::{Context, Result, anyhow};
 use crossbeam_channel::Sender;
@@ -2149,12 +2150,12 @@ impl ProxyHandler for Dispatcher {
             }
 
             // ── AI Agent ─────────────────────────────────────────
-            AgentPrompt { prompt, provider, model, api_key } => {
-                tracing::info!("Agent prompt received: provider={provider}, model={model}");
+            AgentPrompt { prompt, provider: _, model: _, api_key: _ } => {
+                tracing::info!("Agent prompt received");
                 let proxy_rpc = self.proxy_rpc.clone();
                 let core_rpc = self.core_rpc.clone();
                 let workspace = self.workspace.clone();
-                let diff_snapshots = self.pending_diff_snapshots.clone();
+                let _diff_snapshots = self.pending_diff_snapshots.clone();
 
                 thread::spawn(move || {
                     let rt = match tokio::runtime::Runtime::new() {
@@ -2174,200 +2175,131 @@ impl ProxyHandler for Dispatcher {
                         let workspace_path = workspace
                             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-                        let workspace_display = workspace_path.display().to_string();
-                        tracing::info!(
-                            "[FORGE] Workspace: {}, prompt len: {} chars",
-                            workspace_display,
-                            prompt.len()
-                        );
+                        let workspace_name = workspace_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "default".to_string());
 
-                        let workspace_for_agent = workspace_path.clone();
-                        let bridge: std::sync::Arc<dyn forge_agent::ProxyBridge> =
-                            std::sync::Arc::new(forge_agent::StandaloneBridge::new(
-                                workspace_for_agent,
-                            ));
+                        // ── Unified Cloud Chat Flow ──
+                        // The cloud (forge-search) is the "Brain".
+                        // The IDE (lapce-proxy) is the "Hands".
+                        
+                        let fs_client = forge_agent::forge_search::client();
+                        
+                        // Collect open/relevant files to attach for context
+                        let attached_files = collect_relevant_files(&workspace_path);
+                        
+                        // Multi-turn loop: keep sending to brain until done
+                        let mut history: Option<serde_json::Value> = None;
+                        let mut tool_results: Vec<serde_json::Value> = Vec::new();
+                        let mut is_first_turn = true;
 
-                        let config = forge_agent::ForgeAgentConfig {
-                            provider: provider.clone(),
-                            model: model.clone(),
-                            api_key: api_key.clone(),
-                            max_turns: 15,
-                            ..Default::default()
-                        };
-
-                        // Create a per-session trace file (fallback/local tracing)
-                        let trace_dir = directories::BaseDirs::new()
-                            .map(|d| d.data_local_dir().to_path_buf())
-                            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                            .join("forge-ide")
-                            .join("traces");
-                        let trace_filename = format!(
-                            "agent-{}.jsonl",
-                            chrono::Utc::now().format("%Y%m%d-%H%M%S")
-                        );
-                        let hook = match forge_agent::TracingHook::new(trace_dir.join(&trace_filename)) {
-                            Ok(h) => {
-                                tracing::info!("[FORGE] Local trace file: {}", h.trace_path.display());
-                                h
-                            }
-                            Err(e) => {
-                                tracing::warn!("[FORGE] Failed to create trace file: {e}, using /tmp fallback");
-                                forge_agent::TracingHook::new(
-                                    std::path::PathBuf::from("/tmp").join("forge-traces").join(&trace_filename)
-                                ).expect("fallback trace must work")
-                            }
-                        };
-
-                        // Try to initialize Langfuse (optional, requires env vars + feature flag)
-                        #[cfg(feature = "langfuse")]
-                        let _langfuse_hook = {
-                            tracing::info!("[FORGE] Checking Langfuse configuration...");
-                            tracing::info!("[FORGE] LANGFUSE_PUBLIC_KEY present: {}", std::env::var("LANGFUSE_PUBLIC_KEY").is_ok());
-                            tracing::info!("[FORGE] LANGFUSE_SECRET_KEY present: {}", std::env::var("LANGFUSE_SECRET_KEY").is_ok());
+                        loop {
+                            // Build the request
+                            let mut chat_req = serde_json::json!({
+                                "workspace_id": workspace_name,
+                            });
                             
-                            if forge_agent::is_langfuse_enabled() {
-                                tracing::info!("[FORGE] Langfuse observability enabled");
-                                if let Some(client) = forge_agent::create_langfuse_client() {
-                                    match forge_agent::LangfuseHook::new(
-                                        client,
-                                        format!("forge-agent-{}", provider),
-                                        None, // user_id
-                                        serde_json::json!({
-                                            "provider": &provider,
-                                            "model": &model,
-                                            "workspace": &workspace_display,
-                                            "prompt_len": prompt.len(),
-                                        })
-                                    ).await {
-                                        Ok(lf_hook) => {
-                                            let url = lf_hook.trace_url().await;
-                                            tracing::info!("[FORGE] Langfuse trace: {}", url);
-                                            Some(lf_hook)
+                            // First turn: send question + attached files
+                            if is_first_turn {
+                                chat_req["question"] = serde_json::Value::String(prompt.clone());
+                                if !attached_files.is_empty() {
+                                    chat_req["attached_files"] = serde_json::json!(attached_files);
+                                }
+                                is_first_turn = false;
+                            }
+                            
+                            // Subsequent turns: send tool results
+                            if !tool_results.is_empty() {
+                                chat_req["tool_results"] = serde_json::Value::Array(tool_results.clone());
+                                tool_results.clear();
+                            }
+                            
+                            // Always include history for context continuity
+                            if let Some(ref h) = history {
+                                chat_req["history"] = h.clone();
+                            }
+
+                            // Call the brain
+                            match fs_client.chat_multi_turn(&chat_req).await {
+                                Ok(response) => {
+                                    // Update history for next turn
+                                    history = response.history;
+                                    
+                                    match response.status.as_str() {
+                                        "done" => {
+                                            // Agent is done, send final answer
+                                            if let Some(answer) = &response.answer {
+                                                core_rpc.notification(CoreNotification::AgentTextChunk {
+                                                    text: answer.clone(),
+                                                    done: false,
+                                                });
+                                            }
+                                            core_rpc.notification(CoreNotification::AgentTextChunk {
+                                                text: String::new(),
+                                                done: true,
+                                            });
+                                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
+                                                message: response.answer.unwrap_or_default() 
+                                            }));
+                                            return;
                                         }
-                                        Err(e) => {
-                                            tracing::warn!("[FORGE] Failed to create Langfuse hook: {}", e);
-                                            None
+                                        "requires_action" => {
+                                            // Agent needs us to execute IDE tools
+                                            if let Some(tool_calls) = response.tool_calls {
+                                                for tc in tool_calls {
+                                                    // Notify UI about tool call
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc.id.clone(),
+                                                        tool_name: tc.name.clone(),
+                                                        arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
+                                                        status: "running".to_string(),
+                                                        output: None,
+                                                    });
+                                                    
+                                                    // Execute tool locally ("Hands")
+                                                    let tool_call_obj = forge_agent::tools::ToolCall {
+                                                        name: tc.name.clone(),
+                                                        arguments: tc.args.clone(),
+                                                        thought_signature: None,
+                                                    };
+                                                    
+                                                    let result = forge_agent::tools::execute(&tool_call_obj, &workspace_path, false).await;
+                                                    
+                                                    // Notify UI about result
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc.id.clone(),
+                                                        tool_name: tc.name.clone(),
+                                                        arguments: String::new(),
+                                                        status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                        output: Some(result.output.clone()),
+                                                    });
+                                                    
+                                                    // Collect result to send back to brain
+                                                    tool_results.push(serde_json::json!({
+                                                        "call_id": tc.id,
+                                                        "output": result.output,
+                                                        "success": result.success,
+                                                    }));
+                                                }
+                                            }
+                                            // Continue loop to send results back to brain
+                                        }
+                                        status => {
+                                            // Unknown status or error
+                                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
+                                                error: format!("Unknown status: {}", status)
+                                            }));
+                                            return;
                                         }
                                     }
-                                } else {
-                                    tracing::warn!("[FORGE] Failed to create Langfuse client");
-                                    None
                                 }
-                            } else {
-                                tracing::info!("[FORGE] Langfuse not configured");
-                                None
-                            }
-                        };
-
-                        hook.write_event("session_start", serde_json::json!({
-                            "provider": &provider,
-                            "model": &model,
-                            "prompt_len": prompt.len(),
-                            "workspace": workspace_display,
-                        }));
-
-                        // ── Build enriched prompt with project context ──
-                        let enriched_prompt = build_enriched_prompt(
-                            &prompt,
-                            &workspace_display,
-                        );
-
-                        // ── forge-search: call cloud /chat endpoint (no local LLM) ──
-                        // This branch handles the case where the user signed in via
-                        // OAuth and has no API keys.  The UI sends provider="forge-search".
-                        let result: Result<String, String> = if provider == "forge-search" {
-                            let fs_client = forge_agent::forge_search::client();
-                            let workspace_id = workspace_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "default".to_string());
-
-                            match fs_client.chat(&workspace_id, &enriched_prompt, true, false).await {
-                                Ok(resp) => {
-                                    let answer = resp["answer"]
-                                        .as_str()
-                                        .unwrap_or("(no answer)")
-                                        .to_string();
-                                    // Send the full answer as a single text chunk so the
-                                    // UI streaming pipeline picks it up.
-                                    core_rpc.notification(CoreNotification::AgentTextChunk {
-                                        text: answer.clone(),
-                                        done: false,
-                                    });
-                                    core_rpc.notification(CoreNotification::AgentTextChunk {
-                                        text: String::new(),
-                                        done: true,
-                                    });
-                                    Ok(answer)
+                                Err(e) => {
+                                    proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
+                                        error: e.to_string() 
+                                    }));
+                                    return;
                                 }
-                                Err(e) => Err(format!("Forge Search error: {e}")),
-                            }
-                        } else {
-                            // ── Standard provider path (Gemini / Anthropic / OpenAI) ──
-                            #[cfg(feature = "langfuse")]
-                            let r: Result<String, String> = match provider.as_str() {
-                                "gemini" => {
-                                    match forge_agent::create_agent_gemini(&config, bridge) {
-                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), _langfuse_hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
-                                        Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
-                                    }
-                                }
-                                "anthropic" => {
-                                    match forge_agent::create_agent_anthropic(&config, bridge) {
-                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), _langfuse_hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
-                                        Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
-                                    }
-                                }
-                                "openai" => {
-                                    match forge_agent::create_agent_openai(&config, bridge) {
-                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), _langfuse_hook.clone(), diff_snapshots.clone(), workspace_path.clone()).await,
-                                        Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
-                                    }
-                                }
-                                other => Err(format!("Unknown provider: {other}")),
-                            };
-
-                            #[cfg(not(feature = "langfuse"))]
-                            let r: Result<String, String> = match provider.as_str() {
-                                "gemini" => {
-                                    match forge_agent::create_agent_gemini(&config, bridge) {
-                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), None, diff_snapshots.clone(), workspace_path.clone()).await,
-                                        Err(e) => Err(format!("Failed to create Gemini agent: {e}")),
-                                    }
-                                }
-                                "anthropic" => {
-                                    match forge_agent::create_agent_anthropic(&config, bridge) {
-                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), None, diff_snapshots.clone(), workspace_path.clone()).await,
-                                        Err(e) => Err(format!("Failed to create Anthropic agent: {e}")),
-                                    }
-                                }
-                                "openai" => {
-                                    match forge_agent::create_agent_openai(&config, bridge) {
-                                        Ok(agent) => run_streaming_agent(agent, &enriched_prompt, &core_rpc, hook.clone(), None, diff_snapshots.clone(), workspace_path.clone()).await,
-                                        Err(e) => Err(format!("Failed to create OpenAI agent: {e}")),
-                                    }
-                                }
-                                other => Err(format!("Unknown provider: {other}")),
-                            };
-
-                            r
-                        };
-
-                        match result {
-                            Ok(response) => {
-                                proxy_rpc.handle_response(
-                                    id,
-                                    Ok(ProxyResponse::AgentDone { message: response }),
-                                );
-                            }
-                            Err(error) => {
-                                core_rpc.notification(CoreNotification::AgentError {
-                                    error: error.clone(),
-                                });
-                                proxy_rpc.handle_response(
-                                    id,
-                                    Ok(ProxyResponse::AgentError { error }),
-                                );
                             }
                         }
                     });
@@ -2505,291 +2437,54 @@ impl ProxyHandler for Dispatcher {
     }
 }
 
-// build_enriched_prompt, build_project_tree, detect_primary_language
-// are now in forge_agent crate (forge_agent::build_enriched_prompt etc.)
-fn build_enriched_prompt(user_prompt: &str, workspace_path: &str) -> String {
-    forge_agent::build_enriched_prompt(user_prompt, workspace_path)
-}
-
-/// Stream an agent prompt, sending incremental text chunks as `CoreNotification`s.
-/// Returns the full accumulated response text on success.
-///
-/// File-editing tool calls (write_to_file, replace_in_file, apply_patch) are intercepted:
-/// before the tool runs we snapshot the file, after the tool runs we compute a diff and
-/// emit an `AgentDiffPreview` notification so the UI can show inline accept/reject.
-async fn run_streaming_agent<M>(
-    agent: forge_agent::rig::agent::Agent<M>,
-    prompt: &str,
-    core_rpc: &CoreRpcHandler,
-    hook: forge_agent::TracingHook,
-    langfuse_hook: Option<forge_agent::LangfuseHook>,
-    pending_diff_snapshots: Arc<Mutex<HashMap<String, (String, String)>>>,
-    workspace_path: PathBuf,
-) -> Result<String, String>
-where
-    M: forge_agent::rig::completion::CompletionModel + 'static,
-{
-    use forge_agent::rig::streaming::{StreamingPrompt, StreamedAssistantContent, StreamedUserContent};
-    use forge_agent::rig::agent::MultiTurnStreamItem;
-    use futures_util::StreamExt;
-    use std::collections::HashMap;
-
-    const FILE_EDIT_TOOLS: &[&str] = &["write_to_file", "replace_in_file", "apply_patch"];
-
-    // Add both hooks to the agent stream
-    let mut stream_builder = agent.stream_prompt(prompt).with_hook(hook.clone());
+/// Collect relevant files from the workspace to attach to the AI prompt.
+/// This gives the cloud "Brain" live context about what the user is working on.
+fn collect_relevant_files(workspace_path: &Path) -> Vec<serde_json::Value> {
+    let mut files = Vec::new();
     
-    // Add Langfuse hook if available
-    #[cfg(feature = "langfuse")]
-    let mut stream = if let Some(lf_hook) = langfuse_hook {
-        stream_builder.with_hook(lf_hook).await
-    } else {
-        stream_builder.await
-    };
+    // For now, we'll just collect a few key files if they exist.
+    // In a more sophisticated implementation, we could:
+    // 1. Include currently open files from the editor state
+    // 2. Include recently modified files
+    // 3. Include files mentioned in the prompt
     
-    #[cfg(not(feature = "langfuse"))]
-    let mut stream = stream_builder.await;
-    let mut full_response = String::new();
-
-    // Track pre-edit file snapshots: tool_call_id -> (relative_path, old_content)
-    let mut pre_edit_snapshots: HashMap<String, (String, String)> = HashMap::new();
-    // Track tool_call_id -> tool_name for matching tool results
-    let mut tool_call_names: HashMap<String, String> = HashMap::new();
-    // Diff ID counter
-    let mut diff_counter: u64 = 0;
-
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::Text(text),
-            )) => {
-                full_response.push_str(&text.text);
-                core_rpc.notification(CoreNotification::AgentTextChunk {
-                    text: text.text,
-                    done: false,
-                });
-            }
-            Ok(MultiTurnStreamItem::StreamAssistantItem(
-                StreamedAssistantContent::ToolCall { tool_call, .. },
-            )) => {
-                let tool_name = tool_call.function.name.clone();
-                let args = serde_json::to_string(&tool_call.function.arguments)
-                    .unwrap_or_default();
-
-                // If this is a file-editing tool, snapshot the file BEFORE the edit
-                if FILE_EDIT_TOOLS.contains(&tool_name.as_str()) {
-                    if let Some(path) = tool_call.function.arguments.get("path").and_then(|v| v.as_str()) {
-                        // Try to read the current file content (may not exist for new files)
-                        let full_path = workspace_path.join(path);
-                        let old_content = std::fs::read_to_string(&full_path).unwrap_or_default();
-                        pre_edit_snapshots.insert(
-                            tool_call.id.clone(),
-                            (path.to_string(), old_content),
-                        );
-                    }
+    // Common config/entry files
+    let key_files = [
+        "Cargo.toml",
+        "package.json", 
+        "pyproject.toml",
+        "go.mod",
+        "src/main.rs",
+        "src/lib.rs",
+        "app/main.py",
+        "index.ts",
+    ];
+    
+    for name in key_files {
+        let path = workspace_path.join(name);
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                // Limit file size to avoid token explosion
+                let truncated = if content.len() > 4000 {
+                    format!("{}...(truncated)", &content[..4000])
+                } else {
+                    content
+                };
+                
+                files.push(serde_json::json!({
+                    "path": name,
+                    "content": truncated,
+                }));
+                
+                // Limit to 3 files to avoid too much context
+                if files.len() >= 3 {
+                    break;
                 }
-
-                tool_call_names.insert(tool_call.id.clone(), tool_name.clone());
-
-                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                    tool_call_id: tool_call.id.clone(),
-                    tool_name,
-                    arguments: args,
-                    status: "running".to_string(),
-                    output: None,
-                });
-            }
-            Ok(MultiTurnStreamItem::StreamUserItem(
-                StreamedUserContent::ToolResult { tool_result, .. },
-            )) => {
-                let output = tool_result
-                    .content
-                    .iter()
-                    .filter_map(|c| {
-                        if let forge_agent::rig::message::ToolResultContent::Text(t) = c {
-                            Some(t.text.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                let tc_id = tool_result.id.clone();
-
-                // Check if we have a pre-edit snapshot — means this was a file-editing tool
-                if let Some((rel_path, old_content)) = pre_edit_snapshots.remove(&tc_id) {
-                    // Read the file AFTER the edit to compute diff
-                    let full_path = workspace_path.join(&rel_path);
-                    let new_content = std::fs::read_to_string(&full_path).unwrap_or_default();
-
-                    // Only send diff if content actually changed
-                    if new_content != old_content {
-                        diff_counter += 1;
-                        let diff_id = format!("diff-{diff_counter}");
-                        let hunks = compute_diff_hunks(&old_content, &new_content);
-
-                        // Store the pre-edit snapshot so we can revert on reject
-                        pending_diff_snapshots.lock().insert(
-                            diff_id.clone(),
-                            (rel_path.clone(), old_content.clone()),
-                        );
-
-                        core_rpc.agent_diff_preview(
-                            diff_id,
-                            tc_id.clone(),
-                            rel_path,
-                            old_content,
-                            new_content,
-                            hunks,
-                        );
-                    }
-                }
-
-                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                    tool_call_id: tc_id,
-                    tool_name: String::new(),
-                    arguments: String::new(),
-                    status: "completed".to_string(),
-                    output: Some(output),
-                });
-            }
-            Ok(MultiTurnStreamItem::FinalResponse(final_resp)) => {
-                // Use the final aggregated response if we haven't accumulated any text
-                if full_response.is_empty() {
-                    full_response = final_resp.response().to_string();
-                }
-
-                // Signal that all diffs have been sent
-                if diff_counter > 0 {
-                    core_rpc.agent_diffs_done();
-                }
-
-                core_rpc.notification(CoreNotification::AgentTextChunk {
-                    text: String::new(),
-                    done: true,
-                });
-                hook.write_session_end();
-                break;
-            }
-            Err(e) => {
-                hook.write_event("error", serde_json::json!({ "error": e.to_string() }));
-                hook.write_session_end();
-                return Err(e.to_string());
-            }
-            _ => {
-                // ToolCallDelta, ReasoningDelta, etc. -- ignore for now
             }
         }
     }
-
-    Ok(full_response)
-}
-
-/// Compute line-level diff hunks between old and new file content.
-/// Uses a simple LCS-based approach to identify changed regions.
-fn compute_diff_hunks(old_content: &str, new_content: &str) -> Vec<lapce_rpc::core::AiDiffHunk> {
-    let old_lines: Vec<&str> = old_content.lines().collect();
-    let new_lines: Vec<&str> = new_content.lines().collect();
-
-    let m = old_lines.len();
-    let n = new_lines.len();
-
-    // Build LCS table
-    let mut table = vec![vec![0u32; n + 1]; m + 1];
-    for i in 1..=m {
-        for j in 1..=n {
-            if old_lines[i - 1] == new_lines[j - 1] {
-                table[i][j] = table[i - 1][j - 1] + 1;
-            } else {
-                table[i][j] = table[i - 1][j].max(table[i][j - 1]);
-            }
-        }
-    }
-
-    // Backtrack to produce edit script
-    #[derive(PartialEq)]
-    enum Op { Keep, Insert, Delete }
-    let mut ops = Vec::new();
-    let (mut i, mut j) = (m, n);
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && old_lines[i - 1] == new_lines[j - 1] {
-            ops.push(Op::Keep);
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || table[i][j - 1] >= table[i - 1][j]) {
-            ops.push(Op::Insert);
-            j -= 1;
-        } else {
-            ops.push(Op::Delete);
-            i -= 1;
-        }
-    }
-    ops.reverse();
-
-    // Find contiguous changed regions
-    let mut changes: Vec<(usize, usize, usize, usize)> = Vec::new();
-    let mut old_pos = 0usize;
-    let mut new_pos = 0usize;
-    let mut idx = 0;
-
-    while idx < ops.len() {
-        if ops[idx] == Op::Keep {
-            old_pos += 1;
-            new_pos += 1;
-            idx += 1;
-            continue;
-        }
-        let cs = old_pos;
-        let ns = new_pos;
-        while idx < ops.len() && ops[idx] != Op::Keep {
-            match ops[idx] {
-                Op::Delete => old_pos += 1,
-                Op::Insert => new_pos += 1,
-                _ => {}
-            }
-            idx += 1;
-        }
-        changes.push((cs, old_pos - cs, ns, new_pos - ns));
-    }
-
-    // Merge nearby changes with 3 lines of context into hunks
-    let context = 3usize;
-    let mut hunks = Vec::new();
-    let mut ci = 0;
-    while ci < changes.len() {
-        let (mut os, mut oc, mut ns, mut nc) = changes[ci];
-        let cb = os.min(context);
-        os -= cb;
-        ns -= cb;
-        oc += cb;
-        nc += cb;
-
-        while ci + 1 < changes.len() {
-            let (nos, noc, nns, nnc) = changes[ci + 1];
-            if nos.saturating_sub(os + oc) <= 2 * context {
-                oc = nos + noc - os;
-                nc = nns + nnc - ns;
-                ci += 1;
-            } else {
-                break;
-            }
-        }
-
-        let ca = (m - (os + oc)).min(context);
-        oc += ca;
-        nc += ca;
-
-        hunks.push(lapce_rpc::core::AiDiffHunk {
-            old_start: os,
-            old_lines: oc,
-            new_start: ns,
-            new_lines: nc,
-        });
-        ci += 1;
-    }
-
-    hunks
+    
+    files
 }
 
 impl Dispatcher {
