@@ -3,6 +3,7 @@ mod files;
 pub(crate) mod search;
 mod code;
 pub(crate) mod web;
+mod process;
 mod embeddings;       // Legacy: kept for backward compat, prefer forge-search
 mod embeddings_store; // Legacy: kept for backward compat, prefer forge-search
 mod treesitter;
@@ -21,6 +22,7 @@ pub use files::*;
 pub use search::*;
 pub use code::*;
 pub use web::*;
+pub use process::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
 pub use search::ensure_indexed;
@@ -36,6 +38,15 @@ pub enum Tool {
     ApplyPatch,
     ListFiles,
     DeleteFile,
+    
+    // Background processes & ports
+    ExecuteBackground,
+    ReadProcessOutput,
+    CheckProcessStatus,
+    KillProcess,
+    WaitForPort,
+    CheckPort,
+    KillPort,
     
     // Search
     Grep,
@@ -74,6 +85,15 @@ impl Tool {
             Self::ApplyPatch => "apply_patch",
             Self::ListFiles => "list_files",
             Self::DeleteFile => "delete_file",
+            // Background processes & ports
+            Self::ExecuteBackground => "execute_background",
+            Self::ReadProcessOutput => "read_process_output",
+            Self::CheckProcessStatus => "check_process_status",
+            Self::KillProcess => "kill_process",
+            Self::WaitForPort => "wait_for_port",
+            Self::CheckPort => "check_port",
+            Self::KillPort => "kill_port",
+            // Search
             Self::Grep => "grep",
             Self::Glob => "glob",
             Self::CodebaseSearch => "codebase_search",
@@ -102,6 +122,15 @@ impl Tool {
             "apply_patch" => Some(Self::ApplyPatch),
             "list_files" => Some(Self::ListFiles),
             "delete_file" => Some(Self::DeleteFile),
+            // Background processes & ports
+            "execute_background" => Some(Self::ExecuteBackground),
+            "read_process_output" => Some(Self::ReadProcessOutput),
+            "check_process_status" => Some(Self::CheckProcessStatus),
+            "kill_process" => Some(Self::KillProcess),
+            "wait_for_port" => Some(Self::WaitForPort),
+            "check_port" => Some(Self::CheckPort),
+            "kill_port" => Some(Self::KillPort),
+            // Search
             "grep" => Some(Self::Grep),
             "glob" => Some(Self::Glob),
             "codebase_search" => Some(Self::CodebaseSearch),
@@ -131,6 +160,9 @@ impl Tool {
                 | Self::ReplaceInFile
                 | Self::ApplyPatch
                 | Self::DeleteFile
+                | Self::ExecuteBackground
+                | Self::KillProcess
+                | Self::KillPort
         )
     }
 }
@@ -309,6 +341,15 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::ApplyPatch => files::apply_patch(&tool.arguments, workdir).await,
         Tool::ListFiles => files::list(&tool.arguments, workdir).await,
         Tool::DeleteFile => files::delete(&tool.arguments, workdir).await,
+        // Background processes & ports
+        Tool::ExecuteBackground => process::execute_background(&tool.arguments, workdir).await,
+        Tool::ReadProcessOutput => process::read_process_output(&tool.arguments, workdir).await,
+        Tool::CheckProcessStatus => process::check_process_status(&tool.arguments, workdir).await,
+        Tool::KillProcess => process::kill_process(&tool.arguments, workdir).await,
+        Tool::WaitForPort => process::wait_for_port(&tool.arguments, workdir).await,
+        Tool::CheckPort => process::check_port(&tool.arguments, workdir).await,
+        Tool::KillPort => process::kill_port(&tool.arguments, workdir).await,
+        // Search
         Tool::Grep => search::grep(&tool.arguments, workdir).await,
         Tool::Glob => search::glob_search(&tool.arguments, workdir).await,
         Tool::CodebaseSearch => search::semantic(&tool.arguments, workdir).await,
@@ -372,6 +413,26 @@ fn make_approval_summary(tool: &ToolCall) -> String {
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
             format!("Delete {}", path)
+        }
+        "execute_background" => {
+            let cmd = tool.arguments.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            format!("Run in background: {}", &cmd[..cmd.len().min(200)])
+        }
+        "kill_process" => {
+            let pid = tool.arguments.get("pid")
+                .and_then(|v| v.as_u64())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            format!("Kill process PID {}", pid)
+        }
+        "kill_port" => {
+            let port = tool.arguments.get("port")
+                .and_then(|v| v.as_u64())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            format!("Kill process on port {}", port)
         }
         _ => format!("Execute tool '{}'", tool.name),
     }
@@ -464,6 +525,92 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                     "path": { "type": "string", "description": "Path to file or directory to delete" }
                 },
                 "required": ["path"]
+            }
+        }),
+        // BACKGROUND PROCESSES & PORTS - for dev servers, watchers, etc.
+        serde_json::json!({
+            "name": "execute_background",
+            "description": "Start a long-running command in the background (dev server, watch, etc). Returns immediately with PID. Use read_process_output to check output, wait_for_port to wait for server startup.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "The shell command to execute in background" },
+                    "wait_seconds": { "type": "integer", "description": "Seconds to wait before returning initial output (default: 3)" }
+                },
+                "required": ["command"]
+            }
+        }),
+        serde_json::json!({
+            "name": "read_process_output",
+            "description": "Read output from a background process by PID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "Process ID to read output from" },
+                    "tail_lines": { "type": "integer", "description": "Lines from end to return (default: 100)" },
+                    "follow_seconds": { "type": "integer", "description": "Wait for new output before returning (default: 0)" }
+                },
+                "required": ["pid"]
+            }
+        }),
+        serde_json::json!({
+            "name": "check_process_status",
+            "description": "Check if background process(es) are still running.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "Specific PID to check (omit for all)" }
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "kill_process",
+            "description": "Terminate a process by PID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "Process ID to kill" },
+                    "force": { "type": "boolean", "description": "Use SIGKILL instead of SIGTERM (default: false)" }
+                },
+                "required": ["pid"]
+            }
+        }),
+        serde_json::json!({
+            "name": "wait_for_port",
+            "description": "Wait until a port accepts connections. Use after starting a dev server to know when it's ready.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "port": { "type": "integer", "description": "Port number to check" },
+                    "host": { "type": "string", "description": "Host (default: localhost)" },
+                    "timeout": { "type": "integer", "description": "Max seconds to wait (default: 30)" },
+                    "interval": { "type": "integer", "description": "Seconds between checks (default: 1)" }
+                },
+                "required": ["port"]
+            }
+        }),
+        serde_json::json!({
+            "name": "check_port",
+            "description": "Check if a port is currently in use.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "port": { "type": "integer", "description": "Port number to check" },
+                    "host": { "type": "string", "description": "Host (default: localhost)" }
+                },
+                "required": ["port"]
+            }
+        }),
+        serde_json::json!({
+            "name": "kill_port",
+            "description": "Kill the process using a specific port.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "port": { "type": "integer", "description": "Port number" },
+                    "force": { "type": "boolean", "description": "Use SIGKILL (default: false)" }
+                },
+                "required": ["port"]
             }
         }),
         // SEARCH TOOLS - order matters for model selection
