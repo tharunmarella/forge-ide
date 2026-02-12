@@ -136,18 +136,6 @@ RULES:
 - Be concise. Execute tools, don't just talk about what you'd do.
 - The workspace root is: {workdir}
 
-LONG-RUNNING PROCESSES (dev servers, watchers, etc.):
-- For commands like "npm run dev", "cargo watch", "python -m http.server" that run indefinitely:
-  - Run them in background with &: "npm run dev &"
-  - Add sleep to wait for startup: "npm run dev & sleep 5"
-  - Then verify with curl or check: "npm run dev & sleep 5 && curl -s localhost:3000 > /dev/null && echo 'Server running on port 3000'"
-- Example patterns:
-  - "cd frontend && npm run dev & sleep 5 && curl -s http://localhost:3000 && echo 'Ready!'"
-  - "cargo run & sleep 3 && curl localhost:8080/health"
-  - "python -m http.server 8000 & sleep 2 && echo 'Server started'"
-- To check if port is in use: "lsof -i :3000" or "nc -z localhost 3000"
-- To kill process on port: "lsof -ti :3000 | xargs kill -9"
-
 IMPORTANT: Use the provided tools directly. Do NOT output XML tool tags in your text."#,
         workdir = workdir.display()
     )
