@@ -964,30 +964,48 @@ fn message_bubble(
                             )
                             .style(|s| s.width_pct(100.0))
                             .into_any(),
-                            MarkdownContent::MermaidDiagram { png_data, .. } => {
-                                // Render the Mermaid diagram as a PNG image
-                                container(
-                                    img(move || png_data.clone())
-                                        .style(move |s| {
-                                            let config = config.get();
-                                            s.width_pct(100.0)
-                                                .min_height(80.0)
-                                                .padding(8.0)
-                                                .border_radius(6.0)
-                                                .border(1.0)
-                                                .border_color(
-                                                    config.color(LapceColor::LAPCE_BORDER),
-                                                )
-                                                .background(
-                                                    config.color(LapceColor::EDITOR_BACKGROUND),
-                                                )
-                                        }),
-                                )
-                                .style(|s| s.width_pct(100.0).margin_vert(6.0))
-                                .into_any()
-                            }
-                            MarkdownContent::Image { .. } => {
-                                container(empty()).into_any()
+                            MarkdownContent::Image { url, .. } => {
+                                // Handle both data URIs and regular URLs
+                                if url.starts_with("data:image/") {
+                                    // Data URI image (e.g., mermaid diagrams from server)
+                                    // Format: data:image/png;base64,{base64_data}
+                                    let png_data = if let Some(base64_start) = url.find("base64,") {
+                                        let base64_str = &url[base64_start + 7..];
+                                        use base64::{Engine as _, engine::general_purpose::STANDARD};
+                                        STANDARD.decode(base64_str).unwrap_or_default()
+                                    } else {
+                                        Vec::new()
+                                    };
+                                    
+                                    if png_data.is_empty() {
+                                        // Decoding failed, show placeholder
+                                        container(empty()).into_any()
+                                    } else {
+                                        container(
+                                            img(move || png_data.clone())
+                                                .style(move |s| {
+                                                    let config = config.get();
+                                                    s.width_pct(100.0)
+                                                        .min_height(80.0)
+                                                        .padding(8.0)
+                                                        .border_radius(6.0)
+                                                        .border(1.0)
+                                                        .border_color(
+                                                            config.color(LapceColor::LAPCE_BORDER),
+                                                        )
+                                                        .background(
+                                                            config.color(LapceColor::EDITOR_BACKGROUND),
+                                                        )
+                                                }),
+                                        )
+                                        .style(|s| s.width_pct(100.0).margin_vert(6.0))
+                                        .into_any()
+                                    }
+                                } else {
+                                    // Regular URL - placeholder for now
+                                    // TODO: Could fetch async and display
+                                    container(empty()).into_any()
+                                }
                             }
                         }
                     },

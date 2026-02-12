@@ -12,10 +12,9 @@ use crate::config::{LapceConfig, color::LapceColor};
 #[derive(Clone)]
 pub enum MarkdownContent {
     Text(TextLayout),
+    /// An image - can be a URL or a data URI (data:image/png;base64,...)
     Image { url: String, title: String },
     Separator,
-    /// A Mermaid diagram rendered as PNG via mermaid.ink.
-    MermaidDiagram { png_data: Vec<u8>, source: String },
 }
 
 pub fn parse_markdown(
@@ -33,9 +32,9 @@ pub fn parse_markdown_sized(
     config: &LapceConfig,
     font_size: f32,
 ) -> Vec<MarkdownContent> {
-    // Pre-process: wrap unfenced mermaid diagrams in proper code fences
-    let text = wrap_unfenced_mermaid(text);
-    let text = text.as_str();
+    // Note: Mermaid diagrams are now rendered server-side and sent as inline
+    // data URI images. The server replaces ```mermaid blocks with ![diagram](data:...)
+    // so we don't need to do any special mermaid processing here.
 
     let mut res = Vec::new();
 
@@ -103,73 +102,26 @@ pub fn parse_markdown_sized(
 
                     match &tag {
                         Tag::CodeBlock(kind) => {
-                            // Check if this is a mermaid diagram
-                            let is_mermaid = matches!(
-                                kind,
-                                CodeBlockKind::Fenced(lang) if lang.as_ref().trim().eq_ignore_ascii_case("mermaid")
+                            // Note: Mermaid diagrams are now rendered server-side.
+                            // If we see a ```mermaid block here, it means the server
+                            // didn't render it (old server or render failed), so we
+                            // just show it as syntax-highlighted code.
+                            let language =
+                                if let CodeBlockKind::Fenced(language) = kind {
+                                    md_language_to_lapce_language(language)
+                                } else {
+                                    None
+                                };
+
+                            highlight_as_code(
+                                &mut attr_list,
+                                default_attrs.clone().family(&code_font_family),
+                                language,
+                                &last_text,
+                                start_offset,
+                                config,
                             );
-
-                            if is_mermaid {
-                                // Render mermaid diagram to PNG via mermaid.ink
-                                // (full Mermaid.js quality with proper text rendering)
-                                let mermaid_src = last_text.clone();
-                                match render_mermaid_png(&mermaid_src) {
-                                    Some(png_data) => {
-                                        // Flush any pending text before the diagram
-                                        if builder_dirty {
-                                            // Remove the mermaid source text that was appended
-                                            if current_text.len() >= mermaid_src.len() {
-                                                let new_len = current_text.len() - mermaid_src.len();
-                                                current_text.truncate(new_len);
-                                                pos = current_text.len();
-                                            }
-                                            if !current_text.is_empty() {
-                                                let mut text_layout = TextLayout::new();
-                                                text_layout.set_text(&current_text, attr_list, None);
-                                                res.push(MarkdownContent::Text(text_layout));
-                                            }
-                                            attr_list = AttrsList::new(default_attrs.clone());
-                                            current_text.clear();
-                                            pos = 0;
-                                            builder_dirty = false;
-                                        }
-                                        res.push(MarkdownContent::MermaidDiagram {
-                                            png_data,
-                                            source: mermaid_src.to_string(),
-                                        });
-                                    }
-                                    None => {
-                                        // Rendering failed — fall back to showing as code
-                                        tracing::warn!("Mermaid render via mermaid.ink failed");
-                                        highlight_as_code(
-                                            &mut attr_list,
-                                            default_attrs.clone().family(&code_font_family),
-                                            None,
-                                            &last_text,
-                                            start_offset,
-                                            config,
-                                        );
-                                        builder_dirty = true;
-                                    }
-                                }
-                            } else {
-                                let language =
-                                    if let CodeBlockKind::Fenced(language) = kind {
-                                        md_language_to_lapce_language(language)
-                                    } else {
-                                        None
-                                    };
-
-                                highlight_as_code(
-                                    &mut attr_list,
-                                    default_attrs.clone().family(&code_font_family),
-                                    language,
-                                    &last_text,
-                                    start_offset,
-                                    config,
-                                );
-                                builder_dirty = true;
-                            }
+                            builder_dirty = true;
                         }
                         Tag::Image {
                             link_type: _,
@@ -410,95 +362,7 @@ pub fn from_plaintext(
     vec![MarkdownContent::Text(text_layout)]
 }
 
-/// Render a Mermaid diagram to PNG bytes via the mermaid.ink API.
-///
-/// Uses Mermaid.js (full quality) with dark theme. Returns `None` on
-/// network failure or invalid diagram, in which case the caller should
-/// fall back to showing the source as a code block.
-fn render_mermaid_png(source: &str) -> Option<Vec<u8>> {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-
-    // Prepend dark theme directive if not already present
-    let code = if source.contains("init:") || source.contains("%%{") {
-        source.to_string()
-    } else {
-        format!("%%{{init: {{'theme':'dark'}}}}%%\n{source}")
-    };
-
-    let encoded = URL_SAFE_NO_PAD.encode(code.as_bytes());
-    // bgColor 1e1e2e matches the IDE's dark editor background
-    let url = format!(
-        "https://mermaid.ink/img/{encoded}?type=png&bgColor=1e1e2e"
-    );
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .ok()?;
-
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "Forge-IDE/1.0")
-        .send()
-        .ok()?;
-
-    if !resp.status().is_success() {
-        tracing::warn!(
-            "mermaid.ink returned {}: {}",
-            resp.status(),
-            resp.text().unwrap_or_default()
-        );
-        return None;
-    }
-
-    let bytes = resp.bytes().ok()?;
-    Some(bytes.to_vec())
-}
-
-/// Detect unfenced Mermaid diagrams and wrap them in proper code fences.
-/// This handles cases where the LLM outputs raw mermaid syntax without ```mermaid fences.
-fn wrap_unfenced_mermaid(text: &str) -> String {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    // Patterns that indicate the start of a mermaid diagram
-    // Must be at the start of a line and not already inside a code fence
-    static MERMAID_START: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(
-            r"(?m)^(graph\s+(?:TD|TB|BT|RL|LR)|flowchart\s+(?:TD|TB|BT|RL|LR)|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|sankey-beta|xychart-beta|block-beta)"
-        ).unwrap()
-    });
-
-    // Check if already inside a code fence
-    let has_mermaid_fence = text.contains("```mermaid");
-    if has_mermaid_fence {
-        return text.to_string();
-    }
-
-    // Find mermaid diagram blocks
-    if let Some(m) = MERMAID_START.find(text) {
-        let start = m.start();
-
-        // Find the end of the mermaid diagram (empty line or end of text)
-        // Look for two consecutive newlines or end of string
-        let remaining = &text[start..];
-        let end_offset = remaining
-            .find("\n\n")
-            .map(|i| i + 1) // Include one newline
-            .unwrap_or(remaining.len());
-
-        let diagram = remaining[..end_offset].trim();
-
-        // Reconstruct the text with the diagram wrapped
-        let before = &text[..start];
-        let after = if start + end_offset < text.len() {
-            &text[start + end_offset..]
-        } else {
-            ""
-        };
-
-        return format!("{}```mermaid\n{}\n```\n{}", before, diagram, after);
-    }
-
-    text.to_string()
-}
+// Note: render_mermaid_png and wrap_unfenced_mermaid were removed.
+// Mermaid diagrams are now rendered server-side in forge-search and sent
+// as inline data URI images (![diagram](data:image/png;base64,...)).
+// This eliminates the blocking HTTP call that was freezing the UI.

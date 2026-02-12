@@ -3021,8 +3021,7 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
                         .style(|s| s.max_width(600.0)),
                 )
                 .style(|s| s.max_width_full()),
-                MarkdownContent::Image { .. } => container(empty()),
-                MarkdownContent::MermaidDiagram { .. } => container(empty()),
+                MarkdownContent::Image { .. } => container(empty()), // TODO: render images
                 MarkdownContent::Separator => container(empty().style(move |s| {
                     s.width_full()
                         .margin_vert(5.0)
