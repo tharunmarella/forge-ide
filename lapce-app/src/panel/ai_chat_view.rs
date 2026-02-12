@@ -873,7 +873,7 @@ fn chat_entry_view(
         ChatEntryKind::ToolCall(tc) => {
             // Approval-pending tools get Accept/Reject buttons
             if tc.status == ToolCallStatus::WaitingApproval {
-                return approval_card(config, tc, proxy).into_any();
+                return approval_card(config, tc, proxy, internal_command).into_any();
             }
             // File-related tools get a special clickable file block
             let is_file_tool = matches!(
@@ -1213,11 +1213,12 @@ fn file_tool_card(
 }
 
 /// Approval card — shown when a mutating tool needs user permission.
-/// Displays the tool name, summary, and Accept/Reject buttons.
+/// Displays the tool name, summary, and Accept/Reject/View buttons.
 fn approval_card(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     tc: ChatToolCall,
     proxy: lapce_rpc::proxy::ProxyRpcHandler,
+    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
 ) -> impl View {
     let tool_name = tc.name.clone();
     let summary = tc.output.clone().unwrap_or_else(|| format!("Execute: {}", tool_name));
@@ -1225,6 +1226,47 @@ fn approval_card(
     let tc_id_reject = tc.id.clone();
     let proxy_accept = proxy.clone();
     let proxy_reject = proxy.clone();
+
+    // Extract file path from arguments for "View" button (for file-related tools)
+    let file_path: Option<std::path::PathBuf> = serde_json::from_str::<serde_json::Value>(&tc.arguments)
+        .ok()
+        .and_then(|v| v.get("path").and_then(|p| p.as_str()).map(std::path::PathBuf::from));
+    let has_file_path = file_path.is_some();
+    let view_path = file_path.clone();
+
+    // For replace_in_file, also extract old_str to show in diff preview
+    let is_replace = tc.name == "replace_in_file";
+    let diff_preview: Option<String> = if is_replace {
+        serde_json::from_str::<serde_json::Value>(&tc.arguments)
+            .ok()
+            .and_then(|v| {
+                let old_str = v.get("old_str").and_then(|s| s.as_str())?;
+                let new_str = v.get("new_str").and_then(|s| s.as_str())?;
+                // Create a simple diff preview
+                let old_lines: Vec<&str> = old_str.lines().take(5).collect();
+                let new_lines: Vec<&str> = new_str.lines().take(5).collect();
+                let mut preview = String::new();
+                for line in &old_lines {
+                    preview.push_str(&format!("- {}\n", line));
+                }
+                if old_str.lines().count() > 5 {
+                    preview.push_str("  ...\n");
+                }
+                for line in &new_lines {
+                    preview.push_str(&format!("+ {}\n", line));
+                }
+                if new_str.lines().count() > 5 {
+                    preview.push_str("  ...\n");
+                }
+                Some(preview)
+            })
+    } else {
+        None
+    };
+
+    // Expanded state for showing diff preview
+    let expanded = create_rw_signal(false);
+    let diff_preview_clone = diff_preview.clone();
 
     container(
         stack((
@@ -1241,7 +1283,31 @@ fn approval_card(
                     .color(config.color(LapceColor::PANEL_FOREGROUND))
                     .margin_bottom(6.0)
             }),
-            // Accept / Reject buttons
+            // Diff preview (shown when expanded)
+            container(
+                label(move || diff_preview_clone.clone().unwrap_or_default())
+                    .style(move |s| {
+                        let config = config.get();
+                        s.font_size((config.ui.font_size() as f32 - 3.0).max(9.0))
+                            .font_family("monospace".to_string())
+                            .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                            .width_pct(100.0)
+                    })
+            )
+            .style(move |s| {
+                let is_expanded = expanded.get();
+                let has_diff = diff_preview.is_some();
+                let config = config.get();
+                s.width_pct(100.0)
+                    .padding(6.0)
+                    .margin_bottom(6.0)
+                    .border_radius(4.0)
+                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                    .border(1.0)
+                    .border_color(config.color(LapceColor::LAPCE_BORDER))
+                    .apply_if(!is_expanded || !has_diff, |s| s.hide())
+            }),
+            // Accept / View / Reject buttons
             stack((
                 label(|| "Accept".to_string())
                     .on_click_stop(move |_| {
@@ -1265,6 +1331,35 @@ fn approval_card(
                             .cursor(CursorStyle::Pointer)
                             .hover(|s| s.background(
                                 config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.85)
+                            ))
+                    }),
+                // View button - opens file or toggles diff preview
+                label(|| "View".to_string())
+                    .on_click_stop(move |_| {
+                        if let Some(ref path) = view_path {
+                            // Open the file in editor
+                            internal_command.send(crate::command::InternalCommand::OpenFile {
+                                path: path.clone(),
+                            });
+                        }
+                        // Also toggle the diff preview
+                        expanded.update(|v| *v = !*v);
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.padding_horiz(14.0)
+                            .padding_vert(4.0)
+                            .margin_right(8.0)
+                            .border_radius(4.0)
+                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                            .font_bold()
+                            .color(config.color(LapceColor::PANEL_FOREGROUND))
+                            .border(1.0)
+                            .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                            .cursor(CursorStyle::Pointer)
+                            .apply_if(!has_file_path && !is_replace, |s| s.hide())
+                            .hover(|s| s.background(
+                                config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.15)
                             ))
                     }),
                 label(|| "Reject".to_string())
