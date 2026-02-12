@@ -329,13 +329,15 @@ pub async fn kill_process(args: &Value, _workdir: &Path) -> ToolResult {
     }
 }
 
-/// Wait until a port is accepting connections.
+/// Wait until a port is accepting connections (and optionally responding to HTTP).
 ///
 /// Args:
 /// - port: Port number to check
 /// - host: Host to check (default: localhost)
 /// - timeout: Max seconds to wait (default: 30)
 /// - interval: Seconds between checks (default: 1)
+/// - http_check: If true, verify HTTP GET returns 2xx/3xx (default: false)
+/// - path: HTTP path to check (default: "/")
 pub async fn wait_for_port(args: &Value, _workdir: &Path) -> ToolResult {
     let Some(port) = args.get("port").and_then(|v| v.as_u64()).map(|p| p as u16) else {
         return ToolResult::err("Missing 'port' parameter");
@@ -356,35 +358,98 @@ pub async fn wait_for_port(args: &Value, _workdir: &Path) -> ToolResult {
         .and_then(|v| v.as_u64())
         .unwrap_or(1);
 
+    let http_check = args
+        .get("http_check")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/");
+
     let start = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
     let interval = Duration::from_secs(interval_secs);
     let mut attempts = 0;
+    let mut last_error = String::new();
 
     let addr = format!("{host}:{port}");
 
     while start.elapsed() < timeout {
         attempts += 1;
 
-        match tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(&addr)).await {
+        // First check TCP connection
+        match tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(&addr)).await {
             Ok(Ok(_)) => {
-                return ToolResult::ok(format!(
-                    "Port {port} is now accepting connections!\n\
-                     Host: {host}\n\
-                     Time waited: {:.1}s\n\
-                     Attempts: {attempts}",
-                    start.elapsed().as_secs_f64()
-                ));
+                // TCP connection successful
+                if !http_check {
+                    return ToolResult::ok(format!(
+                        "Port {port} is now accepting connections!\n\
+                         Host: {host}\n\
+                         Time waited: {:.1}s\n\
+                         Attempts: {attempts}",
+                        start.elapsed().as_secs_f64()
+                    ));
+                }
+
+                // HTTP health check requested
+                let url = format!("http://{host}:{port}{path}");
+                match http_health_check(&url).await {
+                    Ok(status) => {
+                        return ToolResult::ok(format!(
+                            "Server is healthy!\n\
+                             URL: {url}\n\
+                             Status: {status}\n\
+                             Time waited: {:.1}s\n\
+                             Attempts: {attempts}",
+                            start.elapsed().as_secs_f64()
+                        ));
+                    }
+                    Err(e) => {
+                        last_error = format!("HTTP check failed: {e}");
+                        // Continue waiting - server might still be starting
+                    }
+                }
             }
-            _ => {
-                tokio::time::sleep(interval).await;
+            Ok(Err(e)) => {
+                last_error = format!("TCP connection failed: {e}");
+            }
+            Err(_) => {
+                last_error = "TCP connection timed out".to_string();
             }
         }
+
+        tokio::time::sleep(interval).await;
     }
 
     ToolResult::err(format!(
-        "Port {port} on {host} did not become available within {timeout_secs}s ({attempts} attempts)"
+        "Port {port} on {host} did not become available within {timeout_secs}s.\n\
+         Attempts: {attempts}\n\
+         Last error: {last_error}"
     ))
+}
+
+/// Perform a simple HTTP GET and check for success status.
+async fn http_health_check(url: &str) -> Result<u16, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = response.status().as_u16();
+    
+    if status >= 200 && status < 400 {
+        Ok(status)
+    } else {
+        Err(format!("HTTP {status}"))
+    }
 }
 
 /// Check if a port is currently in use.

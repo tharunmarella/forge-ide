@@ -561,14 +561,16 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "wait_for_port",
-            "description": "Wait until a port accepts connections. Use after starting a dev server to know when it's ready.",
+            "description": "Wait until a port accepts connections. Set http_check=true to also verify HTTP response is healthy (recommended for web servers).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "port": { "type": "integer", "description": "Port number to check" },
                     "host": { "type": "string", "description": "Host (default: localhost)" },
                     "timeout": { "type": "integer", "description": "Max seconds to wait (default: 30)" },
-                    "interval": { "type": "integer", "description": "Seconds between checks (default: 1)" }
+                    "interval": { "type": "integer", "description": "Seconds between checks (default: 1)" },
+                    "http_check": { "type": "boolean", "description": "Also verify HTTP GET returns 2xx/3xx (default: false)" },
+                    "path": { "type": "string", "description": "HTTP path to check (default: '/')" }
                 },
                 "required": ["port"]
             }
