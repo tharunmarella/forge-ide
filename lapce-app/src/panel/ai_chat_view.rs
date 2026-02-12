@@ -382,12 +382,13 @@ fn chat_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let wtd = window_tab_data.clone();
 
     let internal_command = window_tab_data.common.internal_command;
+    let proxy = window_tab_data.common.proxy.clone();
 
     stack((
         // ── Header ──────────────────────────────────────────
         chat_header(config, chat_data_clear),
         // ── Message list (scrollable) with auto-scroll ──────
-        chat_message_list(config, chat_data.clone(), internal_command),
+        chat_message_list(config, chat_data.clone(), internal_command, proxy),
         // ── AI Diff toolbar (only shown when pending diffs exist) ──
         ai_diff_toolbar(wtd),
         // ── Input area at the bottom ────────────────────────
@@ -639,6 +640,7 @@ fn chat_message_list(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+    proxy: lapce_rpc::proxy::ProxyRpcHandler,
 ) -> impl View {
     let entries = chat_data.entries;
     let chat_data_dropdown = chat_data.clone();
@@ -661,14 +663,17 @@ fn chat_message_list(
                         entries.iter().cloned().collect::<Vec<_>>()
                     },
                     |entry: &ChatEntry| entry.key(),
-                    move |entry| chat_entry_view(config, entry, internal_command),
+                    {
+                        let proxy = proxy.clone();
+                        move |entry| chat_entry_view(config, entry, internal_command, proxy.clone())
+                    },
                 )
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
 
                 // ── Collapsible thinking section ──
                 // Shows server-side activity (thinking steps, server tool calls, plan).
                 // Auto-collapses when the final answer arrives.
-                thinking_section(config, chat_data_thinking, internal_command),
+                thinking_section(config, chat_data_thinking, internal_command, proxy.clone()),
 
                 // ── Streaming text preview (plain text, fast) ──
                 // Shown while the assistant is actively streaming.
@@ -859,12 +864,17 @@ fn chat_entry_view(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     entry: ChatEntry,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+    proxy: lapce_rpc::proxy::ProxyRpcHandler,
 ) -> impl View {
     match entry.kind {
         ChatEntryKind::Message { role, content } => {
             message_bubble(config, role, content).into_any()
         }
         ChatEntryKind::ToolCall(tc) => {
+            // Approval-pending tools get Accept/Reject buttons
+            if tc.status == ToolCallStatus::WaitingApproval {
+                return approval_card(config, tc, proxy).into_any();
+            }
             // File-related tools get a special clickable file block
             let is_file_tool = matches!(
                 tc.name.as_str(),
@@ -1102,9 +1112,11 @@ fn file_tool_card(
     // Status icon
     let status_icon = match &tc.status {
         ToolCallStatus::Pending => "\u{25CB}",
+        ToolCallStatus::WaitingApproval => "\u{26A0}",
         ToolCallStatus::Running => "\u{25CF}",
         ToolCallStatus::Success => "\u{2713}",
         ToolCallStatus::Error => "\u{2717}",
+        ToolCallStatus::Rejected => "\u{2718}",
     };
 
     let click_path = file_path.clone();
@@ -1200,6 +1212,102 @@ fn file_tool_card(
     })
 }
 
+/// Approval card — shown when a mutating tool needs user permission.
+/// Displays the tool name, summary, and Accept/Reject buttons.
+fn approval_card(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    tc: ChatToolCall,
+    proxy: lapce_rpc::proxy::ProxyRpcHandler,
+) -> impl View {
+    let tool_name = tc.name.clone();
+    let summary = tc.output.clone().unwrap_or_else(|| format!("Execute: {}", tool_name));
+    let tc_id = tc.id.clone();
+    let tc_id_reject = tc.id.clone();
+    let proxy_accept = proxy.clone();
+    let proxy_reject = proxy.clone();
+
+    container(
+        stack((
+            // Tool name + summary
+            label(move || format!("Approve {}?", tool_name)).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 1.0).max(10.0))
+                    .font_bold()
+                    .color(config.color(LapceColor::LAPCE_WARN))
+            }),
+            label(move || summary.clone()).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .color(config.color(LapceColor::PANEL_FOREGROUND))
+                    .margin_bottom(6.0)
+            }),
+            // Accept / Reject buttons
+            stack((
+                label(|| "Accept".to_string())
+                    .on_click_stop(move |_| {
+                        proxy_accept.request_async(
+                            lapce_rpc::proxy::ProxyRequest::AgentApproveToolCall {
+                                tool_call_id: tc_id.clone(),
+                            },
+                            |_| {},
+                        );
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.padding_horiz(14.0)
+                            .padding_vert(4.0)
+                            .margin_right(8.0)
+                            .border_radius(4.0)
+                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                            .font_bold()
+                            .color(config.color(LapceColor::PANEL_BACKGROUND))
+                            .background(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                            .cursor(CursorStyle::Pointer)
+                            .hover(|s| s.background(
+                                config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.85)
+                            ))
+                    }),
+                label(|| "Reject".to_string())
+                    .on_click_stop(move |_| {
+                        proxy_reject.request_async(
+                            lapce_rpc::proxy::ProxyRequest::AgentRejectToolCall {
+                                tool_call_id: tc_id_reject.clone(),
+                            },
+                            |_| {},
+                        );
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.padding_horiz(14.0)
+                            .padding_vert(4.0)
+                            .border_radius(4.0)
+                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                            .font_bold()
+                            .color(config.color(LapceColor::PANEL_FOREGROUND))
+                            .border(1.0)
+                            .border_color(config.color(LapceColor::LAPCE_BORDER))
+                            .cursor(CursorStyle::Pointer)
+                            .hover(|s| s.background(
+                                config.color(LapceColor::PANEL_HOVERED_BACKGROUND)
+                            ))
+                    }),
+            ))
+            .style(|s| s.flex_row().items_center()),
+        ))
+        .style(|s| s.flex_col().gap(4.0).width_pct(100.0)),
+    )
+    .style(move |s| {
+        let config = config.get();
+        s.width_pct(100.0)
+            .padding(10.0)
+            .margin_vert(2.0)
+            .border_radius(6.0)
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_WARN).multiply_alpha(0.5))
+            .background(config.color(LapceColor::LAPCE_WARN).multiply_alpha(0.08))
+    })
+}
+
 /// A compact, collapsible tool call card.
 ///
 /// **Collapsed (default):** Single line showing:
@@ -1217,9 +1325,11 @@ fn tool_call_card(
     // Status icon character
     let status_icon = match &tc.status {
         ToolCallStatus::Pending => "\u{25CB}",   // open circle
+        ToolCallStatus::WaitingApproval => "\u{26A0}", // warning
         ToolCallStatus::Running => "\u{25CF}",   // filled circle (pulsing via color)
         ToolCallStatus::Success => "\u{2713}",   // checkmark
         ToolCallStatus::Error => "\u{2717}",     // X mark
+        ToolCallStatus::Rejected => "\u{2718}",  // rejected
     };
 
     let tool_name = tc.name.clone();
@@ -1529,9 +1639,11 @@ fn server_tool_call_view(
 
     let status_icon = match &tc.status {
         ToolCallStatus::Pending => "\u{25CB}",
+        ToolCallStatus::WaitingApproval => "\u{26A0}",
         ToolCallStatus::Running => "\u{25CF}",
         ToolCallStatus::Success => "\u{2713}",
         ToolCallStatus::Error => "\u{2717}",
+        ToolCallStatus::Rejected => "\u{2718}",
     };
 
     let tool_name = tc.name.clone();
@@ -1607,6 +1719,7 @@ fn thinking_section(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+    proxy: lapce_rpc::proxy::ProxyRpcHandler,
 ) -> impl View {
     let thinking_steps = chat_data.thinking_steps;
     let thinking_collapsed = chat_data.thinking_collapsed;
@@ -1672,7 +1785,10 @@ fn thinking_section(
                             steps.iter().cloned().collect::<Vec<_>>()
                         },
                         |entry: &ChatEntry| entry.key(),
-                        move |entry| chat_entry_view(config, entry, internal_command),
+                        {
+                            let proxy = proxy.clone();
+                            move |entry| chat_entry_view(config, entry, internal_command, proxy.clone())
+                        },
                     )
                     .style(|s| s.flex_col().width_pct(100.0)),
                 )

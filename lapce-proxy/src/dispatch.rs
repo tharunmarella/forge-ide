@@ -65,6 +65,9 @@ pub struct Dispatcher {
     /// Stores pre-edit file snapshots keyed by diff_id: (relative_path, old_content).
     /// Used to revert files when the user rejects an AI-proposed diff.
     pending_diff_snapshots: Arc<Mutex<HashMap<String, (String, String)>>>,
+    /// Pending approval channels: tool_call_id -> oneshot sender (true=approved, false=rejected).
+    /// The agent loop awaits on the receiver; the UI sends approve/reject via ProxyRequest.
+    pending_approvals: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
 }
 
 impl ProxyHandler for Dispatcher {
@@ -2191,12 +2194,16 @@ impl ProxyHandler for Dispatcher {
             }
 
             // ── AI Agent ─────────────────────────────────────────
-            AgentPrompt { prompt, provider: _, model: _, api_key: _, conversation_id: conv_id } => {
-                tracing::info!("Agent prompt received, conv_id={conv_id}");
+            AgentPrompt { prompt, provider, model, api_key, conversation_id: conv_id } => {
+                tracing::info!("Agent prompt received, conv_id={conv_id}, provider={provider}, model={model}");
                 let proxy_rpc = self.proxy_rpc.clone();
                 let core_rpc = self.core_rpc.clone();
                 let workspace = self.workspace.clone();
                 let _diff_snapshots = self.pending_diff_snapshots.clone();
+                let pending_approvals = self.pending_approvals.clone();
+                
+                // Check if we have a direct API key — if so, use native function calling
+                let has_api_key = !api_key.trim().is_empty();
 
                 thread::spawn(move || {
                     let rt = match tokio::runtime::Runtime::new() {
@@ -2216,20 +2223,239 @@ impl ProxyHandler for Dispatcher {
                         let workspace_path = workspace
                             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
+                        // ══════════════════════════════════════════════════════
+                        // PATH 1: Native Function Calling (direct LLM API)
+                        // When user has their own API key, call LLM directly
+                        // with structured tool definitions — no XML parsing.
+                        // ══════════════════════════════════════════════════════
+                        if has_api_key {
+                            tracing::info!("Using native function calling: {}/{}", provider, model);
+                            
+                            let llm = forge_agent::LlmClient::new(&provider, &model, &api_key);
+                            let mut messages = vec![
+                                forge_agent::llm_client::LlmClient::user_message(&prompt),
+                            ];
+                            
+                            const MAX_TURNS: usize = 40;
+                            
+                            for turn in 0..MAX_TURNS {
+                                tracing::info!("Agent turn {}", turn + 1);
+                                
+                                match llm.chat(&messages, &workspace_path, false).await {
+                                    Ok(forge_agent::llm_client::LlmResponse::Message { text, tool_calls }) => {
+                                        // Send any text to UI
+                                        if let Some(ref t) = text {
+                                            if !t.is_empty() {
+                                                core_rpc.agent_text_chunk(t.clone(), false);
+                                            }
+                                        }
+                                        
+                                        if tool_calls.is_empty() {
+                                            // No tool calls and no stop — treat as done
+                                            core_rpc.agent_text_chunk(String::new(), true);
+                                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                                                message: text.unwrap_or_default(),
+                                            }));
+                                            return;
+                                        }
+                                        
+                                        // Add assistant message (with tool calls) to history
+                                        messages.push(
+                                            forge_agent::llm_client::LlmClient::assistant_message(
+                                                text.as_deref(),
+                                                &tool_calls,
+                                            )
+                                        );
+                                        
+                                        // Execute each tool call
+                                        for tc in &tool_calls {
+                                            // Skip non-actionable tools
+                                            if tc.name == "think" {
+                                                messages.push(
+                                                    forge_agent::llm_client::LlmClient::tool_result_message(
+                                                        &tc.id, "ok"
+                                                    )
+                                                );
+                                                continue;
+                                            }
+                                            if tc.name == "attempt_completion" {
+                                                let result = tc.args.get("result")
+                                                    .and_then(|r| r.as_str())
+                                                    .unwrap_or("Done");
+                                                core_rpc.agent_text_chunk(format!("\n\n{}", result), false);
+                                                core_rpc.agent_text_chunk(String::new(), true);
+                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                                                    message: result.to_string(),
+                                                }));
+                                                return;
+                                            }
+                                            if tc.name == "ask_followup_question" {
+                                                let question = tc.args.get("question")
+                                                    .and_then(|q| q.as_str())
+                                                    .unwrap_or("Could you clarify?");
+                                                core_rpc.agent_text_chunk(format!("\n\n{}", question), false);
+                                                core_rpc.agent_text_chunk(String::new(), true);
+                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                                                    message: question.to_string(),
+                                                }));
+                                                return;
+                                            }
+                                            
+                                            // Check if this is a mutating tool that needs approval
+                                            let is_mutating = matches!(
+                                                tc.name.as_str(),
+                                                "write_to_file" | "replace_in_file" | "apply_patch"
+                                                    | "delete_file" | "execute_command"
+                                            );
+                                            
+                                            let args_json = serde_json::to_string(&tc.args).unwrap_or_default();
+                                            
+                                            if is_mutating {
+                                                // Build a human-readable summary
+                                                let summary = match tc.name.as_str() {
+                                                    "write_to_file" => {
+                                                        let path = tc.args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                                                        format!("Create/write file: {}", path)
+                                                    }
+                                                    "replace_in_file" => {
+                                                        let path = tc.args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                                                        format!("Edit file: {}", path)
+                                                    }
+                                                    "apply_patch" => "Apply multi-file patch".to_string(),
+                                                    "delete_file" => {
+                                                        let path = tc.args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                                                        format!("Delete: {}", path)
+                                                    }
+                                                    "execute_command" => {
+                                                        let cmd = tc.args.get("command").and_then(|c| c.as_str()).unwrap_or("?");
+                                                        format!("Run: {}", &cmd[..cmd.len().min(100)])
+                                                    }
+                                                    _ => format!("Execute: {}", tc.name),
+                                                };
+                                                
+                                                // Send approval request to UI
+                                                core_rpc.notification(CoreNotification::AgentToolCallApprovalRequest {
+                                                    tool_call_id: tc.id.clone(),
+                                                    tool_name: tc.name.clone(),
+                                                    summary: summary.clone(),
+                                                    arguments: args_json.clone(),
+                                                });
+                                                
+                                                // Also show as pending tool call in chat
+                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                    tool_call_id: tc.id.clone(),
+                                                    tool_name: tc.name.clone(),
+                                                    arguments: args_json.clone(),
+                                                    status: "waiting_approval".to_string(),
+                                                    output: Some(summary),
+                                                });
+                                                
+                                                // Create a oneshot channel and wait for user response
+                                                let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                                                pending_approvals.lock().insert(tc.id.clone(), tx);
+                                                
+                                                let approved = rx.await.unwrap_or(false);
+                                                
+                                                if !approved {
+                                                    // User rejected — tell the model
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc.id.clone(),
+                                                        tool_name: tc.name.clone(),
+                                                        arguments: String::new(),
+                                                        status: "rejected".to_string(),
+                                                        output: Some("Rejected by user".to_string()),
+                                                    });
+                                                    
+                                                    messages.push(
+                                                        forge_agent::llm_client::LlmClient::tool_result_message(
+                                                            &tc.id,
+                                                            "Tool call was rejected by the user. Try a different approach or ask the user what they'd prefer.",
+                                                        )
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+                                            
+                                            // Approved (or read-only tool) — execute
+                                            core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                tool_call_id: tc.id.clone(),
+                                                tool_name: tc.name.clone(),
+                                                arguments: args_json,
+                                                status: "running".to_string(),
+                                                output: None,
+                                            });
+                                            
+                                            let tc_info = forge_agent::ToolCallInfo {
+                                                id: tc.id.clone(),
+                                                name: tc.name.clone(),
+                                                args: tc.args.clone(),
+                                            };
+                                            let result = execute_ide_tool(&tc_info, &workspace_path).await;
+                                            
+                                            // Notify UI about result
+                                            core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                tool_call_id: tc.id.clone(),
+                                                tool_name: tc.name.clone(),
+                                                arguments: String::new(),
+                                                status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                output: Some(result.output.clone()),
+                                            });
+                                            
+                                            // Add tool result to conversation history
+                                            messages.push(
+                                                forge_agent::llm_client::LlmClient::tool_result_message(
+                                                    &tc.id,
+                                                    &result.output,
+                                                )
+                                            );
+                                        }
+                                        // Loop continues — send results back to model
+                                    }
+                                    Ok(forge_agent::llm_client::LlmResponse::Done { text }) => {
+                                        // Model is done — send final text
+                                        if !text.is_empty() {
+                                            core_rpc.agent_text_chunk(text.clone(), false);
+                                        }
+                                        core_rpc.agent_text_chunk(String::new(), true);
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                                            message: text,
+                                        }));
+                                        return;
+                                    }
+                                    Ok(forge_agent::llm_client::LlmResponse::Error { error }) => {
+                                        core_rpc.agent_error(error.clone());
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { error }));
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        let error = format!("LLM request failed: {}", e);
+                                        core_rpc.agent_error(error.clone());
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { error }));
+                                        return;
+                                    }
+                                }
+                            }
+                            
+                            // Hit max turns
+                            core_rpc.agent_text_chunk("\n\n[Reached maximum number of turns]".to_string(), false);
+                            core_rpc.agent_text_chunk(String::new(), true);
+                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                                message: "Reached maximum turns".to_string(),
+                            }));
+                            return;
+                        }
+
+                        // ══════════════════════════════════════════════════════
+                        // PATH 2: Cloud (forge-search) — fallback when no API key
+                        // ══════════════════════════════════════════════════════
                         let workspace_name = workspace_path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "default".to_string());
 
-                        // ── Unified Cloud Chat Flow ──
-                        // The cloud (forge-search) is the "Brain".
-                        // The IDE (lapce-proxy) is the "Hands".
-                        
                         let fs_client = forge_agent::forge_search::client();
                         
-                        // ── Auto-Index on First Use ──
-                        // Ensure workspace is indexed before any agent interaction.
-                        // This is fire-and-wait: we want the context ready before the LLM runs.
+                        // Auto-Index
                         core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                             tool_call_id: "_indexing".to_string(),
                             tool_name: "Checking workspace index...".to_string(),
@@ -2245,7 +2471,7 @@ impl ProxyHandler for Dispatcher {
                             format!("Workspace ready ({} symbols indexed)", symbol_count)
                         } else if symbol_count > 0 {
                             format!("Indexed {} symbols", symbol_count)
-                                } else {
+                        } else {
                             "Workspace indexed".to_string()
                         };
                         
@@ -2257,27 +2483,17 @@ impl ProxyHandler for Dispatcher {
                             output: None,
                         });
                         
-                        // Collect open/relevant files to attach for context
                         let attached_files = collect_relevant_files(&workspace_path);
-                        
-                        // Multi-turn loop: keep sending to brain until done
-                        // Use conversation_id from the UI (persisted across messages)
                         let conversation_id = format!("{}-{}", workspace_name, conv_id);
                         let mut tool_results: Vec<serde_json::Value> = Vec::new();
                         let mut is_first_turn = true;
                         
-                        // Check if server supports SSE streaming
-                        let use_streaming = fs_client.supports_streaming().await;
-                        tracing::info!("Agent chat: streaming={}", use_streaming);
-
                         loop {
-                            // Build the request - server tracks state via conversation_id
                             let mut chat_req = serde_json::json!({
                                 "workspace_id": workspace_name,
                                 "conversation_id": conversation_id,
                             });
                             
-                            // First turn: send question + attached files
                             if is_first_turn {
                                 chat_req["question"] = serde_json::Value::String(prompt.clone());
                                 if !attached_files.is_empty() {
@@ -2286,16 +2502,13 @@ impl ProxyHandler for Dispatcher {
                                 is_first_turn = false;
                             }
                             
-                            // Subsequent turns: only send tool results
-                            // (server-side ConversationStore preserves full history)
                             if !tool_results.is_empty() {
                                 chat_req["tool_results"] = serde_json::Value::Array(tool_results.clone());
                                 tool_results.clear();
                             }
 
                             // ── SSE Streaming Path ──
-                            // Provides real-time visibility into server-side agent activity
-                            if use_streaming {
+                            {
                                 use futures_util::StreamExt;
                                 use forge_agent::SseEvent;
                                 
@@ -2304,6 +2517,11 @@ impl ProxyHandler for Dispatcher {
                                         let mut final_answer = String::new();
                                         let mut needs_ide_tools = false;
                                         let mut pending_tool_calls: Vec<forge_agent::ToolCallInfo> = Vec::new();
+                                        
+                                        // XML tool call accumulator: intercepts XML tool blocks
+                                        // from text deltas when the LLM uses XML-style tool calling
+                                        let mut xml_acc = XmlToolAccumulator::new();
+                                        let mut xml_tc_counter = 0u32;
                                         
                                         while let Some(event) = stream.next().await {
                                             match event {
@@ -2333,9 +2551,64 @@ impl ProxyHandler for Dispatcher {
                                                     );
                                                 }
                                                 SseEvent::TextDelta { text } => {
-                                                    // Stream text token to IDE
-                                                    core_rpc.agent_text_chunk(text.clone(), false);
-                                                    final_answer.push_str(&text);
+                                                    // Feed text through XML tool accumulator
+                                                    // It strips out XML tool blocks and returns only displayable text
+                                                    let display_text = xml_acc.push(&text);
+                                                    
+                                                    if !display_text.is_empty() {
+                                                        core_rpc.agent_text_chunk(display_text.clone(), false);
+                                                        final_answer.push_str(&display_text);
+                                                    }
+                                                    
+                                                    // Check if any complete XML tool calls were extracted
+                                                    if xml_acc.has_pending_tool_calls() {
+                                                        let xml_tools = xml_acc.take_tool_calls();
+                                                        for xtc in xml_tools {
+                                                            xml_tc_counter += 1;
+                                                            let tc_id = format!("xml-tc-{}", xml_tc_counter);
+                                                            
+                                                            // Skip non-actionable tools
+                                                            if xtc.name == "attempt_completion" || xtc.name == "ask_followup_question" || xtc.name == "think" {
+                                                                continue;
+                                                            }
+                                                            
+                                                            tracing::info!("Extracted XML tool call: {} ({})", xtc.name, tc_id);
+                                                            
+                                                            // Notify UI about tool call
+                                                            core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                                tool_call_id: tc_id.clone(),
+                                                                tool_name: xtc.name.clone(),
+                                                                arguments: serde_json::to_string(&xtc.args).unwrap_or_default(),
+                                                                status: "running".to_string(),
+                                                                output: None,
+                                                            });
+                                                            
+                                                            // Execute tool locally
+                                                            let tc_info = forge_agent::ToolCallInfo {
+                                                                id: tc_id.clone(),
+                                                                name: xtc.name.clone(),
+                                                                args: xtc.args.clone(),
+                                                            };
+                                                            let result = execute_ide_tool(&tc_info, &workspace_path).await;
+                                                            
+                                                            // Notify UI about result
+                                                            core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                                tool_call_id: tc_id.clone(),
+                                                                tool_name: xtc.name.clone(),
+                                                                arguments: String::new(),
+                                                                status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                                output: Some(result.output.clone()),
+                                                            });
+                                                            
+                                                            // Collect result to send back to brain
+                                                            tool_results.push(serde_json::json!({
+                                                                "call_id": tc_id,
+                                                                "tool_name": xtc.name,
+                                                                "output": result.output,
+                                                                "success": result.success,
+                                                            }));
+                                                        }
+                                                    }
                                                 }
                                                 SseEvent::Plan { steps } => {
                                                     // Forward plan to IDE
@@ -2354,15 +2627,17 @@ impl ProxyHandler for Dispatcher {
                                                     core_rpc.agent_plan(plan_steps);
                                                 }
                                                 SseEvent::RequiresAction { tool_calls } => {
-                                                    // IDE needs to execute these tools
+                                                    // IDE needs to execute these tools (structured format)
                                                     needs_ide_tools = true;
                                                     pending_tool_calls = tool_calls;
                                                 }
                                                 SseEvent::Done { answer } => {
                                                     if let Some(ans) = answer {
-                                                        if final_answer.is_empty() {
-                                                            final_answer = ans;
-                                                            core_rpc.agent_text_chunk(final_answer.clone(), false);
+                                                        // Feed the final answer through XML accumulator too
+                                                        let display_text = xml_acc.push(&ans);
+                                                        if !display_text.is_empty() && final_answer.is_empty() {
+                                                            final_answer = display_text.clone();
+                                                            core_rpc.agent_text_chunk(display_text, false);
                                                         }
                                                     }
                                                     // Will handle completion after stream ends
@@ -2375,7 +2650,56 @@ impl ProxyHandler for Dispatcher {
                                             }
                                         }
                                         
-                                        // Stream ended - check if we need to execute IDE tools
+                                        // Stream ended - flush any remaining text from XML accumulator
+                                        let remaining = xml_acc.flush_remaining();
+                                        if !remaining.is_empty() {
+                                            core_rpc.agent_text_chunk(remaining.clone(), false);
+                                            final_answer.push_str(&remaining);
+                                        }
+                                        
+                                        // Execute any remaining XML-extracted tool calls
+                                        if xml_acc.has_pending_tool_calls() {
+                                            let xml_tools = xml_acc.take_tool_calls();
+                                            for xtc in xml_tools {
+                                                if xtc.name == "attempt_completion" || xtc.name == "ask_followup_question" || xtc.name == "think" {
+                                                    continue;
+                                                }
+                                                xml_tc_counter += 1;
+                                                let tc_id = format!("xml-tc-{}", xml_tc_counter);
+                                                
+                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                    tool_call_id: tc_id.clone(),
+                                                    tool_name: xtc.name.clone(),
+                                                    arguments: serde_json::to_string(&xtc.args).unwrap_or_default(),
+                                                    status: "running".to_string(),
+                                                    output: None,
+                                                });
+                                                
+                                                let tc_info = forge_agent::ToolCallInfo {
+                                                    id: tc_id.clone(),
+                                                    name: xtc.name.clone(),
+                                                    args: xtc.args.clone(),
+                                                };
+                                                let result = execute_ide_tool(&tc_info, &workspace_path).await;
+                                                
+                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                    tool_call_id: tc_id.clone(),
+                                                    tool_name: xtc.name.clone(),
+                                                    arguments: String::new(),
+                                                    status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                    output: Some(result.output.clone()),
+                                                });
+                                                
+                                                tool_results.push(serde_json::json!({
+                                                    "call_id": tc_id,
+                                                    "tool_name": xtc.name,
+                                                    "output": result.output,
+                                                    "success": result.success,
+                                                }));
+                                            }
+                                        }
+                                        
+                                        // Check if we need to execute structured IDE tools (RequiresAction)
                                         if needs_ide_tools && !pending_tool_calls.is_empty() {
                                             for tc in pending_tool_calls {
                                                 // Notify UI about tool call
@@ -2410,6 +2734,11 @@ impl ProxyHandler for Dispatcher {
                                             continue;
                                         }
                                         
+                                        // If XML tool calls were executed, send results back to brain
+                                        if !tool_results.is_empty() {
+                                            continue;
+                                        }
+                                        
                                         // Done - send completion
                                         core_rpc.agent_text_chunk(String::new(), true);
                                         proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
@@ -2419,79 +2748,6 @@ impl ProxyHandler for Dispatcher {
                                     }
                                     Err(e) => {
                                         core_rpc.agent_error(e.to_string());
-                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
-                                            error: e.to_string() 
-                                        }));
-                                        return;
-                                    }
-                                }
-                            } else {
-                                // ── Legacy Non-Streaming Path ──
-                                // Fallback for servers that don't support SSE
-                                match fs_client.chat_multi_turn(&chat_req).await {
-                                    Ok(response) => {
-                                        match response.status.as_str() {
-                                            "done" => {
-                                                // Agent is done, send final answer
-                                                if let Some(answer) = &response.answer {
-                                                    core_rpc.agent_text_chunk(answer.clone(), false);
-                                                }
-                                                core_rpc.agent_text_chunk(String::new(), true);
-                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
-                                                    message: response.answer.unwrap_or_default() 
-                                                }));
-                                                return;
-                                            }
-                                            "requires_action" => {
-                                                // Agent needs us to execute IDE tools
-                                                if let Some(tool_calls) = response.tool_calls {
-                                                    for tc in tool_calls {
-                                                        // Notify UI about tool call
-                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                            tool_call_id: tc.id.clone(),
-                                                            tool_name: tc.name.clone(),
-                                                            arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
-                                                            status: "running".to_string(),
-                                                            output: None,
-                                                        });
-                                                        
-                                                        // Execute tool locally ("Hands")
-                                                        let tc_info = forge_agent::ToolCallInfo {
-                                                            id: tc.id.clone(),
-                                                            name: tc.name.clone(),
-                                                            args: tc.args.clone(),
-                                                        };
-                                                        let result = execute_ide_tool(&tc_info, &workspace_path).await;
-                                                        
-                                                        // Notify UI about result
-                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                            tool_call_id: tc.id.clone(),
-                                                            tool_name: tc.name.clone(),
-                                                            arguments: String::new(),
-                                                            status: if result.success { "completed" } else { "failed" }.to_string(),
-                                                            output: Some(result.output.clone()),
-                                                        });
-                                                        
-                                                        // Collect result to send back to brain
-                                                        tool_results.push(serde_json::json!({
-                                                            "call_id": tc.id,
-                                                            "output": result.output,
-                                                            "success": result.success,
-                                                        }));
-                                                    }
-                                                }
-                                                // Continue loop to send results back to brain
-                                            }
-                                            status => {
-                                                // Unknown status or error
-                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
-                                                    error: format!("Unknown status: {}", status)
-                                                }));
-                                                return;
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
                                         proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
                                             error: e.to_string() 
                                         }));
@@ -2511,15 +2767,19 @@ impl ProxyHandler for Dispatcher {
                 }));
             }
             AgentApproveToolCall { tool_call_id } => {
-                // TODO: Signal approval to agent runtime
                 tracing::info!("Agent tool call approved: {tool_call_id}");
+                if let Some(sender) = self.pending_approvals.lock().remove(&tool_call_id) {
+                    let _ = sender.send(true);
+                }
                 self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
                     message: format!("Approved: {tool_call_id}"),
                 }));
             }
             AgentRejectToolCall { tool_call_id } => {
-                // TODO: Signal rejection to agent runtime
                 tracing::info!("Agent tool call rejected: {tool_call_id}");
+                if let Some(sender) = self.pending_approvals.lock().remove(&tool_call_id) {
+                    let _ = sender.send(false);
+                }
                 self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
                     message: format!("Rejected: {tool_call_id}"),
                 }));
@@ -2891,6 +3151,224 @@ impl ProxyHandler for Dispatcher {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════
+//  XML Tool Call Parser
+//  Handles LLMs that emit tool calls as XML tags in their text output
+//  (e.g. <write_to_file><path>foo.js</path><content>...</content></write_to_file>)
+//  instead of using native function calling.
+// ══════════════════════════════════════════════════════════════════
+
+/// XML-based tool call tags that the LLM may emit inline in its text response.
+const XML_TOOL_TAGS: &[&str] = &[
+    "write_to_file",
+    "read_file",
+    "replace_in_file",
+    "execute_command",
+    "list_files",
+    "delete_file",
+    "apply_patch",
+    "attempt_completion",
+    "ask_followup_question",
+];
+
+/// A parsed XML tool call extracted from LLM text output.
+#[derive(Debug, Clone)]
+struct XmlToolCall {
+    name: String,
+    args: serde_json::Value,
+}
+
+/// Accumulator for streaming XML tool call detection.
+/// As text deltas arrive, this buffers content and detects complete
+/// XML tool blocks like `<write_to_file>...</write_to_file>`.
+struct XmlToolAccumulator {
+    /// Full accumulated text from the LLM
+    buffer: String,
+    /// Text that has been confirmed as non-tool-call and sent to UI
+    flushed_up_to: usize,
+    /// Tool calls extracted so far
+    extracted: Vec<XmlToolCall>,
+}
+
+impl XmlToolAccumulator {
+    fn new() -> Self {
+        Self {
+            buffer: String::new(),
+            flushed_up_to: 0,
+            extracted: Vec::new(),
+        }
+    }
+
+    /// Append a text delta and try to extract any complete XML tool calls.
+    /// Returns text that is safe to display to the user (non-tool-call text).
+    fn push(&mut self, text: &str) -> String {
+        self.buffer.push_str(text);
+        self.try_extract_display_text()
+    }
+
+    /// After the stream ends, flush any remaining non-tool text.
+    fn flush_remaining(&mut self) -> String {
+        // Try one final extraction
+        let _ = self.try_extract_display_text();
+        
+        // Whatever's left that wasn't part of a tool call
+        let remaining = &self.buffer[self.flushed_up_to..];
+        
+        // Check if remaining contains an incomplete tool tag opening
+        // If so, it's probably a broken tool call — show it as text
+        let result = remaining.to_string();
+        self.flushed_up_to = self.buffer.len();
+        result
+    }
+
+    /// Try to extract complete XML tool calls and return displayable text.
+    fn try_extract_display_text(&mut self) -> String {
+        let mut display_text = String::new();
+        let buf = &self.buffer[self.flushed_up_to..];
+
+        // Look for opening XML tool tags
+        let mut search_from = 0;
+        while search_from < buf.len() {
+            // Find the earliest opening tag
+            let mut earliest_tag: Option<(&str, usize)> = None;
+            for tag in XML_TOOL_TAGS {
+                let open = format!("<{}", tag);
+                if let Some(pos) = buf[search_from..].find(&open) {
+                    let abs_pos = search_from + pos;
+                    if earliest_tag.is_none() || abs_pos < earliest_tag.unwrap().1 {
+                        earliest_tag = Some((tag, abs_pos));
+                    }
+                }
+            }
+
+            match earliest_tag {
+                Some((tag, open_pos)) => {
+                    // Flush text before the opening tag as display text
+                    if open_pos > search_from {
+                        display_text.push_str(&buf[search_from..open_pos]);
+                    }
+
+                    // Look for the closing tag
+                    let close_tag = format!("</{}>", tag);
+                    if let Some(close_pos) = buf[open_pos..].find(&close_tag) {
+                        let block_end = open_pos + close_pos + close_tag.len();
+                        let xml_block = &buf[open_pos..block_end];
+
+                        // Parse the XML block into a tool call
+                        if let Some(tc) = parse_xml_tool_call(tag, xml_block) {
+                            self.extracted.push(tc);
+                        }
+
+                        // Move past this block
+                        search_from = block_end;
+                    } else {
+                        // No closing tag yet — stop and wait for more data
+                        // Don't flush the opening tag text
+                        self.flushed_up_to += search_from;
+                        // But do return any text before the tag opening
+                        // (the display_text we accumulated before the tag)
+                        return display_text;
+                    }
+                }
+                None => {
+                    // No tool tags found — all remaining text is displayable
+                    // But be cautious: if the buffer ends with a partial "<" it might
+                    // be the start of a tag
+                    let safe_end = if buf[search_from..].ends_with('<') {
+                        buf.len() - 1
+                    } else {
+                        buf.len()
+                    };
+                    if safe_end > search_from {
+                        display_text.push_str(&buf[search_from..safe_end]);
+                    }
+                    search_from = safe_end;
+                    break;
+                }
+            }
+        }
+
+        self.flushed_up_to += search_from;
+        display_text
+    }
+
+    /// Take all extracted tool calls (drains the internal list).
+    fn take_tool_calls(&mut self) -> Vec<XmlToolCall> {
+        std::mem::take(&mut self.extracted)
+    }
+
+    /// Check if there are pending (extracted but not yet taken) tool calls.
+    fn has_pending_tool_calls(&self) -> bool {
+        !self.extracted.is_empty()
+    }
+}
+
+/// Parse a single XML tool block into an XmlToolCall.
+/// E.g. `<write_to_file><path>foo.js</path><content>hello</content></write_to_file>`
+fn parse_xml_tool_call(tag_name: &str, xml_block: &str) -> Option<XmlToolCall> {
+    let mut args = serde_json::Map::new();
+
+    // Extract inner content (between the outer opening and closing tags)
+    let open_end = xml_block.find('>')? + 1;
+    let close_start = xml_block.rfind(&format!("</{}>", tag_name))?;
+    let inner = &xml_block[open_end..close_start];
+
+    // Parse child elements as key-value pairs
+    // We handle both <key>value</key> and plain content
+    let mut pos = 0;
+    while pos < inner.len() {
+        // Find next opening tag
+        if let Some(tag_start) = inner[pos..].find('<') {
+            let abs_start = pos + tag_start;
+            
+            // Skip if it looks like a closing tag
+            if inner[abs_start..].starts_with("</") {
+                pos = abs_start + 2;
+                continue;
+            }
+
+            // Extract child tag name
+            let tag_content_start = abs_start + 1;
+            let tag_name_end = inner[tag_content_start..].find(|c: char| c == '>' || c.is_whitespace());
+            if let Some(end) = tag_name_end {
+                let child_tag = &inner[tag_content_start..tag_content_start + end];
+                
+                // Find the closing > of the opening tag
+                if let Some(open_close) = inner[tag_content_start..].find('>') {
+                    let value_start = tag_content_start + open_close + 1;
+                    
+                    // Find closing tag
+                    let close = format!("</{}>", child_tag);
+                    if let Some(close_pos) = inner[value_start..].find(&close) {
+                        let value = &inner[value_start..value_start + close_pos];
+                        args.insert(child_tag.to_string(), serde_json::Value::String(value.to_string()));
+                        pos = value_start + close_pos + close.len();
+                        continue;
+                    }
+                }
+            }
+            pos = abs_start + 1;
+        } else {
+            break;
+        }
+    }
+
+    // If no child elements found but there's content, treat as single-value
+    if args.is_empty() && !inner.trim().is_empty() {
+        // For simple tools like attempt_completion
+        args.insert("result".to_string(), serde_json::Value::String(inner.trim().to_string()));
+    }
+
+    if args.is_empty() {
+        return None;
+    }
+
+    Some(XmlToolCall {
+        name: tag_name.to_string(),
+        args: serde_json::Value::Object(args),
+    })
+}
+
 /// Execute an IDE tool locally (the "Hands" executing what the "Brain" requested).
 /// This handles tool calls that need to run in the IDE context.
 async fn execute_ide_tool(
@@ -2990,6 +3468,7 @@ impl Dispatcher {
             tab_id: 1,
             db_manager: crate::database::connection_manager::ConnectionManager::new(),
             pending_diff_snapshots: Arc::new(Mutex::new(HashMap::new())),
+            pending_approvals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

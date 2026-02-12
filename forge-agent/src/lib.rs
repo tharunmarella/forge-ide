@@ -1,5 +1,6 @@
 pub mod bridge;
 pub mod bridge_standalone;
+pub mod llm_client;
 pub mod loop_detection;
 pub mod output_masking;
 pub mod tools;
@@ -17,6 +18,8 @@ pub use forge_search::{
     ForgeSearchClient, 
     SseEvent, 
     SsePlanStep,
-    ChatResponse,
     ToolCallInfo,
 };
+
+// Re-export LLM client for native function calling
+pub use llm_client::LlmClient;

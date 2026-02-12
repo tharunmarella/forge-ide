@@ -159,6 +159,17 @@ pub enum CoreNotification {
         status: String,
         output: Option<String>,
     },
+    /// Agent wants to execute a mutating tool — asks user for approval.
+    /// UI should show Accept/Reject buttons. Respond with AgentApproveToolCall
+    /// or AgentRejectToolCall via ProxyRequest.
+    AgentToolCallApprovalRequest {
+        tool_call_id: String,
+        tool_name: String,
+        /// Human-readable summary of what the tool will do
+        summary: String,
+        /// Tool arguments as JSON string (for detailed view)
+        arguments: String,
+    },
     AgentError {
         error: String,
     },

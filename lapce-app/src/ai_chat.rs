@@ -149,9 +149,13 @@ pub struct ChatToolCall {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ToolCallStatus {
     Pending,
+    /// Waiting for user to approve or reject this tool call.
+    WaitingApproval,
     Running,
     Success,
     Error,
+    /// User rejected this tool call.
+    Rejected,
 }
 
 /// A single entry in the chat, with a unique id and version for reactive re-rendering.

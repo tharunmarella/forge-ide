@@ -2792,8 +2792,10 @@ impl WindowTabData {
                 };
                 let tc_status = match status.as_str() {
                     "running" => ToolCallStatus::Running,
-                    "completed" => ToolCallStatus::Success,
-                    "error" => ToolCallStatus::Error,
+                    "completed" | "success" => ToolCallStatus::Success,
+                    "error" | "failed" => ToolCallStatus::Error,
+                    "waiting_approval" => ToolCallStatus::WaitingApproval,
+                    "rejected" => ToolCallStatus::Rejected,
                     _ => ToolCallStatus::Pending,
                 };
 
@@ -2853,6 +2855,47 @@ impl WindowTabData {
                 }
 
                 // Auto-scroll
+                self.ai_chat.request_scroll_to_bottom();
+            }
+            CoreNotification::AgentToolCallApprovalRequest {
+                tool_call_id,
+                tool_name,
+                summary,
+                arguments,
+            } => {
+                use crate::ai_chat::{
+                    ChatEntryKind, ChatToolCall, ToolCallStatus, new_tool_call,
+                };
+                
+                // Flush any pending streaming text
+                let pending_text = self.ai_chat.streaming_text.get_untracked();
+                if !pending_text.is_empty() {
+                    use crate::ai_chat::{ChatRole, new_message};
+                    self.ai_chat.entries.update(|entries| {
+                        entries.push_back(new_message(
+                            ChatRole::Assistant,
+                            pending_text,
+                        ));
+                    });
+                    self.ai_chat.streaming_text.set(String::new());
+                }
+
+                // Add as a WaitingApproval tool call entry
+                self.ai_chat.entries.update(|entries| {
+                    entries.push_back(new_tool_call(ChatToolCall {
+                        id: tool_call_id.clone(),
+                        name: tool_name.clone(),
+                        arguments: arguments.clone(),
+                        status: ToolCallStatus::WaitingApproval,
+                        output: Some(summary.clone()),
+                        started_at: std::time::Instant::now(),
+                        elapsed_display: String::new(),
+                    }));
+                });
+
+                if !self.ai_chat.has_first_token.get_untracked() {
+                    self.ai_chat.has_first_token.set(true);
+                }
                 self.ai_chat.request_scroll_to_bottom();
             }
             CoreNotification::AgentError { error } => {
