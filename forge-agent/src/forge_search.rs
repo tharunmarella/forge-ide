@@ -344,6 +344,12 @@ impl ForgeSearchClient {
         })).await
     }
 
+    /// Chat with a full request body (for multi-turn tool loops).
+    /// The body should contain workspace_id, conversation_id, question, tool_results, etc.
+    pub async fn chat_with_body(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.post("/chat", body).await
+    }
+
     /// Chat with SSE streaming for real-time agent activity visibility.
     /// Returns a stream of SseEvent that the proxy can forward to the IDE.
     /// 

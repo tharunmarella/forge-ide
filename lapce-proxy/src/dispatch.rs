@@ -2447,6 +2447,7 @@ impl ProxyHandler for Dispatcher {
 
                         // ══════════════════════════════════════════════════════
                         // PATH 2: Cloud (forge-search) — fallback when no API key
+                        // Uses the /chat endpoint (JSON, not SSE) with multi-turn tool loop.
                         // ══════════════════════════════════════════════════════
                         let workspace_name = workspace_path
                             .file_name()
@@ -2488,7 +2489,9 @@ impl ProxyHandler for Dispatcher {
                         let mut tool_results: Vec<serde_json::Value> = Vec::new();
                         let mut is_first_turn = true;
                         
-                        loop {
+                        const MAX_CLOUD_TURNS: usize = 30;
+                        
+                        for turn in 0..MAX_CLOUD_TURNS {
                             let mut chat_req = serde_json::json!({
                                 "workspace_id": workspace_name,
                                 "conversation_id": conversation_id,
@@ -2507,184 +2510,53 @@ impl ProxyHandler for Dispatcher {
                                 tool_results.clear();
                             }
 
-                            // ── SSE Streaming Path ──
-                            {
-                                use futures_util::StreamExt;
-                                use forge_agent::SseEvent;
-                                
-                                match fs_client.chat_stream(&chat_req).await {
-                                    Ok(mut stream) => {
-                                        let mut final_answer = String::new();
-                                        let mut needs_ide_tools = false;
-                                        let mut pending_tool_calls: Vec<forge_agent::ToolCallInfo> = Vec::new();
-                                        
-                                        // XML tool call accumulator: intercepts XML tool blocks
-                                        // from text deltas when the LLM uses XML-style tool calling
-                                        let mut xml_acc = XmlToolAccumulator::new();
-                                        let mut xml_tc_counter = 0u32;
-                                        
-                                        while let Some(event) = stream.next().await {
-                                            match event {
-                                                SseEvent::Thinking { step_type, message, detail } => {
-                                                    // Forward thinking step to IDE
-                                                    core_rpc.agent_thinking_step(
-                                                        step_type,
-                                                        message,
-                                                        detail,
-                                                    );
-                                                }
-                                                SseEvent::ToolStart { tool_call_id, tool_name, arguments } => {
-                                                    // Server-side tool started
-                                                    core_rpc.agent_server_tool_start(
-                                                        tool_call_id,
-                                                        tool_name,
-                                                        serde_json::to_string(&arguments).unwrap_or_default(),
-                                                    );
-                                                }
-                                                SseEvent::ToolEnd { tool_call_id, tool_name, result_summary, success } => {
-                                                    // Server-side tool completed
-                                                    core_rpc.agent_server_tool_end(
-                                                        tool_call_id,
-                                                        tool_name,
-                                                        result_summary,
-                                                        success,
-                                                    );
-                                                }
-                                                SseEvent::TextDelta { text } => {
-                                                    // Feed text through XML tool accumulator
-                                                    // It strips out XML tool blocks and returns only displayable text
-                                                    let display_text = xml_acc.push(&text);
-                                                    
-                                                    if !display_text.is_empty() {
-                                                        core_rpc.agent_text_chunk(display_text.clone(), false);
-                                                        final_answer.push_str(&display_text);
-                                                    }
-                                                    
-                                                    // Check if any complete XML tool calls were extracted
-                                                    if xml_acc.has_pending_tool_calls() {
-                                                        let xml_tools = xml_acc.take_tool_calls();
-                                                        for xtc in xml_tools {
-                                                            xml_tc_counter += 1;
-                                                            let tc_id = format!("xml-tc-{}", xml_tc_counter);
-                                                            
-                                                            // Skip non-actionable tools
-                                                            if xtc.name == "attempt_completion" || xtc.name == "ask_followup_question" || xtc.name == "think" {
-                                                                continue;
-                                                            }
-                                                            
-                                                            tracing::info!("Extracted XML tool call: {} ({})", xtc.name, tc_id);
-                                                            
-                                                            // Notify UI about tool call
-                                                            core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                                tool_call_id: tc_id.clone(),
-                                                                tool_name: xtc.name.clone(),
-                                                                arguments: serde_json::to_string(&xtc.args).unwrap_or_default(),
-                                                                status: "running".to_string(),
-                                                                output: None,
-                                                            });
-                                                            
-                                                            // Execute tool locally
-                                                            let tc_info = forge_agent::ToolCallInfo {
-                                                                id: tc_id.clone(),
-                                                                name: xtc.name.clone(),
-                                                                args: xtc.args.clone(),
-                                                            };
-                                                            let result = execute_ide_tool(&tc_info, &workspace_path).await;
-                                                            
-                                                            // Notify UI about result
-                                                            core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                                tool_call_id: tc_id.clone(),
-                                                                tool_name: xtc.name.clone(),
-                                                                arguments: String::new(),
-                                                                status: if result.success { "completed" } else { "failed" }.to_string(),
-                                                                output: Some(result.output.clone()),
-                                                            });
-                                                            
-                                                            // Collect result to send back to brain
-                                                            tool_results.push(serde_json::json!({
-                                                                "call_id": tc_id,
-                                                                "tool_name": xtc.name,
-                                                                "output": result.output,
-                                                                "success": result.success,
-                                                            }));
-                                                        }
-                                                    }
-                                                }
-                                                SseEvent::Plan { steps } => {
-                                                    // Forward plan to IDE
-                                                    let plan_steps: Vec<lapce_rpc::core::AgentPlanStep> = steps
-                                                        .into_iter()
-                                                        .map(|s| lapce_rpc::core::AgentPlanStep {
-                                                            number: s.number,
-                                                            description: s.description,
-                                                            status: match s.status.as_str() {
-                                                                "in_progress" => lapce_rpc::core::AgentPlanStepStatus::InProgress,
-                                                                "done" => lapce_rpc::core::AgentPlanStepStatus::Done,
-                                                                _ => lapce_rpc::core::AgentPlanStepStatus::Pending,
-                                                            },
-                                                        })
-                                                        .collect();
-                                                    core_rpc.agent_plan(plan_steps);
-                                                }
-                                                SseEvent::RequiresAction { tool_calls } => {
-                                                    // IDE needs to execute these tools (structured format)
-                                                    needs_ide_tools = true;
-                                                    pending_tool_calls = tool_calls;
-                                                }
-                                                SseEvent::Done { answer } => {
-                                                    if let Some(ans) = answer {
-                                                        // Feed the final answer through XML accumulator too
-                                                        let display_text = xml_acc.push(&ans);
-                                                        if !display_text.is_empty() && final_answer.is_empty() {
-                                                            final_answer = display_text.clone();
-                                                            core_rpc.agent_text_chunk(display_text, false);
-                                                        }
-                                                    }
-                                                    // Will handle completion after stream ends
-                                                }
-                                                SseEvent::Error { error } => {
-                                                    core_rpc.agent_error(error.clone());
-                                                    proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { error }));
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                        
-                                        // Stream ended - flush any remaining text from XML accumulator
-                                        let remaining = xml_acc.flush_remaining();
-                                        if !remaining.is_empty() {
-                                            core_rpc.agent_text_chunk(remaining.clone(), false);
-                                            final_answer.push_str(&remaining);
-                                        }
-                                        
-                                        // Execute any remaining XML-extracted tool calls
-                                        if xml_acc.has_pending_tool_calls() {
-                                            let xml_tools = xml_acc.take_tool_calls();
-                                            for xtc in xml_tools {
-                                                if xtc.name == "attempt_completion" || xtc.name == "ask_followup_question" || xtc.name == "think" {
-                                                    continue;
-                                                }
-                                                xml_tc_counter += 1;
-                                                let tc_id = format!("xml-tc-{}", xml_tc_counter);
+                            tracing::info!("Cloud chat turn {} for {}", turn + 1, conversation_id);
+
+                            // ── Non-streaming JSON request to /chat ──
+                            match fs_client.chat_with_body(&chat_req).await {
+                                Ok(response) => {
+                                    // Parse the response - it's a JSON object with answer, tool_calls, status
+                                    let answer = response.get("answer").and_then(|a| a.as_str()).unwrap_or("");
+                                    let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("done");
+                                    let server_tool_calls = response.get("tool_calls").and_then(|t| t.as_array());
+                                    
+                                    // Send answer text to UI
+                                    if !answer.is_empty() {
+                                        core_rpc.agent_text_chunk(answer.to_string(), false);
+                                    }
+                                    
+                                    // Check for tool calls that need IDE execution
+                                    if status == "requires_action" {
+                                        if let Some(tcs) = server_tool_calls {
+                                            let mut has_tool_calls = false;
+                                            for tc_val in tcs {
+                                                let tc_id = tc_val.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                                                let tc_name = tc_val.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                                let tc_args = tc_val.get("args").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
                                                 
+                                                if tc_name.is_empty() { continue; }
+                                                has_tool_calls = true;
+                                                
+                                                // Notify UI
                                                 core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                     tool_call_id: tc_id.clone(),
-                                                    tool_name: xtc.name.clone(),
-                                                    arguments: serde_json::to_string(&xtc.args).unwrap_or_default(),
+                                                    tool_name: tc_name.clone(),
+                                                    arguments: serde_json::to_string(&tc_args).unwrap_or_default(),
                                                     status: "running".to_string(),
                                                     output: None,
                                                 });
                                                 
+                                                // Execute tool locally
                                                 let tc_info = forge_agent::ToolCallInfo {
                                                     id: tc_id.clone(),
-                                                    name: xtc.name.clone(),
-                                                    args: xtc.args.clone(),
+                                                    name: tc_name.clone(),
+                                                    args: tc_args,
                                                 };
                                                 let result = execute_ide_tool(&tc_info, &workspace_path).await;
                                                 
                                                 core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                     tool_call_id: tc_id.clone(),
-                                                    tool_name: xtc.name.clone(),
+                                                    tool_name: tc_name.clone(),
                                                     arguments: String::new(),
                                                     status: if result.success { "completed" } else { "failed" }.to_string(),
                                                     output: Some(result.output.clone()),
@@ -2692,70 +2564,40 @@ impl ProxyHandler for Dispatcher {
                                                 
                                                 tool_results.push(serde_json::json!({
                                                     "call_id": tc_id,
-                                                    "tool_name": xtc.name,
                                                     "output": result.output,
                                                     "success": result.success,
                                                 }));
                                             }
-                                        }
-                                        
-                                        // Check if we need to execute structured IDE tools (RequiresAction)
-                                        if needs_ide_tools && !pending_tool_calls.is_empty() {
-                                            for tc in pending_tool_calls {
-                                                // Notify UI about tool call
-                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                    tool_call_id: tc.id.clone(),
-                                                    tool_name: tc.name.clone(),
-                                                    arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
-                                                    status: "running".to_string(),
-                                                    output: None,
-                                                });
-                                                
-                                                // Execute tool locally ("Hands")
-                                                let result = execute_ide_tool(&tc, &workspace_path).await;
-                                                
-                                                // Notify UI about result
-                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                    tool_call_id: tc.id.clone(),
-                                                    tool_name: tc.name.clone(),
-                                                    arguments: String::new(),
-                                                    status: if result.success { "completed" } else { "failed" }.to_string(),
-                                                    output: Some(result.output.clone()),
-                                                });
-                                                
-                                                // Collect result to send back to brain
-                                                tool_results.push(serde_json::json!({
-                                                    "call_id": tc.id,
-                                                    "output": result.output,
-                                                    "success": result.success,
-                                                }));
+                                            
+                                            if has_tool_calls {
+                                                continue; // Loop back to send results to server
                                             }
-                                            // Continue loop to send results back to brain
-                                            continue;
                                         }
-                                        
-                                        // If XML tool calls were executed, send results back to brain
-                                        if !tool_results.is_empty() {
-                                            continue;
-                                        }
-                                        
-                                        // Done - send completion
-                                        core_rpc.agent_text_chunk(String::new(), true);
-                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
-                                            message: final_answer 
-                                        }));
-                                        return;
                                     }
-                                    Err(e) => {
-                                        core_rpc.agent_error(e.to_string());
-                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
-                                            error: e.to_string() 
-                                        }));
-                                        return;
-                                    }
+                                    
+                                    // Done
+                                    core_rpc.agent_text_chunk(String::new(), true);
+                                    proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                                        message: answer.to_string(),
+                                    }));
+                                    return;
+                                }
+                                Err(e) => {
+                                    let error = format!("Cloud chat failed: {}", e);
+                                    tracing::error!("{}", error);
+                                    core_rpc.agent_error(error.clone());
+                                    proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { error }));
+                                    return;
                                 }
                             }
                         }
+                        
+                        // Hit max cloud turns
+                        core_rpc.agent_text_chunk("\n\n[Reached maximum turns]".to_string(), false);
+                        core_rpc.agent_text_chunk(String::new(), true);
+                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
+                            message: "Reached maximum turns".to_string(),
+                        }));
                     });
                 });
             }
