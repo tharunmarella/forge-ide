@@ -2745,6 +2745,8 @@ impl WindowTabData {
                     // Mark that we've received the first token (hides thinking indicator)
                     if !self.ai_chat.has_first_token.get_untracked() {
                         self.ai_chat.has_first_token.set(true);
+                        // Auto-collapse thinking section when answer starts arriving
+                        self.ai_chat.thinking_collapsed.set(true);
                     }
 
                     // Accumulate into the streaming_text signal (plain text, fast)
@@ -2768,6 +2770,11 @@ impl WindowTabData {
                     self.ai_chat.streaming_text.set(String::new());
                     self.ai_chat.has_first_token.set(false);
                     self.ai_chat.is_loading.set(false);
+                    
+                    // Collapse thinking section now that we have the answer
+                    self.ai_chat.thinking_collapsed.set(true);
+                    // Clear thinking steps for next turn
+                    self.ai_chat.thinking_steps.set(im::Vector::new());
 
                     // One final scroll to show the rendered markdown
                     self.ai_chat.request_scroll_to_bottom();
@@ -2908,6 +2915,75 @@ impl WindowTabData {
                 // Update the AI chat index status and progress
                 self.ai_chat.index_status.set(status.clone());
                 self.ai_chat.index_progress.set(*progress);
+            }
+            CoreNotification::AgentThinkingStep { step_type, message, detail } => {
+                // Add a thinking step to the thinking section
+                use crate::ai_chat::new_thinking_step;
+                let entry = new_thinking_step(
+                    step_type.clone(),
+                    message.clone(),
+                    detail.clone(),
+                );
+                self.ai_chat.thinking_steps.update(|steps| {
+                    steps.push_back(entry);
+                });
+                // Ensure thinking section is visible (not collapsed)
+                self.ai_chat.thinking_collapsed.set(false);
+                self.ai_chat.request_scroll_to_bottom();
+            }
+            CoreNotification::AgentPlan { steps } => {
+                // Add a plan entry to the chat
+                use crate::ai_chat::{new_plan, ChatPlanStep, ChatPlanStepStatus};
+                let plan_steps: Vec<ChatPlanStep> = steps
+                    .iter()
+                    .map(|s| ChatPlanStep {
+                        number: s.number,
+                        description: s.description.clone(),
+                        status: match s.status {
+                            lapce_rpc::core::AgentPlanStepStatus::Pending => ChatPlanStepStatus::Pending,
+                            lapce_rpc::core::AgentPlanStepStatus::InProgress => ChatPlanStepStatus::InProgress,
+                            lapce_rpc::core::AgentPlanStepStatus::Done => ChatPlanStepStatus::Done,
+                        },
+                    })
+                    .collect();
+                let entry = new_plan(plan_steps);
+                // Add to thinking steps (plan is part of thinking)
+                self.ai_chat.thinking_steps.update(|steps| {
+                    steps.push_back(entry);
+                });
+                self.ai_chat.thinking_collapsed.set(false);
+                self.ai_chat.request_scroll_to_bottom();
+            }
+            CoreNotification::AgentServerToolStart { tool_call_id, tool_name, arguments } => {
+                // Add a server tool call to the thinking section
+                use crate::ai_chat::new_server_tool_call;
+                let entry = new_server_tool_call(
+                    tool_call_id.clone(),
+                    tool_name.clone(),
+                    arguments.clone(),
+                );
+                self.ai_chat.thinking_steps.update(|steps| {
+                    steps.push_back(entry);
+                });
+                self.ai_chat.thinking_collapsed.set(false);
+                self.ai_chat.request_scroll_to_bottom();
+            }
+            CoreNotification::AgentServerToolEnd { tool_call_id, tool_name, result_summary, success } => {
+                // Update the server tool call status
+                use crate::ai_chat::{ChatEntryKind, ToolCallStatus};
+                self.ai_chat.thinking_steps.update(|steps| {
+                    for entry in steps.iter_mut() {
+                        if let ChatEntryKind::ServerToolCall(ref mut tc) = entry.kind {
+                            if tc.id == *tool_call_id {
+                                tc.status = if *success { ToolCallStatus::Success } else { ToolCallStatus::Error };
+                                tc.result_summary = Some(result_summary.clone());
+                                tc.elapsed_display = format!("{:.1}s", tc.started_at.elapsed().as_secs_f32());
+                                entry.version += 1;
+                                break;
+                            }
+                        }
+                    }
+                });
             }
             _ => {}
         }

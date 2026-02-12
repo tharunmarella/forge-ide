@@ -162,6 +162,40 @@ pub enum CoreNotification {
     AgentError {
         error: String,
     },
+    /// Agent thinking step - shows what the agent is doing server-side.
+    AgentThinkingStep {
+        /// Type of step: "enriching", "reasoning", "searching", "plan", "tool"
+        step_type: String,
+        /// Human-readable description of what's happening
+        message: String,
+        /// Optional detail (e.g., plan items as JSON, search results count)
+        detail: Option<String>,
+    },
+    /// Agent's task plan - breakdown of steps it will execute.
+    AgentPlan {
+        /// List of plan steps
+        steps: Vec<AgentPlanStep>,
+    },
+    /// Server-side tool execution started.
+    AgentServerToolStart {
+        /// Tool call ID for correlation
+        tool_call_id: String,
+        /// Name of the tool being executed
+        tool_name: String,
+        /// Tool arguments as JSON string
+        arguments: String,
+    },
+    /// Server-side tool execution completed.
+    AgentServerToolEnd {
+        /// Tool call ID for correlation
+        tool_call_id: String,
+        /// Name of the tool
+        tool_name: String,
+        /// Brief summary of the result
+        result_summary: String,
+        /// Whether the tool succeeded
+        success: bool,
+    },
 
     // ── AI Diff Preview (accept/reject) ──────────────────
     /// The agent proposes a file edit — show inline diff preview instead of writing to disk.
@@ -197,6 +231,26 @@ pub enum CoreNotification {
         /// Progress as a fraction (0.0 to 1.0), or -1.0 when done/error.
         progress: f64,
     },
+}
+
+/// A single step in the agent's task plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPlanStep {
+    /// Step number (1-indexed)
+    pub number: u32,
+    /// Description of what this step does
+    pub description: String,
+    /// Status of this step
+    pub status: AgentPlanStepStatus,
+}
+
+/// Status of a plan step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPlanStepStatus {
+    Pending,
+    InProgress,
+    Done,
 }
 
 /// A single diff hunk in an AI-proposed edit.
@@ -499,6 +553,61 @@ impl CoreRpcHandler {
 
     pub fn agent_diffs_done(&self) {
         self.notification(CoreNotification::AgentDiffsDone {});
+    }
+
+    // ── Agent Thinking/Streaming helpers ─────────────────────
+
+    pub fn agent_thinking_step(
+        &self,
+        step_type: String,
+        message: String,
+        detail: Option<String>,
+    ) {
+        self.notification(CoreNotification::AgentThinkingStep {
+            step_type,
+            message,
+            detail,
+        });
+    }
+
+    pub fn agent_plan(&self, steps: Vec<AgentPlanStep>) {
+        self.notification(CoreNotification::AgentPlan { steps });
+    }
+
+    pub fn agent_server_tool_start(
+        &self,
+        tool_call_id: String,
+        tool_name: String,
+        arguments: String,
+    ) {
+        self.notification(CoreNotification::AgentServerToolStart {
+            tool_call_id,
+            tool_name,
+            arguments,
+        });
+    }
+
+    pub fn agent_server_tool_end(
+        &self,
+        tool_call_id: String,
+        tool_name: String,
+        result_summary: String,
+        success: bool,
+    ) {
+        self.notification(CoreNotification::AgentServerToolEnd {
+            tool_call_id,
+            tool_name,
+            result_summary,
+            success,
+        });
+    }
+
+    pub fn agent_text_chunk(&self, text: String, done: bool) {
+        self.notification(CoreNotification::AgentTextChunk { text, done });
+    }
+
+    pub fn agent_error(&self, error: String) {
+        self.notification(CoreNotification::AgentError { error });
     }
 }
 

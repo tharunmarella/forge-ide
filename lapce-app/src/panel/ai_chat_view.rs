@@ -33,6 +33,7 @@ use super::position::PanelPosition;
 use crate::{
     ai_chat::{
         AiChatData, ChatEntry, ChatEntryKind, ChatRole, ChatToolCall, ToolCallStatus,
+        ChatThinkingStep, ChatPlan, ChatPlanStep, ChatPlanStepStatus, ChatServerToolCall,
         ALL_PROVIDERS, models_for_provider,
     },
     config::{color::LapceColor, icon::LapceIcons},
@@ -633,7 +634,7 @@ fn index_progress_view(
     })
 }
 
-/// Scrollable chat message list with thinking indicator and auto-scroll.
+/// Scrollable chat message list with thinking section and auto-scroll.
 fn chat_message_list(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
@@ -641,6 +642,7 @@ fn chat_message_list(
 ) -> impl View {
     let entries = chat_data.entries;
     let chat_data_dropdown = chat_data.clone();
+    let chat_data_thinking = chat_data.clone();
     let is_loading = chat_data.is_loading;
     let has_first_token = chat_data.has_first_token;
     let streaming_text = chat_data.streaming_text;
@@ -649,7 +651,7 @@ fn chat_message_list(
     stack((
         // ── Dropdown overlay (shown when dropdown_open is true) ──
         model_dropdown_panel(config, chat_data_dropdown),
-        // ── Messages + thinking indicator ──
+        // ── Messages + thinking section + streaming indicator ──
         scroll(
             stack((
                 // ── Chat entries ──
@@ -662,6 +664,11 @@ fn chat_message_list(
                     move |entry| chat_entry_view(config, entry, internal_command),
                 )
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
+
+                // ── Collapsible thinking section ──
+                // Shows server-side activity (thinking steps, server tool calls, plan).
+                // Auto-collapses when the final answer arrives.
+                thinking_section(config, chat_data_thinking, internal_command),
 
                 // ── Streaming text preview (plain text, fast) ──
                 // Shown while the assistant is actively streaming.
@@ -868,6 +875,15 @@ fn chat_entry_view(
             } else {
                 tool_call_card(config, tc).into_any()
             }
+        }
+        ChatEntryKind::ThinkingStep(step) => {
+            thinking_step_view(config, step).into_any()
+        }
+        ChatEntryKind::Plan(plan) => {
+            plan_view(config, plan).into_any()
+        }
+        ChatEntryKind::ServerToolCall(tc) => {
+            server_tool_call_view(config, tc).into_any()
         }
     }
 }
@@ -1333,6 +1349,338 @@ fn tool_call_card(
                     .multiply_alpha(0.6),
             )
             .background(config.color(LapceColor::EDITOR_BACKGROUND))
+    })
+}
+
+/// View for a thinking step (server-side activity).
+fn thinking_step_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    step: ChatThinkingStep,
+) -> impl View {
+    // Icon based on step type
+    let icon = match step.step_type.as_str() {
+        "enriching" | "searching" => "\u{1F50D}", // magnifying glass
+        "reasoning" => "\u{1F4AD}",                // thought bubble
+        "plan" => "\u{1F4CB}",                     // clipboard
+        "tool" => "\u{1F527}",                     // wrench
+        _ => "\u{2022}",                           // bullet
+    };
+    let message = step.message.clone();
+    let detail = step.detail.clone();
+
+    container(
+        stack((
+            // Icon
+            label(move || icon.to_string()).style(move |s| {
+                let config = config.get();
+                s.font_size(10.0)
+                    .margin_right(6.0)
+                    .color(config.color(LapceColor::EDITOR_DIM))
+            }),
+            // Message
+            label(move || message.clone()).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .color(config.color(LapceColor::EDITOR_DIM))
+                    .flex_grow(1.0)
+            }),
+            // Optional detail (truncated)
+            {
+                let detail_text = detail.clone().map(|d| {
+                    if d.len() > 50 { format!("{}...", &d[..50]) } else { d }
+                }).unwrap_or_default();
+                let has_detail = detail.is_some();
+                label(move || detail_text.clone()).style(move |s| {
+                    let config = config.get();
+                    s.font_size((config.ui.font_size() as f32 - 3.0).max(9.0))
+                        .color(config.color(LapceColor::EDITOR_DIM).multiply_alpha(0.7))
+                        .margin_left(8.0)
+                        .apply_if(!has_detail, |s| s.hide())
+                })
+            },
+        ))
+        .style(|s| s.items_center().width_pct(100.0)),
+    )
+    .style(move |s| {
+        let config = config.get();
+        s.padding_horiz(8.0)
+            .padding_vert(3.0)
+            .margin_horiz(8.0)
+            .width_pct(100.0)
+            .min_width(0.0)
+            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.3))
+    })
+}
+
+/// View for the agent's task plan.
+fn plan_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    plan: ChatPlan,
+) -> impl View {
+    let steps = plan.steps;
+
+    container(
+        stack((
+            // Header
+            label(move || "Plan".to_string()).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                    .font_bold()
+                    .margin_bottom(4.0)
+                    .color(config.color(LapceColor::PANEL_FOREGROUND))
+            }),
+            // Steps list - use dyn_stack with cloneable data
+            dyn_stack(
+                move || steps.clone(),
+                |step: &ChatPlanStep| step.number,
+                move |step| plan_step_view(config, step),
+            )
+            .style(|s| s.flex_col().width_pct(100.0)),
+        ))
+        .style(|s| s.flex_col().width_pct(100.0)),
+    )
+    .style(move |s| {
+        let config = config.get();
+        s.padding(8.0)
+            .margin_horiz(8.0)
+            .margin_vert(4.0)
+            .width_pct(100.0)
+            .min_width(0.0)
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.5))
+            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.5))
+    })
+}
+
+/// View for a single plan step.
+fn plan_step_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    step: ChatPlanStep,
+) -> impl View {
+    let status_icon = match step.status {
+        ChatPlanStepStatus::Pending => "\u{25CB}",   // open circle
+        ChatPlanStepStatus::InProgress => "\u{25CF}", // filled circle
+        ChatPlanStepStatus::Done => "\u{2713}",      // checkmark
+    };
+    let is_in_progress = step.status == ChatPlanStepStatus::InProgress;
+    let is_done = step.status == ChatPlanStepStatus::Done;
+    let description = step.description.clone();
+    let number = step.number;
+
+    stack((
+        // Status icon
+        label(move || status_icon.to_string()).style(move |s| {
+            let config = config.get();
+            let color = if is_done {
+                config.color(LapceColor::EDITOR_FOREGROUND)
+            } else if is_in_progress {
+                config.color(LapceColor::LAPCE_ICON_ACTIVE)
+            } else {
+                config.color(LapceColor::EDITOR_DIM)
+            };
+            s.font_size(10.0)
+                .min_width(16.0)
+                .color(color)
+        }),
+        // Step number and description
+        label(move || format!("{}. {}", number, description.clone())).style(move |s| {
+            let config = config.get();
+            s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                .color(if is_done {
+                    config.color(LapceColor::EDITOR_DIM)
+                } else {
+                    config.color(LapceColor::EDITOR_FOREGROUND)
+                })
+                .apply_if(is_done, |s| {
+                    // Strikethrough for completed steps (simulated with opacity)
+                    s.color(config.color(LapceColor::EDITOR_DIM))
+                })
+        }),
+    ))
+    .style(|s| s.items_center().padding_vert(2.0))
+}
+
+/// View for a server-side tool call.
+fn server_tool_call_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    tc: ChatServerToolCall,
+) -> impl View {
+    let is_running = tc.status == ToolCallStatus::Running;
+    let is_success = tc.status == ToolCallStatus::Success;
+    let is_error = tc.status == ToolCallStatus::Error;
+
+    let status_icon = match &tc.status {
+        ToolCallStatus::Pending => "\u{25CB}",
+        ToolCallStatus::Running => "\u{25CF}",
+        ToolCallStatus::Success => "\u{2713}",
+        ToolCallStatus::Error => "\u{2717}",
+    };
+
+    let tool_name = tc.name.clone();
+    let elapsed = tc.elapsed_display.clone();
+    let result_summary = tc.result_summary.clone();
+
+    container(
+        stack((
+            // Status icon
+            label(move || status_icon.to_string()).style(move |s| {
+                let config = config.get();
+                let color = if is_running {
+                    config.color(LapceColor::LAPCE_ICON_ACTIVE)
+                } else if is_success {
+                    config.color(LapceColor::EDITOR_FOREGROUND)
+                } else if is_error {
+                    config.color(LapceColor::LAPCE_ERROR)
+                } else {
+                    config.color(LapceColor::EDITOR_DIM)
+                };
+                s.font_size(10.0)
+                    .margin_right(6.0)
+                    .color(color)
+            }),
+            // Tool name (with "server" prefix to distinguish from IDE tools)
+            label(move || format!("⚙ {}", tool_name.clone())).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .font_bold()
+                    .color(config.color(LapceColor::PANEL_FOREGROUND))
+            }),
+            // Result summary (if available)
+            {
+                let summary_text = result_summary.clone().map(|s| {
+                    if s.len() > 40 { format!("{}...", &s[..40]) } else { s }
+                }).unwrap_or_default();
+                let has_summary = result_summary.is_some();
+                label(move || summary_text.clone()).style(move |s| {
+                    let config = config.get();
+                    s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                        .margin_left(8.0)
+                        .color(config.color(LapceColor::EDITOR_DIM))
+                        .apply_if(!has_summary, |s| s.hide())
+                })
+            },
+            // Spacer
+            empty().style(|s| s.flex_grow(1.0)),
+            // Elapsed time
+            label(move || elapsed.clone()).style(move |s| {
+                let config = config.get();
+                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                    .color(config.color(LapceColor::EDITOR_DIM))
+            }),
+        ))
+        .style(|s| s.items_center().width_pct(100.0)),
+    )
+    .style(move |s| {
+        let config = config.get();
+        s.padding_horiz(8.0)
+            .padding_vert(4.0)
+            .margin_horiz(8.0)
+            .margin_vert(1.0)
+            .width_pct(100.0)
+            .min_width(0.0)
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.4))
+            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.4))
+    })
+}
+
+/// Collapsible thinking section that groups all thinking steps and server tool calls.
+fn thinking_section(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    chat_data: AiChatData,
+    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+) -> impl View {
+    let thinking_steps = chat_data.thinking_steps;
+    let thinking_collapsed = chat_data.thinking_collapsed;
+
+    container(
+        stack((
+            // ── Header (clickable to toggle collapse) ──
+            stack((
+                // Chevron
+                label(move || {
+                    if thinking_collapsed.get() { "\u{25B6}" } else { "\u{25BC}" }.to_string()
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.font_size(8.0)
+                        .margin_right(6.0)
+                        .color(config.color(LapceColor::EDITOR_DIM))
+                }),
+                // Title
+                label(move || "Thinking...".to_string()).style(move |s| {
+                    let config = config.get();
+                    s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                        .font_bold()
+                        .color(config.color(LapceColor::EDITOR_DIM))
+                }),
+                // Summary (shown when collapsed)
+                {
+                    label(move || {
+                        let steps = thinking_steps.get();
+                        let count = steps.len();
+                        if count == 0 {
+                            String::new()
+                        } else {
+                            format!("({} steps)", count)
+                        }
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        let collapsed = thinking_collapsed.get();
+                        s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                            .margin_left(8.0)
+                            .color(config.color(LapceColor::EDITOR_DIM).multiply_alpha(0.7))
+                            .apply_if(!collapsed, |s| s.hide())
+                    })
+                },
+            ))
+            .on_click_stop(move |_| {
+                thinking_collapsed.update(|v| *v = !*v);
+            })
+            .style(move |s| {
+                s.items_center()
+                    .width_pct(100.0)
+                    .padding_vert(4.0)
+                    .cursor(CursorStyle::Pointer)
+            }),
+
+            // ── Content (hidden when collapsed) ──
+            {
+                container(
+                    dyn_stack(
+                        move || {
+                            let steps = thinking_steps.get();
+                            steps.iter().cloned().collect::<Vec<_>>()
+                        },
+                        |entry: &ChatEntry| entry.key(),
+                        move |entry| chat_entry_view(config, entry, internal_command),
+                    )
+                    .style(|s| s.flex_col().width_pct(100.0)),
+                )
+                .style(move |s| {
+                    let collapsed = thinking_collapsed.get();
+                    s.width_pct(100.0)
+                        .apply_if(collapsed, |s| s.hide())
+                })
+            },
+        ))
+        .style(|s| s.flex_col().width_pct(100.0)),
+    )
+    .style(move |s| {
+        let config = config.get();
+        let steps = thinking_steps.get();
+        let is_empty = steps.is_empty();
+        s.padding_horiz(8.0)
+            .padding_vert(4.0)
+            .margin_horiz(4.0)
+            .margin_vert(4.0)
+            .width_pct(100.0)
+            .min_width(0.0)
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.3))
+            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.2))
+            .apply_if(is_empty, |s| s.hide())
     })
 }
 

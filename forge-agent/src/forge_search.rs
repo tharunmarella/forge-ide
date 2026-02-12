@@ -100,7 +100,7 @@ pub struct ChatResponse {
 }
 
 /// Tool call info from the server
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallInfo {
     pub id: String,
     pub name: String,
@@ -121,6 +121,64 @@ pub struct ToolCallChunk {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+// ── SSE Event Types ───────────────────────────────────────────────
+
+/// SSE events from the /chat/stream endpoint.
+/// These provide real-time visibility into server-side agent activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SseEvent {
+    /// Agent reasoning step (e.g., "Searching codebase...", "Analyzing 3 files...")
+    Thinking {
+        step_type: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    /// Server-side tool execution started
+    ToolStart {
+        tool_call_id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
+    },
+    /// Server-side tool execution completed
+    ToolEnd {
+        tool_call_id: String,
+        tool_name: String,
+        result_summary: String,
+        success: bool,
+    },
+    /// Incremental LLM output text (token-by-token streaming)
+    TextDelta {
+        text: String,
+    },
+    /// Agent's task breakdown (list of steps it plans to execute)
+    Plan {
+        steps: Vec<SsePlanStep>,
+    },
+    /// IDE tool calls needed (proxy must execute these)
+    RequiresAction {
+        tool_calls: Vec<ToolCallInfo>,
+    },
+    /// Final answer complete
+    Done {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        answer: Option<String>,
+    },
+    /// Error occurred
+    Error {
+        error: String,
+    },
+}
+
+/// A step in the agent's plan (from SSE).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SsePlanStep {
+    pub number: u32,
+    pub description: String,
+    pub status: String, // "pending", "in_progress", "done"
 }
 
 // ── Client ───────────────────────────────────────────────────────
@@ -352,6 +410,72 @@ impl ForgeSearchClient {
         Ok(response)
     }
 
+    /// Chat with SSE streaming for real-time agent activity visibility.
+    /// Returns a stream of SseEvent that the proxy can forward to the IDE.
+    /// 
+    /// This is the new recommended method - provides visibility into:
+    /// - Server-side tool calls (codebase_search, trace_call_chain, etc.)
+    /// - Agent reasoning/thinking steps
+    /// - Task planning
+    /// - Incremental text output
+    pub async fn chat_stream(&self, body: &serde_json::Value) -> Result<impl futures_util::Stream<Item = SseEvent>> {
+        use futures_util::StreamExt;
+        
+        let url = format!("{}/chat/stream", self.base_url);
+        let token = self.auth.read().await.token.clone();
+
+        let mut req = self.http.post(&url)
+            .json(body)
+            .header("Accept", "text/event-stream");
+        
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let resp = req.send().await?;
+        let status = resp.status();
+        
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Chat stream failed ({}): {}", status, text));
+        }
+
+        // Parse SSE stream: each event is "data: {json}\n\n"
+        let stream = resp.bytes_stream().flat_map(|result| {
+            let events: Vec<SseEvent> = match result {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    parse_sse_events(&text)
+                }
+                Err(e) => {
+                    vec![SseEvent::Error { error: e.to_string() }]
+                }
+            };
+            futures_util::stream::iter(events)
+        });
+
+        Ok(stream)
+    }
+
+    /// Check if the server supports SSE streaming (via /health endpoint).
+    pub async fn supports_streaming(&self) -> bool {
+        let url = format!("{}/health", self.base_url);
+        match self.http.get(&url).send().await {
+            Ok(resp) => {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    // Server indicates streaming support in health response
+                    json.get("features")
+                        .and_then(|f| f.get("streaming"))
+                        .and_then(|s| s.as_bool())
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Complex chat with streaming and tool support (legacy - kept for compatibility)
     pub async fn chat_complex(&self, body: &serde_json::Value) -> Result<impl futures_util::Stream<Item = ChatChunk>> {
         use futures_util::StreamExt;
@@ -531,6 +655,48 @@ impl ForgeSearchClient {
     pub async fn health(&self) -> Result<serde_json::Value> {
         self.get("/health").await
     }
+}
+
+// ── SSE Parsing ───────────────────────────────────────────────────
+
+/// Parse SSE events from a chunk of data.
+/// SSE format: "data: {json}\n\n" for each event.
+fn parse_sse_events(data: &str) -> Vec<SseEvent> {
+    let mut events = Vec::new();
+    
+    for line in data.lines() {
+        let line = line.trim();
+        
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        
+        // Parse "data: {json}" lines
+        if let Some(json_str) = line.strip_prefix("data:") {
+            let json_str = json_str.trim();
+            
+            // Handle [DONE] marker (OpenAI style)
+            if json_str == "[DONE]" {
+                events.push(SseEvent::Done { answer: None });
+                continue;
+            }
+            
+            // Parse JSON event
+            match serde_json::from_str::<SseEvent>(json_str) {
+                Ok(event) => events.push(event),
+                Err(e) => {
+                    tracing::warn!("Failed to parse SSE event: {} - {}", e, json_str);
+                    // Try to extract as raw text delta if it looks like text
+                    if !json_str.is_empty() && !json_str.starts_with('{') {
+                        events.push(SseEvent::TextDelta { text: json_str.to_string() });
+                    }
+                }
+            }
+        }
+    }
+    
+    events
 }
 
 // ── Index Result ─────────────────────────────────────────────────

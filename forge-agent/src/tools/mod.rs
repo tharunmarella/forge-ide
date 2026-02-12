@@ -165,15 +165,19 @@ pub struct ToolResult {
     /// so the proxy can compute a diff preview.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_edit: Option<FileEditMeta>,
+    /// Set to true when the tool was blocked and needs user approval.
+    /// The caller should show a confirmation dialog and re-execute if approved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_approval: Option<bool>,
 }
 
 impl ToolResult {
     pub fn ok(output: impl Into<String>) -> Self {
-        Self { success: true, output: output.into(), file_edit: None }
+        Self { success: true, output: output.into(), file_edit: None, needs_approval: None }
     }
 
     pub fn err(output: impl Into<String>) -> Self {
-        Self { success: false, output: output.into(), file_edit: None }
+        Self { success: false, output: output.into(), file_edit: None, needs_approval: None }
     }
 
     /// Attach file edit metadata (for diff preview).
@@ -181,10 +185,74 @@ impl ToolResult {
         self.file_edit = Some(meta);
         self
     }
+
+    /// Mark this result as needing user approval before execution.
+    pub fn awaiting_approval(tool_name: &str, summary: &str) -> Self {
+        Self {
+            success: false,
+            output: format!("[APPROVAL REQUIRED] Tool '{}' wants to: {}", tool_name, summary),
+            file_edit: None,
+            needs_approval: Some(true),
+        }
+    }
 }
 
-/// Execute a tool call
+// ── Approval policy ─────────────────────────────────────────────────
+
+/// Controls which tools require user approval before execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalPolicy {
+    /// All tools run without approval (current default).
+    AutoApproveAll,
+    /// Mutating tools (write, replace, patch, delete, execute_command)
+    /// require approval. Read-only tools auto-approve.
+    ApproveMutations,
+    /// Every tool requires approval.
+    ApproveAll,
+}
+
+impl Default for ApprovalPolicy {
+    fn default() -> Self {
+        Self::AutoApproveAll
+    }
+}
+
+/// Callback the caller provides so `execute()` can ask for approval.
+/// Returns `true` if the user approved, `false` to reject.
+///
+/// When no callback is provided, the tool runs without approval.
+pub type ApprovalCallback = Box<dyn Fn(&str, &str) -> bool + Send + Sync>;
+
+/// Options for `execute()`.
+pub struct ExecuteOptions {
+    pub plan_mode: bool,
+    pub approval_policy: ApprovalPolicy,
+    /// Optional callback for synchronous approval.
+    /// Receives (tool_name, human-readable summary).
+    pub approval_callback: Option<ApprovalCallback>,
+    /// Optional loop detector (shared across the agent session).
+    pub loop_detector: Option<std::sync::Arc<std::sync::Mutex<crate::loop_detection::LoopDetector>>>,
+}
+
+impl Default for ExecuteOptions {
+    fn default() -> Self {
+        Self {
+            plan_mode: false,
+            approval_policy: ApprovalPolicy::AutoApproveAll,
+            approval_callback: None,
+            loop_detector: None,
+        }
+    }
+}
+
+/// Execute a tool call (simple API — no approval, no loop detection).
+/// Kept for backward compatibility.
 pub async fn execute(tool: &ToolCall, workdir: &Path, plan_mode: bool) -> ToolResult {
+    execute_with_options(tool, workdir, &ExecuteOptions { plan_mode, ..Default::default() }).await
+}
+
+/// Execute a tool call with full options (approval, loop detection).
+pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &ExecuteOptions) -> ToolResult {
     use std::time::Instant;
     let start = Instant::now();
     
@@ -193,10 +261,46 @@ pub async fn execute(tool: &ToolCall, workdir: &Path, plan_mode: bool) -> ToolRe
     };
 
     // Block mutating tools in plan mode
-    if plan_mode && t.is_mutating() {
+    if opts.plan_mode && t.is_mutating() {
         return ToolResult::err("Cannot modify files in plan mode");
     }
 
+    // ── Loop detection ──────────────────────────────────────────
+    if let Some(ref detector) = opts.loop_detector {
+        let args_json = serde_json::to_string(&tool.arguments).unwrap_or_default();
+        if let Ok(mut d) = detector.lock() {
+            let check = d.check_tool_call(&tool.name, &args_json);
+            if check.is_loop() {
+                tracing::warn!("🔄 {}", check.message());
+                return ToolResult::err(check.message());
+            }
+        }
+    }
+
+    // ── Approval check ──────────────────────────────────────────
+    let needs_approval = match opts.approval_policy {
+        ApprovalPolicy::AutoApproveAll => false,
+        ApprovalPolicy::ApproveMutations => t.is_mutating(),
+        ApprovalPolicy::ApproveAll => true,
+    };
+
+    if needs_approval {
+        let summary = make_approval_summary(tool);
+        if let Some(ref callback) = opts.approval_callback {
+            if !callback(&tool.name, &summary) {
+                return ToolResult::err(format!(
+                    "Tool '{}' was rejected by user. Try a different approach.",
+                    tool.name
+                ));
+            }
+        } else {
+            // No callback — return a result that signals "needs approval".
+            // The caller (dispatch.rs) can show a UI dialog and re-execute.
+            return ToolResult::awaiting_approval(&tool.name, &summary);
+        }
+    }
+
+    // ── Execute ─────────────────────────────────────────────────
     let result = match t {
         Tool::ExecuteCommand => execute::run(&tool.arguments, workdir).await,
         Tool::ReadFile => files::read(&tool.arguments, workdir).await,
@@ -235,17 +339,56 @@ pub async fn execute(tool: &ToolCall, workdir: &Path, plan_mode: bool) -> ToolRe
     result
 }
 
+/// Build a human-readable summary of what a tool call will do (for approval dialogs).
+fn make_approval_summary(tool: &ToolCall) -> String {
+    match tool.name.as_str() {
+        "execute_command" => {
+            let cmd = tool.arguments.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            format!("Run command: {}", &cmd[..cmd.len().min(200)])
+        }
+        "write_to_file" => {
+            let path = tool.arguments.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            let size = tool.arguments.get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| c.len())
+                .unwrap_or(0);
+            format!("Write {} ({} bytes)", path, size)
+        }
+        "replace_in_file" => {
+            let path = tool.arguments.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            format!("Edit {}", path)
+        }
+        "apply_patch" => {
+            "Apply multi-file patch".to_string()
+        }
+        "delete_file" => {
+            let path = tool.arguments.get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<unknown>");
+            format!("Delete {}", path)
+        }
+        _ => format!("Execute tool '{}'", tool.name),
+    }
+}
+
 /// Generate tool definitions for LLM
 pub fn definitions(plan_mode: bool) -> Vec<Value> {
     let mut tools = vec![
         // Essential tools
         serde_json::json!({
             "name": "execute_command",
-            "description": "Execute a shell command. Use for running builds, tests, git, etc.",
+            "description": "Execute a shell command. Use for running builds, tests, git, etc. Commands time out after 120 seconds by default.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "The shell command to execute" }
+                    "command": { "type": "string", "description": "The shell command to execute" },
+                    "timeout_secs": { "type": "integer", "description": "Optional timeout in seconds (default 120, max 600). Use for long-running builds." }
                 },
                 "required": ["command"]
             }

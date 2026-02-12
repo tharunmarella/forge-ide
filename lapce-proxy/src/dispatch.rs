@@ -2265,6 +2265,10 @@ impl ProxyHandler for Dispatcher {
                         let conversation_id = format!("{}-{}", workspace_name, conv_id);
                         let mut tool_results: Vec<serde_json::Value> = Vec::new();
                         let mut is_first_turn = true;
+                        
+                        // Check if server supports SSE streaming
+                        let use_streaming = fs_client.supports_streaming().await;
+                        tracing::info!("Agent chat: streaming={}", use_streaming);
 
                         loop {
                             // Build the request - server tracks state via conversation_id
@@ -2289,106 +2293,210 @@ impl ProxyHandler for Dispatcher {
                                 tool_results.clear();
                             }
 
-                            // Call the brain
-                            match fs_client.chat_multi_turn(&chat_req).await {
-                                Ok(response) => {
-                                    // Server now tracks history via conversation_id
-                                    // (response.history is kept for debug/display only)
-                                    
-                                    match response.status.as_str() {
-                                        "done" => {
-                                            // Agent is done, send final answer
-                                            if let Some(answer) = &response.answer {
-                                    core_rpc.notification(CoreNotification::AgentTextChunk {
-                                        text: answer.clone(),
-                                        done: false,
-                                    });
-                                            }
-                                    core_rpc.notification(CoreNotification::AgentTextChunk {
-                                        text: String::new(),
-                                        done: true,
-                                    });
-                                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
-                                                message: response.answer.unwrap_or_default() 
-                                            }));
-                                            return;
-                                        }
-                                        "requires_action" => {
-                                            // Agent needs us to execute IDE tools
-                                            if let Some(tool_calls) = response.tool_calls {
-                                                for tc in tool_calls {
-                                                    // Notify UI about tool call
-                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                        tool_call_id: tc.id.clone(),
-                                                        tool_name: tc.name.clone(),
-                                                        arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
-                                                        status: "running".to_string(),
-                                                        output: None,
-                                                    });
-                                                    
-                                                    // Execute tool locally ("Hands")
-                                                    // LSP tools need special handling since they require catalog_rpc
-                                                    // For now, return helpful guidance to use indexed data instead
-                                                    let result = match tc.name.as_str() {
-                                                        "lsp_go_to_definition" | "lsp_find_references" | "lsp_hover" | "lsp_rename" => {
-                                                            // LSP tools require synchronous access to the language server
-                                                            // which isn't available in this async context.
-                                                            // Guide the agent to use the indexed code graph instead.
-                                                            forge_agent::tools::ToolResult {
-                                                                output: format!(
-                                                                    "LSP tool '{}' is not yet available in cloud mode. \
-                                                                    Use 'codebase_search' for semantic search or \
-                                                                    'trace_call_chain' to find callers/callees. \
-                                                                    These use the pre-indexed code graph and are often faster.",
-                                                                    tc.name
-                                                                ),
-                                                                success: false,
-                                                                file_edit: None,
-                                                            }
+                            // ── SSE Streaming Path ──
+                            // Provides real-time visibility into server-side agent activity
+                            if use_streaming {
+                                use futures_util::StreamExt;
+                                use forge_agent::SseEvent;
+                                
+                                match fs_client.chat_stream(&chat_req).await {
+                                    Ok(mut stream) => {
+                                        let mut final_answer = String::new();
+                                        let mut needs_ide_tools = false;
+                                        let mut pending_tool_calls: Vec<forge_agent::ToolCallInfo> = Vec::new();
+                                        
+                                        while let Some(event) = stream.next().await {
+                                            match event {
+                                                SseEvent::Thinking { step_type, message, detail } => {
+                                                    // Forward thinking step to IDE
+                                                    core_rpc.agent_thinking_step(
+                                                        step_type,
+                                                        message,
+                                                        detail,
+                                                    );
+                                                }
+                                                SseEvent::ToolStart { tool_call_id, tool_name, arguments } => {
+                                                    // Server-side tool started
+                                                    core_rpc.agent_server_tool_start(
+                                                        tool_call_id,
+                                                        tool_name,
+                                                        serde_json::to_string(&arguments).unwrap_or_default(),
+                                                    );
+                                                }
+                                                SseEvent::ToolEnd { tool_call_id, tool_name, result_summary, success } => {
+                                                    // Server-side tool completed
+                                                    core_rpc.agent_server_tool_end(
+                                                        tool_call_id,
+                                                        tool_name,
+                                                        result_summary,
+                                                        success,
+                                                    );
+                                                }
+                                                SseEvent::TextDelta { text } => {
+                                                    // Stream text token to IDE
+                                                    core_rpc.agent_text_chunk(text.clone(), false);
+                                                    final_answer.push_str(&text);
+                                                }
+                                                SseEvent::Plan { steps } => {
+                                                    // Forward plan to IDE
+                                                    let plan_steps: Vec<lapce_rpc::core::AgentPlanStep> = steps
+                                                        .into_iter()
+                                                        .map(|s| lapce_rpc::core::AgentPlanStep {
+                                                            number: s.number,
+                                                            description: s.description,
+                                                            status: match s.status.as_str() {
+                                                                "in_progress" => lapce_rpc::core::AgentPlanStepStatus::InProgress,
+                                                                "done" => lapce_rpc::core::AgentPlanStepStatus::Done,
+                                                                _ => lapce_rpc::core::AgentPlanStepStatus::Pending,
+                                                            },
+                                                        })
+                                                        .collect();
+                                                    core_rpc.agent_plan(plan_steps);
+                                                }
+                                                SseEvent::RequiresAction { tool_calls } => {
+                                                    // IDE needs to execute these tools
+                                                    needs_ide_tools = true;
+                                                    pending_tool_calls = tool_calls;
+                                                }
+                                                SseEvent::Done { answer } => {
+                                                    if let Some(ans) = answer {
+                                                        if final_answer.is_empty() {
+                                                            final_answer = ans;
+                                                            core_rpc.agent_text_chunk(final_answer.clone(), false);
                                                         }
-                                                        _ => {
-                                                            let tool_call_obj = forge_agent::tools::ToolCall {
-                                                                name: tc.name.clone(),
-                                                                arguments: tc.args.clone(),
-                                                                thought_signature: None,
-                                                            };
-                                                            forge_agent::tools::execute(&tool_call_obj, &workspace_path, false).await
-                                                        }
-                                                    };
-                                                    
-                                                    // Notify UI about result
-                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                        tool_call_id: tc.id.clone(),
-                                                        tool_name: tc.name.clone(),
-                                                        arguments: String::new(),
-                                                        status: if result.success { "completed" } else { "failed" }.to_string(),
-                                                        output: Some(result.output.clone()),
-                                                    });
-                                                    
-                                                    // Collect result to send back to brain
-                                                    tool_results.push(serde_json::json!({
-                                                        "call_id": tc.id,
-                                                        "output": result.output,
-                                                        "success": result.success,
-                                                    }));
+                                                    }
+                                                    // Will handle completion after stream ends
+                                                }
+                                                SseEvent::Error { error } => {
+                                                    core_rpc.agent_error(error.clone());
+                                                    proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { error }));
+                                                    return;
                                                 }
                                             }
+                                        }
+                                        
+                                        // Stream ended - check if we need to execute IDE tools
+                                        if needs_ide_tools && !pending_tool_calls.is_empty() {
+                                            for tc in pending_tool_calls {
+                                                // Notify UI about tool call
+                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                    tool_call_id: tc.id.clone(),
+                                                    tool_name: tc.name.clone(),
+                                                    arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
+                                                    status: "running".to_string(),
+                                                    output: None,
+                                                });
+                                                
+                                                // Execute tool locally ("Hands")
+                                                let result = execute_ide_tool(&tc, &workspace_path).await;
+                                                
+                                                // Notify UI about result
+                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                    tool_call_id: tc.id.clone(),
+                                                    tool_name: tc.name.clone(),
+                                                    arguments: String::new(),
+                                                    status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                    output: Some(result.output.clone()),
+                                                });
+                                                
+                                                // Collect result to send back to brain
+                                                tool_results.push(serde_json::json!({
+                                                    "call_id": tc.id,
+                                                    "output": result.output,
+                                                    "success": result.success,
+                                                }));
+                                            }
                                             // Continue loop to send results back to brain
+                                            continue;
                                         }
-                                        status => {
-                                            // Unknown status or error
-                                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
-                                                error: format!("Unknown status: {}", status)
-                                            }));
-                                            return;
-                                        }
+                                        
+                                        // Done - send completion
+                                        core_rpc.agent_text_chunk(String::new(), true);
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
+                                            message: final_answer 
+                                        }));
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        core_rpc.agent_error(e.to_string());
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
+                                            error: e.to_string() 
+                                        }));
+                                        return;
                                     }
                                 }
-                                Err(e) => {
-                                    proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
-                                        error: e.to_string() 
-                                    }));
-                                    return;
+                            } else {
+                                // ── Legacy Non-Streaming Path ──
+                                // Fallback for servers that don't support SSE
+                                match fs_client.chat_multi_turn(&chat_req).await {
+                                    Ok(response) => {
+                                        match response.status.as_str() {
+                                            "done" => {
+                                                // Agent is done, send final answer
+                                                if let Some(answer) = &response.answer {
+                                                    core_rpc.agent_text_chunk(answer.clone(), false);
+                                                }
+                                                core_rpc.agent_text_chunk(String::new(), true);
+                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone { 
+                                                    message: response.answer.unwrap_or_default() 
+                                                }));
+                                                return;
+                                            }
+                                            "requires_action" => {
+                                                // Agent needs us to execute IDE tools
+                                                if let Some(tool_calls) = response.tool_calls {
+                                                    for tc in tool_calls {
+                                                        // Notify UI about tool call
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc.id.clone(),
+                                                            tool_name: tc.name.clone(),
+                                                            arguments: serde_json::to_string(&tc.args).unwrap_or_default(),
+                                                            status: "running".to_string(),
+                                                            output: None,
+                                                        });
+                                                        
+                                                        // Execute tool locally ("Hands")
+                                                        let tc_info = forge_agent::ToolCallInfo {
+                                                            id: tc.id.clone(),
+                                                            name: tc.name.clone(),
+                                                            args: tc.args.clone(),
+                                                        };
+                                                        let result = execute_ide_tool(&tc_info, &workspace_path).await;
+                                                        
+                                                        // Notify UI about result
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc.id.clone(),
+                                                            tool_name: tc.name.clone(),
+                                                            arguments: String::new(),
+                                                            status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                            output: Some(result.output.clone()),
+                                                        });
+                                                        
+                                                        // Collect result to send back to brain
+                                                        tool_results.push(serde_json::json!({
+                                                            "call_id": tc.id,
+                                                            "output": result.output,
+                                                            "success": result.success,
+                                                        }));
+                                                    }
+                                                }
+                                                // Continue loop to send results back to brain
+                                            }
+                                            status => {
+                                                // Unknown status or error
+                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
+                                                    error: format!("Unknown status: {}", status)
+                                                }));
+                                                return;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { 
+                                            error: e.to_string() 
+                                        }));
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -2779,6 +2887,36 @@ impl ProxyHandler for Dispatcher {
                     },
                 );
             }
+        }
+    }
+}
+
+/// Execute an IDE tool locally (the "Hands" executing what the "Brain" requested).
+/// This handles tool calls that need to run in the IDE context.
+async fn execute_ide_tool(
+    tc: &forge_agent::ToolCallInfo,
+    workspace_path: &std::path::Path,
+) -> forge_agent::tools::ToolResult {
+    match tc.name.as_str() {
+        "lsp_go_to_definition" | "lsp_find_references" | "lsp_hover" | "lsp_rename" => {
+            // LSP tools require synchronous access to the language server
+            // which isn't available in this async context.
+            // Guide the agent to use the indexed code graph instead.
+            forge_agent::tools::ToolResult::err(format!(
+                "LSP tool '{}' is not yet available in cloud mode. \
+                Use 'codebase_search' for semantic search or \
+                'trace_call_chain' to find callers/callees. \
+                These use the pre-indexed code graph and are often faster.",
+                tc.name
+            ))
+        }
+        _ => {
+            let tool_call_obj = forge_agent::tools::ToolCall {
+                name: tc.name.clone(),
+                arguments: tc.args.clone(),
+                thought_signature: None,
+            };
+            forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
         }
     }
 }

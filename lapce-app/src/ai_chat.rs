@@ -168,6 +168,58 @@ pub struct ChatEntry {
 pub enum ChatEntryKind {
     Message { role: ChatRole, content: String },
     ToolCall(ChatToolCall),
+    /// Agent thinking step (server-side activity).
+    ThinkingStep(ChatThinkingStep),
+    /// Agent's task plan.
+    Plan(ChatPlan),
+    /// Server-side tool call (displayed in thinking section).
+    ServerToolCall(ChatServerToolCall),
+}
+
+/// A thinking step from the agent (server-side activity).
+#[derive(Clone, Debug)]
+pub struct ChatThinkingStep {
+    /// Type: "enriching", "reasoning", "searching", etc.
+    pub step_type: String,
+    /// Human-readable message
+    pub message: String,
+    /// Optional detail
+    pub detail: Option<String>,
+    /// When this step started
+    pub started_at: std::time::Instant,
+}
+
+/// Agent's task plan.
+#[derive(Clone, Debug)]
+pub struct ChatPlan {
+    pub steps: Vec<ChatPlanStep>,
+}
+
+/// A single step in the agent's plan.
+#[derive(Clone, Debug)]
+pub struct ChatPlanStep {
+    pub number: u32,
+    pub description: String,
+    pub status: ChatPlanStepStatus,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChatPlanStepStatus {
+    Pending,
+    InProgress,
+    Done,
+}
+
+/// A server-side tool call (codebase_search, trace_call_chain, etc.).
+#[derive(Clone, Debug)]
+pub struct ChatServerToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+    pub status: ToolCallStatus,
+    pub result_summary: Option<String>,
+    pub started_at: std::time::Instant,
+    pub elapsed_display: String,
 }
 
 impl ChatEntry {
@@ -198,6 +250,43 @@ pub fn new_tool_call(tc: ChatToolCall) -> ChatEntry {
         id: next_entry_id(),
         version: 0,
         kind: ChatEntryKind::ToolCall(tc),
+    }
+}
+
+pub fn new_thinking_step(step_type: String, message: String, detail: Option<String>) -> ChatEntry {
+    ChatEntry {
+        id: next_entry_id(),
+        version: 0,
+        kind: ChatEntryKind::ThinkingStep(ChatThinkingStep {
+            step_type,
+            message,
+            detail,
+            started_at: std::time::Instant::now(),
+        }),
+    }
+}
+
+pub fn new_plan(steps: Vec<ChatPlanStep>) -> ChatEntry {
+    ChatEntry {
+        id: next_entry_id(),
+        version: 0,
+        kind: ChatEntryKind::Plan(ChatPlan { steps }),
+    }
+}
+
+pub fn new_server_tool_call(id: String, name: String, arguments: String) -> ChatEntry {
+    ChatEntry {
+        id: next_entry_id(),
+        version: 0,
+        kind: ChatEntryKind::ServerToolCall(ChatServerToolCall {
+            id,
+            name,
+            arguments,
+            status: ToolCallStatus::Running,
+            result_summary: None,
+            started_at: std::time::Instant::now(),
+            elapsed_display: String::new(),
+        }),
     }
 }
 
@@ -247,6 +336,13 @@ pub struct AiChatData {
     pub index_status: RwSignal<String>,
     /// Index progress: 0.0..1.0 while indexing, -1.0 when idle.
     pub index_progress: RwSignal<f64>,
+
+    // ── Thinking section state ─────────────────────────────────
+    /// Whether the thinking section is collapsed.
+    /// Auto-collapses when the final answer arrives.
+    pub thinking_collapsed: RwSignal<bool>,
+    /// Accumulated thinking steps for the current turn (cleared on new message).
+    pub thinking_steps: RwSignal<im::Vector<ChatEntry>>,
 }
 
 impl AiChatData {
@@ -273,6 +369,8 @@ impl AiChatData {
             index_status: cx.create_rw_signal("Checking…".to_string()),
             index_progress: cx.create_rw_signal(-1.0),
             conversation_id: cx.create_rw_signal(uuid::Uuid::new_v4().to_string()),
+            thinking_collapsed: cx.create_rw_signal(false),
+            thinking_steps: cx.create_rw_signal(im::Vector::new()),
         }
     }
 

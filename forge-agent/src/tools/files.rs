@@ -962,7 +962,7 @@ pub async fn apply_v4a_patch(args: &Value, workdir: &Path) -> ToolResult {
     if success {
         ToolResult::ok(output)
     } else {
-        ToolResult { success: false, output, file_edit: None }
+        ToolResult { success: false, output, file_edit: None, needs_approval: None }
     }
 }
 
