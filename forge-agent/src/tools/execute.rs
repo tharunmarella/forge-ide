@@ -65,8 +65,29 @@ pub async fn run(args: &Value, workdir: &Path) -> ToolResult {
             }
         }
         Err(_) => {
-            // Timeout expired — kill the child process.
+            // Timeout expired — kill the entire process tree, not just the shell.
+            // child.kill() only kills the direct child; we need to kill all descendants.
+            if let Some(pid) = child.id() {
+                // Kill the entire process group (negative PID kills the group)
+                // First try SIGTERM to allow graceful shutdown
+                let _ = Command::new("pkill")
+                    .args(["-TERM", "-P", &pid.to_string()])
+                    .output()
+                    .await;
+                
+                // Give processes a moment to exit gracefully
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                
+                // Then force kill any remaining children
+                let _ = Command::new("pkill")
+                    .args(["-KILL", "-P", &pid.to_string()])
+                    .output()
+                    .await;
+            }
+            
+            // Finally kill the shell itself
             let _ = child.kill().await;
+            
             ToolResult::err(format!(
                 "Command timed out after {}s. The process was killed.\n\
                  If this command needs more time, add \"timeout_secs\": {} (max {}) to the arguments.\n\
