@@ -2,7 +2,6 @@ mod execute;
 mod files;
 pub(crate) mod search;
 mod code;
-pub(crate) mod web;
 mod process;
 mod embeddings;       // Legacy: kept for backward compat, prefer forge-search
 mod embeddings_store; // Legacy: kept for backward compat, prefer forge-search
@@ -21,7 +20,6 @@ pub use execute::*;
 pub use files::*;
 pub use search::*;
 pub use code::*;
-pub use web::*;
 pub use process::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
@@ -58,11 +56,6 @@ pub enum Tool {
     GetSymbolDefinition,
     FindSymbolReferences,
     Diagnostics,
-    
-    // Web & Documentation
-    WebSearch,
-    WebFetch,
-    FetchDocs,
     
     // Interaction
     AttemptCompletion,
@@ -101,9 +94,6 @@ impl Tool {
             Self::GetSymbolDefinition => "get_symbol_definition",
             Self::FindSymbolReferences => "find_symbol_references",
             Self::Diagnostics => "diagnostics",
-            Self::WebSearch => "web_search",
-            Self::WebFetch => "web_fetch",
-            Self::FetchDocs => "fetch_documentation",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -138,9 +128,6 @@ impl Tool {
             "get_symbol_definition" => Some(Self::GetSymbolDefinition),
             "find_symbol_references" => Some(Self::FindSymbolReferences),
             "diagnostics" => Some(Self::Diagnostics),
-            "web_search" => Some(Self::WebSearch),
-            "web_fetch" => Some(Self::WebFetch),
-            "fetch_documentation" => Some(Self::FetchDocs),
             "attempt_completion" => Some(Self::AttemptCompletion),
             "ask_followup_question" => Some(Self::AskFollowupQuestion),
             "think" => Some(Self::Think),
@@ -357,9 +344,6 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::GetSymbolDefinition => code::get_definition(&tool.arguments, workdir).await,
         Tool::FindSymbolReferences => code::find_references(&tool.arguments, workdir).await,
         Tool::Diagnostics => lint::diagnostics(&tool.arguments, workdir).await,
-        Tool::WebSearch => web::search(&tool.arguments).await,
-        Tool::WebFetch => web::fetch(&tool.arguments).await,
-        Tool::FetchDocs => web::fetch_docs(&tool.arguments).await,
         
         // These are handled specially by the agent
         Tool::AttemptCompletion 
@@ -702,40 +686,6 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                     "fix": { "type": "boolean", "description": "If true, attempt to auto-fix issues (when supported by the linter)" }
                 },
                 "required": ["path"]
-            }
-        }),
-        serde_json::json!({
-            "name": "web_search",
-            "description": "Search the web for information",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Search query" }
-                },
-                "required": ["query"]
-            }
-        }),
-        serde_json::json!({
-            "name": "web_fetch",
-            "description": "Fetch content from a URL",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "URL to fetch" }
-                },
-                "required": ["url"]
-            }
-        }),
-        serde_json::json!({
-            "name": "fetch_documentation",
-            "description": "Fetch official library/framework documentation from Context7. PREFERRED over web_search for programming libraries. Use when you need API details, usage patterns, or aren't familiar with a library.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "library": { "type": "string", "description": "Library or framework name (e.g., 'react', 'tokio', 'fastapi')" },
-                    "topic": { "type": "string", "description": "Optional: specific topic to focus on (e.g., 'hooks', 'async', 'middleware')" }
-                },
-                "required": ["library"]
             }
         }),
         serde_json::json!({
