@@ -493,88 +493,7 @@ impl AiChatData {
             (provider, model, api_key)
         };
 
-        // ── Auto-attach images from clipboard ────────────────────────
-        // Check clipboard for image data (screenshots, copied images)
-        let text = {
-            use base64::{Engine as _, engine::general_purpose::STANDARD};
-            
-            // Try to get image from clipboard first
-            let mut clipboard_image_attached = false;
-            if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                if let Ok(img) = clipboard.get_image() {
-                    // Convert ImageData to PNG bytes
-                    let width = img.width;
-                    let height = img.height;
-                    let rgba = img.bytes.into_owned();
-                    
-                    // Encode as PNG
-                    let mut png_bytes = Vec::new();
-                    let encode_result = (|| -> Result<(), Box<dyn std::error::Error>> {
-                        let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut png_bytes), width as u32, height as u32);
-                        encoder.set_color(png::ColorType::Rgba);
-                        encoder.set_depth(png::BitDepth::Eight);
-                        let mut writer = encoder.write_header()?;
-                        writer.write_image_data(&rgba)?;
-                        Ok(())
-                    })();
-                    
-                    if encode_result.is_ok() && !png_bytes.is_empty() {
-                        let base64_data = STANDARD.encode(&png_bytes);
-                        self.add_image(base64_data, "image/png".to_string());
-                        clipboard_image_attached = true;
-                        tracing::info!("Auto-attached image from clipboard ({}x{})", width, height);
-                    }
-                }
-            }
-            
-            // If we attached an image and the text is empty or just a file path, clear it
-            if clipboard_image_attached {
-                let trimmed = text.trim();
-                // If it's just a file path to an image, don't send it
-                let path = std::path::Path::new(trimmed);
-                if trimmed.is_empty() || (path.exists() && path.is_file()) {
-                    String::new()
-                } else {
-                    text // Keep the text if it's actual content
-                }
-            } else {
-                // No image in clipboard - check if text is an image file path
-                let trimmed = text.trim();
-                let path = std::path::Path::new(trimmed);
-                
-                if path.exists() && path.is_file() {
-                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                        let ext_lower = ext.to_lowercase();
-                        if matches!(ext_lower.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
-                            // Read and attach the image
-                            if let Ok(data) = std::fs::read(path) {
-                                let mime = match ext_lower.as_str() {
-                                    "png" => "image/png",
-                                    "jpg" | "jpeg" => "image/jpeg",
-                                    "gif" => "image/gif",
-                                    "webp" => "image/webp",
-                                    _ => "image/png",
-                                };
-                                let base64_data = STANDARD.encode(&data);
-                                self.add_image(base64_data, mime.to_string());
-                                tracing::info!("Auto-attached image from pasted path: {}", trimmed);
-                                String::new() // Don't send the path as text
-                            } else {
-                                text // Failed to read, send as text
-                            }
-                        } else {
-                            text // Not an image, send as text
-                        }
-                    } else {
-                        text // No extension, send as text
-                    }
-                } else {
-                    text // Not a file, send as text
-                }
-            }
-        };
-
-        // Skip if empty (unless we have attached images)
+        // Skip if empty text and no attached images
         if text.trim().is_empty() && self.attached_images.with_untracked(|imgs| imgs.is_empty()) {
             self.is_loading.set(false);
             return;
@@ -672,11 +591,50 @@ impl AiChatData {
         let filename = format!("paste-{}.{}", count + 1, if mime_type.contains("jpeg") { "jpg" } else { "png" });
         self.attached_images.update(|imgs| {
             imgs.push(lapce_rpc::proxy::AttachedImageData {
-                filename,
+                filename: filename.clone(),
                 data,
                 mime_type,
             });
         });
+        tracing::info!("Added image attachment: {} (total now: {})", filename, count + 1);
+    }
+
+    /// Check clipboard for images and auto-attach them.
+    /// Called when user pastes (Cmd+V) in the chat input.
+    pub fn check_clipboard_for_image(&self) {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        
+        // Try to get image from clipboard
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            if let Ok(img) = clipboard.get_image() {
+                // Convert ImageData to PNG bytes
+                let width = img.width;
+                let height = img.height;
+                let rgba = img.bytes.into_owned();
+                
+                // Encode as PNG
+                let mut png_bytes = Vec::new();
+                let encode_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+                    let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut png_bytes), width as u32, height as u32);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder.write_header()?;
+                    writer.write_image_data(&rgba)?;
+                    Ok(())
+                })();
+                
+                if encode_result.is_ok() && !png_bytes.is_empty() {
+                    let base64_data = STANDARD.encode(&png_bytes);
+                    self.add_image(base64_data, "image/png".to_string());
+                    tracing::info!("Clipboard image detected and attached ({}x{})", width, height);
+                    
+                    // Clear the editor so the image path/text doesn't paste
+                    self.editor.doc().reload(lapce_xi_rope::Rope::from(""), true);
+                } else {
+                    tracing::warn!("Failed to encode clipboard image");
+                }
+            }
+        }
     }
 
     /// Remove an attached image by index.

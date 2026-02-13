@@ -1938,6 +1938,7 @@ fn chat_input_area(
     let chat_data_mic = chat_data.clone();
     let chat_data_attach = chat_data.clone();
     let chat_data_preview = chat_data.clone();
+    let chat_data_paste = chat_data.clone();
 
     // ── Image preview strip (shown above input when images are attached) ──
     let image_preview = dyn_stack(
@@ -2038,6 +2039,22 @@ fn chat_input_area(
                 .placeholder(|| "Ask Forge anything...".to_string())
                 .on_cursor_pos(move |point| {
                     cursor_x.set(point.x);
+                })
+                .on_event_stop(EventListener::KeyDown, {
+                    let chat_data = chat_data_paste.clone();
+                    move |event| {
+                        // Intercept Cmd+V / Ctrl+V to check for clipboard images
+                        if let floem::event::Event::KeyDown(key_event) = event {
+                            use floem::keyboard::Key;
+                            let is_v_key = match &key_event.key.logical_key {
+                                Key::Character(s) => s.as_ref() as &str == "v",
+                                _ => false,
+                            };
+                            if (key_event.modifiers.meta() || key_event.modifiers.control()) && is_v_key {
+                                chat_data.check_clipboard_for_image();
+                            }
+                        }
+                    }
                 })
                 .style(|s| {
                     s.padding_vert(6.0).padding_horiz(8.0).min_width_pct(100.0)
