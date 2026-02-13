@@ -2346,14 +2346,65 @@ impl ProxyHandler for Dispatcher {
                                                 
                                                 let args_json = serde_json::to_string(&tc_args).unwrap_or_default();
                                                 
-                                                // Check if this is a mutating tool that needs approval
-                                                let is_mutating = matches!(
-                                                    tc_name.as_str(),
-                                                    "write_to_file" | "replace_in_file" | "apply_patch"
-                                                        | "delete_file" | "execute_command"
-                                                );
+                                                // ── Smart approval: only ask for genuinely risky operations ──
+                                                // Tier 1 (auto-approve): read-only tools, safe commands
+                                                // Tier 2 (needs approval): file writes, deletes, risky commands
                                                 
-                                                if is_mutating {
+                                                let cmd_str = tc_args.get("command").and_then(|c| c.as_str()).unwrap_or("");
+                                                
+                                                // Safe commands that don't need approval
+                                                let is_safe_command = if tc_name == "execute_command" || tc_name == "execute_background" {
+                                                    let cmd_lower = cmd_str.to_lowercase();
+                                                    // Build/test/check commands are safe
+                                                    cmd_lower.starts_with("npm run ")
+                                                        || cmd_lower.starts_with("npm test")
+                                                        || cmd_lower.starts_with("npm install")
+                                                        || cmd_lower.starts_with("npx tsc")
+                                                        || cmd_lower.starts_with("npx ")
+                                                        || cmd_lower.starts_with("yarn ")
+                                                        || cmd_lower.starts_with("pnpm ")
+                                                        || cmd_lower.starts_with("cargo check")
+                                                        || cmd_lower.starts_with("cargo build")
+                                                        || cmd_lower.starts_with("cargo test")
+                                                        || cmd_lower.starts_with("cargo run")
+                                                        || cmd_lower.starts_with("go build")
+                                                        || cmd_lower.starts_with("go test")
+                                                        || cmd_lower.starts_with("go run")
+                                                        || cmd_lower.starts_with("python -m py_compile")
+                                                        || cmd_lower.starts_with("python -m pytest")
+                                                        || cmd_lower.starts_with("python -m mypy")
+                                                        || cmd_lower.starts_with("pytest")
+                                                        || cmd_lower.starts_with("pip install")
+                                                        || cmd_lower.starts_with("git status")
+                                                        || cmd_lower.starts_with("git log")
+                                                        || cmd_lower.starts_with("git diff")
+                                                        || cmd_lower.starts_with("git branch")
+                                                        || cmd_lower.starts_with("git show")
+                                                        || cmd_lower.starts_with("cat ")
+                                                        || cmd_lower.starts_with("ls")
+                                                        || cmd_lower.starts_with("pwd")
+                                                        || cmd_lower.starts_with("echo ")
+                                                        || cmd_lower.starts_with("which ")
+                                                        || cmd_lower.starts_with("node -")
+                                                        || cmd_lower.starts_with("rustc --")
+                                                } else {
+                                                    false
+                                                };
+                                                
+                                                let needs_approval = match tc_name.as_str() {
+                                                    // Always needs approval: destructive file ops
+                                                    "delete_file" => true,
+                                                    // File edits: show diff preview (handled elsewhere), need approval
+                                                    "write_to_file" | "replace_in_file" | "apply_patch" => true,
+                                                    // Commands: only risky ones need approval
+                                                    "execute_command" | "execute_background" => !is_safe_command,
+                                                    // LSP rename: cross-file mutation
+                                                    "lsp_rename" => true,
+                                                    // Everything else (read_file, grep, list_files, etc.): auto-approve
+                                                    _ => false,
+                                                };
+                                                
+                                                if needs_approval {
                                                     // Build a human-readable summary
                                                     let summary = match tc_name.as_str() {
                                                         "write_to_file" => {
@@ -2369,9 +2420,13 @@ impl ProxyHandler for Dispatcher {
                                                             let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
                                                             format!("Delete: {}", path)
                                                         }
-                                                        "execute_command" => {
-                                                            let cmd = tc_args.get("command").and_then(|c| c.as_str()).unwrap_or("?");
-                                                            format!("Run: {}", &cmd[..cmd.len().min(100)])
+                                                        "execute_command" | "execute_background" => {
+                                                            format!("Run: {}", &cmd_str[..cmd_str.len().min(100)])
+                                                        }
+                                                        "lsp_rename" => {
+                                                            let new_name = tc_args.get("new_name").and_then(|n| n.as_str()).unwrap_or("?");
+                                                            let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                                                            format!("Rename symbol in {} → {}", path, new_name)
                                                         }
                                                         _ => format!("Execute: {}", tc_name),
                                                     };
