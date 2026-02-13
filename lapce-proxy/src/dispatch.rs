@@ -2208,7 +2208,7 @@ impl ProxyHandler for Dispatcher {
                 let proxy_rpc = self.proxy_rpc.clone();
                 let core_rpc = self.core_rpc.clone();
                 let workspace = self.workspace.clone();
-                let _diff_snapshots = self.pending_diff_snapshots.clone();
+                let diff_snapshots = self.pending_diff_snapshots.clone();
                 let pending_approvals = self.pending_approvals.clone();
                 let agent_term_mgr = self.agent_terminal_mgr.clone();
                 let ide_terminals = self.terminals.clone();
@@ -2408,124 +2408,182 @@ impl ProxyHandler for Dispatcher {
                                                     false
                                                 };
                                                 
-                                                let needs_approval = match tc_name.as_str() {
-                                                    // Always needs approval: destructive file ops
-                                                    "delete_file" => true,
-                                                    // File edits: show diff preview (handled elsewhere), need approval
-                                                    "write_to_file" | "replace_in_file" | "apply_patch" => true,
-                                                    // Commands: only risky ones need approval
-                                                    "execute_command" | "execute_background" => !is_safe_command,
-                                                    // LSP rename: cross-file mutation
-                                                    "lsp_rename" => true,
-                                                    // Everything else (read_file, grep, list_files, etc.): auto-approve
-                                                    _ => false,
-                                                };
+                                                // Separate approval strategy:
+                                                // FILE EDITS: Execute first, then ask for approval (with revert if rejected)
+                                                // RISKY COMMANDS: Ask before executing
+                                                let is_file_edit = matches!(tc_name.as_str(), 
+                                                    "write_to_file" | "replace_in_file" | "apply_patch" | "delete_file");
                                                 
-                                                if needs_approval {
-                                                    // Build a human-readable summary
-                                                    let summary = match tc_name.as_str() {
-                                                        "write_to_file" => {
-                                                            let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
-                                                            format!("Create/write file: {}", path)
-                                                        }
-                                                        "replace_in_file" => {
-                                                            let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
-                                                            format!("Edit file: {}", path)
-                                                        }
-                                                        "apply_patch" => "Apply multi-file patch".to_string(),
-                                                        "delete_file" => {
-                                                            let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
-                                                            format!("Delete: {}", path)
-                                                        }
-                                                        "execute_command" | "execute_background" => {
-                                                            format!("Run: {}", &cmd_str[..cmd_str.len().min(100)])
-                                                        }
-                                                        "lsp_rename" => {
-                                                            let new_name = tc_args.get("new_name").and_then(|n| n.as_str()).unwrap_or("?");
-                                                            let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
-                                                            format!("Rename symbol in {} → {}", path, new_name)
-                                                        }
-                                                        _ => format!("Execute: {}", tc_name),
-                                                    };
+                                                let is_risky_command = matches!(tc_name.as_str(), 
+                                                    "execute_command" | "execute_background" | "lsp_rename")
+                                                    && !is_safe_command;
+                                                
+                                                if is_file_edit {
+                                                    // ═══ FILE EDIT FLOW: Execute First, Ask After ═══
                                                     
-                                                    // Send approval request to UI
-                                                    core_rpc.notification(CoreNotification::AgentToolCallApprovalRequest {
-                                                        tool_call_id: tc_id.clone(),
-                                                        tool_name: tc_name.clone(),
-                                                        summary: summary.clone(),
-                                                        arguments: args_json.clone(),
-                                                    });
+                                                    // 1. Save snapshot before modifying
+                                                    if let Some(path) = tc_args.get("path").and_then(|p| p.as_str()) {
+                                                        let full_path = workspace_path.join(path);
+                                                        if let Ok(old_content) = std::fs::read_to_string(&full_path) {
+                                                            diff_snapshots.lock().insert(
+                                                                tc_id.clone(),
+                                                                (path.to_string(), old_content)
+                                                            );
+                                                            tracing::info!("Saved snapshot for {} (diff_id={})", path, tc_id);
+                                                        }
+                                                    }
                                                     
-                                                    // Also show as pending tool call in chat
+                                                    // 2. Execute the tool (make the file changes)
                                                     core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                         tool_call_id: tc_id.clone(),
                                                         tool_name: tc_name.clone(),
                                                         arguments: args_json.clone(),
-                                                        status: "waiting_approval".to_string(),
-                                                        output: Some(summary),
+                                                        status: "running".to_string(),
+                                                        output: None,
                                                     });
                                                     
-                                                    // Wait for user approval/rejection
+                                                    let tc_info = forge_agent::ToolCallInfo {
+                                                        id: tc_id.clone(),
+                                                        name: tc_name.clone(),
+                                                        args: tc_args.clone(),
+                                                    };
+                                                    let result = execute_ide_tool(
+                                                        &tc_info,
+                                                        &workspace_path,
+                                                        &core_rpc,
+                                                        &agent_term_mgr,
+                                                        &ide_terminals,
+                                                    ).await;
+                                                    
+                                                    if !result.success {
+                                                        // Tool failed, no need for approval
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc_id.clone(),
+                                                            tool_name: tc_name.clone(),
+                                                            arguments: String::new(),
+                                                            status: "failed".to_string(),
+                                                            output: Some(result.output.clone()),
+                                                        });
+                                                        diff_snapshots.lock().remove(&tc_id); // Remove snapshot
+                                                        tool_results.push(serde_json::json!({
+                                                            "call_id": tc_id,
+                                                            "output": result.output,
+                                                            "success": false,
+                                                        }));
+                                                        continue;
+                                                    }
+                                                    
+                                                    // 3. Tool succeeded — now ask for approval
+                                                    let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                                                    let summary = match tc_name.as_str() {
+                                                        "write_to_file" => format!("Created/wrote: {}", path),
+                                                        "replace_in_file" => format!("Edited: {}", path),
+                                                        "apply_patch" => "Applied multi-file patch".to_string(),
+                                                        "delete_file" => format!("Deleted: {}", path),
+                                                        _ => format!("Modified: {}", path),
+                                                    };
+                                                    
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: String::new(),
+                                                        status: "awaiting_review".to_string(),
+                                                        output: Some(format!("{}\n\n{}", summary, result.output)),
+                                                    });
+                                                    
+                                                    // Send approval request with diff
+                                                    core_rpc.notification(CoreNotification::AgentToolCallApprovalRequest {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: format!("Review: {}", tc_name),
+                                                        summary: format!("{} - Click Accept to keep, Reject to revert", summary),
+                                                        arguments: args_json.clone(),
+                                                    });
+                                                    
+                                                    // Wait for user review
                                                     let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
                                                     pending_approvals.lock().insert(tc_id.clone(), tx);
-                                                    
                                                     let approved = rx.await.unwrap_or(false);
                                                     
                                                     if !approved {
-                                                        // User rejected — tell the server
+                                                        // User rejected — revert from snapshot
+                                                        if let Some((rel_path, old_content)) = diff_snapshots.lock().remove(&tc_id) {
+                                                            let full_path = workspace_path.join(&rel_path);
+                                                            if let Err(e) = std::fs::write(&full_path, &old_content) {
+                                                                tracing::error!("Failed to revert {}: {}", rel_path, e);
+                                                            } else {
+                                                                tracing::info!("Reverted {} (rejected by user)", rel_path);
+                                                            }
+                                                        }
+                                                        
                                                         core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                             tool_call_id: tc_id.clone(),
                                                             tool_name: tc_name.clone(),
                                                             arguments: String::new(),
                                                             status: "rejected".to_string(),
-                                                            output: Some("Rejected by user".to_string()),
+                                                            output: Some("Changes reverted".to_string()),
                                                         });
                                                         
                                                         tool_results.push(serde_json::json!({
                                                             "call_id": tc_id,
-                                                            "output": "Tool call was rejected by the user. Try a different approach or ask the user what they'd prefer.",
+                                                            "output": "User rejected this change. It has been reverted. Try a different approach or ask what they'd prefer.",
                                                             "success": false,
                                                         }));
                                                         continue;
                                                     }
+                                                    
+                                                    // Approved — clear snapshot and report success
+                                                    diff_snapshots.lock().remove(&tc_id);
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: String::new(),
+                                                        status: "accepted".to_string(),
+                                                        output: Some("Changes accepted".to_string()),
+                                                    });
+                                                    
+                                                    tool_results.push(serde_json::json!({
+                                                        "call_id": tc_id,
+                                                        "output": result.output,
+                                                        "success": true,
+                                                    }));
+                                                    
+                                                } else {
+                                                    // ═══ AUTO-APPROVE FLOW: No approval needed ═══
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: args_json,
+                                                        status: "running".to_string(),
+                                                        output: None,
+                                                    });
+                                                    
+                                                    let tc_info = forge_agent::ToolCallInfo {
+                                                        id: tc_id.clone(),
+                                                        name: tc_name.clone(),
+                                                        args: tc_args,
+                                                    };
+                                                    let result = execute_ide_tool(
+                                                        &tc_info,
+                                                        &workspace_path,
+                                                        &core_rpc,
+                                                        &agent_term_mgr,
+                                                        &ide_terminals,
+                                                    ).await;
+                                                    
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: String::new(),
+                                                        status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                        output: Some(result.output.clone()),
+                                                    });
+                                                    
+                                                    tool_results.push(serde_json::json!({
+                                                        "call_id": tc_id,
+                                                        "output": result.output,
+                                                        "success": result.success,
+                                                    }));
                                                 }
-                                                
-                                                // Approved (or read-only tool) — execute
-                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                    tool_call_id: tc_id.clone(),
-                                                    tool_name: tc_name.clone(),
-                                                    arguments: args_json,
-                                                    status: "running".to_string(),
-                                                    output: None,
-                                                });
-                                                
-                                                // Execute tool locally
-                                                let tc_info = forge_agent::ToolCallInfo {
-                                                    id: tc_id.clone(),
-                                                    name: tc_name.clone(),
-                                                    args: tc_args,
-                                                };
-                                                let result = execute_ide_tool(
-                                                    &tc_info,
-                                                    &workspace_path,
-                                                    &core_rpc,
-                                                    &agent_term_mgr,
-                                                    &ide_terminals,
-                                                ).await;
-                                                
-                                                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                    tool_call_id: tc_id.clone(),
-                                                    tool_name: tc_name.clone(),
-                                                    arguments: String::new(),
-                                                    status: if result.success { "completed" } else { "failed" }.to_string(),
-                                                    output: Some(result.output.clone()),
-                                                });
-                                                
-                                                tool_results.push(serde_json::json!({
-                                                    "call_id": tc_id,
-                                                    "output": result.output,
-                                                    "success": result.success,
-                                                }));
                                             }
                                             
                                             if has_tool_calls {
