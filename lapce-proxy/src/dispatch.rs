@@ -2197,7 +2197,7 @@ impl ProxyHandler for Dispatcher {
             }
 
             // ── AI Agent ─────────────────────────────────────────
-            AgentPrompt { prompt, provider, model, api_key, conversation_id: conv_id } => {
+            AgentPrompt { prompt, provider, model, api_key, conversation_id: conv_id, attached_images } => {
                 tracing::info!("Agent prompt received, conv_id={conv_id}, provider={provider}, model={model}");
                 let proxy_rpc = self.proxy_rpc.clone();
                 let core_rpc = self.core_rpc.clone();
@@ -2282,6 +2282,17 @@ impl ProxyHandler for Dispatcher {
                                 chat_req["question"] = serde_json::Value::String(prompt.clone());
                                 if !attached_files.is_empty() {
                                     chat_req["attached_files"] = serde_json::json!(attached_files);
+                                }
+                                // Include pasted/attached images (base64)
+                                if !attached_images.is_empty() {
+                                    let images_json: Vec<serde_json::Value> = attached_images.iter().map(|img| {
+                                        serde_json::json!({
+                                            "filename": img.filename,
+                                            "data": img.data,
+                                            "mime_type": img.mime_type,
+                                        })
+                                    }).collect();
+                                    chat_req["attached_images"] = serde_json::Value::Array(images_json);
                                 }
                                 is_first_turn = false;
                             }
@@ -2542,6 +2553,72 @@ impl ProxyHandler for Dispatcher {
                 self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
                     message: "Cancelled".to_string(),
                 }));
+            }
+            AgentTranscribeAudio { audio_data } => {
+                tracing::info!("Audio transcription requested ({} bytes)", audio_data.len());
+                let proxy_rpc = self.proxy_rpc.clone();
+                
+                // Run in a thread — uses blocking reqwest (no async runtime needed)
+                thread::spawn(move || {
+                    const GROQ_WHISPER_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
+                        let groq_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
+                        if groq_key.is_empty() {
+                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError {
+                                error: "GROQ_API_KEY environment variable not set. Required for audio transcription.".to_string(),
+                            }));
+                            return;
+                        }
+                    
+                    let client = reqwest::blocking::Client::new();
+                    
+                    let audio_part = reqwest::blocking::multipart::Part::bytes(audio_data)
+                        .file_name("audio.wav")
+                        .mime_str("audio/wav")
+                        .unwrap();
+                    
+                    let form = reqwest::blocking::multipart::Form::new()
+                        .text("model", "whisper-large-v3-turbo")
+                        .text("temperature", "0")
+                        .text("response_format", "verbose_json")
+                        .part("file", audio_part);
+                    
+                    match client.post(GROQ_WHISPER_URL)
+                        .header("Authorization", format!("Bearer {}", groq_key))
+                        .multipart(form)
+                        .send()
+                    {
+                        Ok(resp) => {
+                            if resp.status().is_success() {
+                                match resp.json::<serde_json::Value>() {
+                                    Ok(json) => {
+                                        let text = json.get("text")
+                                            .and_then(|t| t.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        tracing::info!("Transcription: {} chars", text.len());
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentTranscription { text }));
+                                    }
+                                    Err(e) => {
+                                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError {
+                                            error: format!("Failed to parse Whisper response: {e}"),
+                                        }));
+                                    }
+                                }
+                            } else {
+                                let status = resp.status();
+                                let body = resp.text().unwrap_or_default();
+                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError {
+                                    error: format!("Whisper API error {status}: {body}"),
+                                }));
+                            }
+                        }
+                        Err(e) => {
+                            proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError {
+                                error: format!("Whisper request failed: {e}"),
+                            }));
+                        }
+                    }
+                });
             }
             AgentApproveToolCall { tool_call_id } => {
                 tracing::info!("Agent tool call approved: {tool_call_id}");

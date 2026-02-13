@@ -34,6 +34,14 @@ use crate::{
     terminal::{TermId, TerminalProfile},
 };
 
+/// Image data attached to a chat message (pasted screenshot, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachedImageData {
+    pub filename: String,
+    pub data: String,       // base64-encoded
+    pub mime_type: String,  // "image/png", "image/jpeg"
+}
+
 #[allow(clippy::large_enum_variant)]
 pub enum ProxyRpc {
     Request(RequestId, ProxyRequest),
@@ -440,6 +448,14 @@ pub enum ProxyRequest {
         api_key: String,
         /// Persistent conversation_id for multi-turn memory on the server
         conversation_id: String,
+        /// Images pasted/attached by the user (base64-encoded)
+        #[serde(default)]
+        attached_images: Vec<AttachedImageData>,
+    },
+    /// Transcribe audio to text using Groq Whisper.
+    AgentTranscribeAudio {
+        /// Raw audio bytes (WAV format)
+        audio_data: Vec<u8>,
     },
     /// Cancel an in-progress agent operation.
     AgentCancel {},
@@ -948,6 +964,10 @@ pub enum ProxyResponse {
     /// Agent encountered an error.
     AgentError {
         error: String,
+    },
+    /// Audio transcription result.
+    AgentTranscription {
+        text: String,
     },
 
     // ── AI Diff Accept/Reject ────────────────────────────

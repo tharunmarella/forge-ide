@@ -347,6 +347,14 @@ pub struct AiChatData {
     pub thinking_collapsed: RwSignal<bool>,
     /// Accumulated thinking steps for the current turn (cleared on new message).
     pub thinking_steps: RwSignal<im::Vector<ChatEntry>>,
+
+    // ── Multimodal input state ──────────────────────────────────
+    /// Images pasted/attached by the user (base64-encoded).
+    pub attached_images: RwSignal<Vec<lapce_rpc::proxy::AttachedImageData>>,
+    /// Whether the mic is currently recording.
+    pub is_recording: RwSignal<bool>,
+    /// Audio recorder instance.
+    pub recorder: crate::audio_recorder::AudioRecorder,
 }
 
 impl AiChatData {
@@ -375,6 +383,9 @@ impl AiChatData {
             conversation_id: cx.create_rw_signal(uuid::Uuid::new_v4().to_string()),
             thinking_collapsed: cx.create_rw_signal(false),
             thinking_steps: cx.create_rw_signal(im::Vector::new()),
+            attached_images: cx.create_rw_signal(Vec::new()),
+            is_recording: cx.create_rw_signal(false),
+            recorder: crate::audio_recorder::AudioRecorder::new(),
         }
     }
 
@@ -542,6 +553,9 @@ impl AiChatData {
         });
 
         let conversation_id = self.conversation_id.get_untracked();
+        let images = self.attached_images.get_untracked();
+        self.attached_images.set(Vec::new()); // Clear after sending
+        
         self.common.proxy.request_async(
             lapce_rpc::proxy::ProxyRequest::AgentPrompt {
                 prompt: text,
@@ -549,9 +563,94 @@ impl AiChatData {
                 model,
                 api_key,
                 conversation_id,
+                attached_images: images,
             },
             send,
         );
+    }
+
+    /// Add a pasted image (base64-encoded) to the pending attachments.
+    pub fn add_image(&self, data: String, mime_type: String) {
+        let count = self.attached_images.with_untracked(|imgs| imgs.len());
+        let filename = format!("paste-{}.{}", count + 1, if mime_type.contains("jpeg") { "jpg" } else { "png" });
+        self.attached_images.update(|imgs| {
+            imgs.push(lapce_rpc::proxy::AttachedImageData {
+                filename,
+                data,
+                mime_type,
+            });
+        });
+    }
+
+    /// Remove an attached image by index.
+    pub fn remove_image(&self, index: usize) {
+        self.attached_images.update(|imgs| {
+            if index < imgs.len() {
+                imgs.remove(index);
+            }
+        });
+    }
+
+    /// Send audio data to proxy for Whisper transcription.
+    /// On success, inserts the transcript text into the editor.
+    pub fn transcribe_audio(&self, audio_data: Vec<u8>) {
+        let editor = self.editor.clone();
+        let is_recording = self.is_recording;
+        
+        let send = create_ext_action(self.scope, move |result: Result<lapce_rpc::proxy::ProxyResponse, lapce_rpc::RpcError>| {
+            is_recording.set(false);
+            match result {
+                Ok(lapce_rpc::proxy::ProxyResponse::AgentTranscription { text }) => {
+                    if !text.is_empty() {
+                        // Insert transcript into the editor so user can review/edit before sending
+                        let current = editor.doc().buffer.with_untracked(|b| b.to_string());
+                        let new_text = if current.trim().is_empty() {
+                            text
+                        } else {
+                            format!("{} {}", current.trim(), text)
+                        };
+                        editor.doc().reload(lapce_xi_rope::Rope::from(&new_text), true);
+                    }
+                }
+                Ok(lapce_rpc::proxy::ProxyResponse::AgentError { error }) => {
+                    tracing::error!("Transcription failed: {}", error);
+                }
+                _ => {}
+            }
+        });
+        
+        self.common.proxy.request_async(
+            lapce_rpc::proxy::ProxyRequest::AgentTranscribeAudio { audio_data },
+            send,
+        );
+    }
+
+    /// Toggle audio recording. On start: opens mic. On stop: transcribes via Whisper.
+    pub fn toggle_recording(&self) {
+        if self.recorder.is_recording() {
+            // Stop and transcribe
+            let wav_data = self.recorder.stop();
+            self.is_recording.set(false);
+            if !wav_data.is_empty() {
+                self.transcribe_audio(wav_data);
+            }
+        } else {
+            // Start recording
+            match self.recorder.start() {
+                Ok(()) => {
+                    self.is_recording.set(true);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to start recording: {e}");
+                    self.entries.update(|entries| {
+                        entries.push_back(new_message(
+                            ChatRole::System,
+                            format!("Microphone error: {e}"),
+                        ));
+                    });
+                }
+            }
+        }
     }
 
     /// Check if forge-search auth token exists (file on disk, no network).

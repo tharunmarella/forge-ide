@@ -1921,6 +1921,8 @@ fn chat_input_area(
     let config = window_tab_data.common.config;
     let focus = window_tab_data.common.focus;
     let is_loading = chat_data.is_loading;
+    let is_recording = chat_data.is_recording;
+    let attached_images = chat_data.attached_images;
     let editor = chat_data.editor.clone();
 
     let is_focused =
@@ -1932,12 +1934,62 @@ fn chat_input_area(
 
     let cursor_x = create_rw_signal(0.0);
 
-    let chat_data_btn = chat_data.clone();
+    let chat_data_send = chat_data.clone();
+    let chat_data_mic = chat_data.clone();
 
-    // The entire bottom bar is one bordered rectangle.
-    // Input fills all available space, Send button is flush on the right.
-    stack((
-        // Input editor -- fills all remaining width and full height
+    // ── Image preview strip (shown above input when images are attached) ──
+    let image_preview = dyn_stack(
+        move || {
+            let imgs = attached_images.get();
+            imgs.into_iter().enumerate().collect::<Vec<_>>()
+        },
+        |item: &(usize, lapce_rpc::proxy::AttachedImageData)| item.0,
+        move |(idx, img)| {
+            let chat_data_rm = chat_data.clone();
+            let filename = img.filename.clone();
+            stack((
+                label(move || filename.clone()).style(move |s| {
+                    let config = config.get();
+                    s.font_size(10.0)
+                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                        .padding_horiz(4.0)
+                }),
+                // Remove button
+                label(|| "\u{2715}".to_string()) // ✕
+                    .on_click_stop(move |_| {
+                        chat_data_rm.remove_image(idx);
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.font_size(10.0)
+                            .padding_horiz(4.0)
+                            .cursor(CursorStyle::Pointer)
+                            .color(config.color(LapceColor::EDITOR_DIM))
+                            .hover(|s| s.color(config.color(LapceColor::EDITOR_FOREGROUND)))
+                    }),
+            ))
+            .style(move |s| {
+                let config = config.get();
+                s.items_center()
+                    .padding(2.0)
+                    .margin_right(4.0)
+                    .border(1.0)
+                    .border_color(config.color(LapceColor::LAPCE_BORDER))
+                    .background(config.color(LapceColor::PANEL_BACKGROUND))
+            })
+        },
+    )
+    .style(move |s| {
+        let has_images = !attached_images.get().is_empty();
+        s.flex_row()
+            .padding(4.0)
+            .width_pct(100.0)
+            .apply_if(!has_images, |s| s.hide())
+    });
+
+    // ── Input bar: [text input] [mic] [send] ──
+    let input_bar = stack((
+        // Input editor -- fills all remaining width
         scroll(
             text_input_view
                 .placeholder(|| "Ask Forge anything...".to_string())
@@ -1965,7 +2017,38 @@ fn chat_input_area(
                 .items_center()
                 .background(config.color(LapceColor::EDITOR_BACKGROUND))
         }),
-        // Send button -- flush right, full height
+        // Mic button (uses SVG mic icon via Unicode fallback)
+        label(move || {
+            if is_recording.get() {
+                "\u{25A0}".to_string() // ■ stop square
+            } else {
+                "\u{1F399}".to_string() // 🎙 mic
+            }
+        })
+        .on_click_stop(move |_| {
+            chat_data_mic.toggle_recording();
+        })
+        .style(move |s| {
+            let config = config.get();
+            let recording = is_recording.get();
+            s.padding_horiz(8.0)
+                .height_pct(100.0)
+                .items_center()
+                .justify_center()
+                .cursor(CursorStyle::Pointer)
+                .font_size(14.0)
+                .border_left(1.0)
+                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                .background(if recording {
+                    config.color(LapceColor::LAPCE_ERROR)
+                } else {
+                    config.color(LapceColor::EDITOR_BACKGROUND)
+                })
+                .hover(|s| {
+                    s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                })
+        }),
+        // Send button
         label(move || {
             if is_loading.get() {
                 "Stop".to_string()
@@ -1975,7 +2058,7 @@ fn chat_input_area(
         })
         .on_click_stop(move |_| {
             if !is_loading.get_untracked() {
-                chat_data_btn.send_message();
+                chat_data_send.send_message();
             }
         })
         .style(move |s| {
@@ -2016,5 +2099,9 @@ fn chat_input_area(
             .border(1.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER))
             .background(config.color(LapceColor::EDITOR_BACKGROUND))
-    })
+    });
+
+    // Stack: image previews on top, input bar below
+    stack((image_preview, input_bar))
+        .style(|s| s.flex_col().width_pct(100.0))
 }

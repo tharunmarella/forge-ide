@@ -570,6 +570,7 @@ User request: {}"#,
                 model,
                 api_key,
                 conversation_id: uuid::Uuid::new_v4().to_string(),
+                attached_images: Vec::new(),
             },
             send,
         );

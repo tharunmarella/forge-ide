@@ -1,6 +1,7 @@
 pub mod about;
 pub mod ai_chat;
 pub mod ai_completion;
+pub mod audio_recorder;
 pub mod ai_diff;
 pub mod alert;
 pub mod app;
