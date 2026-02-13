@@ -40,6 +40,7 @@ use lsp_types::{
     notification::{Cancel, Notification},
 };
 use parking_lot::Mutex;
+use toml;
 
 use crate::{
     agent_terminal::AgentTerminalManager,
@@ -2625,13 +2626,26 @@ impl ProxyHandler for Dispatcher {
                 // Run in a thread — uses blocking reqwest (no async runtime needed)
                 thread::spawn(move || {
                     const GROQ_WHISPER_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
-                        let groq_key = std::env::var("GROQ_API_KEY").unwrap_or_default();
-                        if groq_key.is_empty() {
+                        
+                        // Try environment variable first, then ai-keys.toml
+                        let groq_key = std::env::var("GROQ_API_KEY")
+                            .ok()
+                            .filter(|k| !k.is_empty())
+                            .or_else(|| {
+                                // Load from ai-keys.toml
+                                use lapce_core::directory::Directory;
+                                let path = Directory::config_directory()?.join("ai-keys.toml");
+                                let content = std::fs::read_to_string(&path).ok()?;
+                                let config: toml::Value = toml::from_str(&content).ok()?;
+                                config.get("keys")?.get("groq")?.as_str().map(String::from)
+                            });
+                        
+                        let Some(groq_key) = groq_key else {
                             proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError {
-                                error: "GROQ_API_KEY environment variable not set. Required for audio transcription.".to_string(),
+                                error: "Groq API key not found. Add 'groq' key to ai-keys.toml or set GROQ_API_KEY env var.".to_string(),
                             }));
                             return;
-                        }
+                        };
                     
                     let client = reqwest::blocking::Client::new();
                     
