@@ -2795,7 +2795,9 @@ impl WindowTabData {
                     "completed" | "success" => ToolCallStatus::Success,
                     "error" | "failed" => ToolCallStatus::Error,
                     "waiting_approval" => ToolCallStatus::WaitingApproval,
+                    "awaiting_review" => ToolCallStatus::AwaitingReview,
                     "rejected" => ToolCallStatus::Rejected,
+                    "accepted" => ToolCallStatus::Accepted,
                     _ => ToolCallStatus::Pending,
                 };
 

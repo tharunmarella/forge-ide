@@ -146,16 +146,20 @@ pub struct ChatToolCall {
     pub elapsed_display: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 pub enum ToolCallStatus {
     Pending,
     /// Waiting for user to approve or reject this tool call.
     WaitingApproval,
+    /// File edit executed, awaiting user review (can revert).
+    AwaitingReview,
     Running,
     Success,
     Error,
-    /// User rejected this tool call.
+    /// User rejected/reverted this tool call.
     Rejected,
+    /// User accepted this tool call.
+    Accepted,
 }
 
 /// A single entry in the chat, with a unique id and version for reactive re-rendering.

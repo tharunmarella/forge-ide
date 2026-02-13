@@ -872,7 +872,7 @@ fn chat_entry_view(
         }
         ChatEntryKind::ToolCall(tc) => {
             // Approval-pending tools get Accept/Reject buttons
-            if tc.status == ToolCallStatus::WaitingApproval {
+            if tc.status == ToolCallStatus::WaitingApproval || tc.status == ToolCallStatus::AwaitingReview {
                 return approval_card(config, tc, proxy, internal_command).into_any();
             }
             // File-related tools get a special clickable file block
@@ -1113,8 +1113,10 @@ fn file_tool_card(
     let status_icon = match &tc.status {
         ToolCallStatus::Pending => "\u{25CB}",
         ToolCallStatus::WaitingApproval => "\u{26A0}",
+        ToolCallStatus::AwaitingReview => "\u{1F440}", // eyes (reviewing)
         ToolCallStatus::Running => "\u{25CF}",
         ToolCallStatus::Success => "\u{2713}",
+        ToolCallStatus::Accepted => "\u{2713}", // same as success
         ToolCallStatus::Error => "\u{2717}",
         ToolCallStatus::Rejected => "\u{2718}",
     };
@@ -1307,87 +1309,118 @@ fn approval_card(
                     .border_color(config.color(LapceColor::LAPCE_BORDER))
                     .apply_if(!is_expanded || !has_diff, |s| s.hide())
             }),
-            // Accept / View / Reject buttons
-            stack((
-                label(|| "Accept".to_string())
-                    .on_click_stop(move |_| {
-                        proxy_accept.request_async(
-                            lapce_rpc::proxy::ProxyRequest::AgentApproveToolCall {
-                                tool_call_id: tc_id.clone(),
-                            },
-                            |_| {},
-                        );
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        s.padding_horiz(14.0)
-                            .padding_vert(4.0)
-                            .margin_right(8.0)
-                            .border_radius(4.0)
-                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                            .font_bold()
-                            .color(config.color(LapceColor::PANEL_BACKGROUND))
-                            .background(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                            .cursor(CursorStyle::Pointer)
-                            .hover(|s| s.background(
-                                config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.85)
-                            ))
-                    }),
-                // View button - opens file or toggles diff preview
-                label(|| "View".to_string())
-                    .on_click_stop(move |_| {
-                        if let Some(ref path) = view_path {
-                            // Open the file in editor
-                            internal_command.send(crate::command::InternalCommand::OpenFile {
-                                path: path.clone(),
-                            });
-                        }
-                        // Also toggle the diff preview
-                        expanded.update(|v| *v = !*v);
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        s.padding_horiz(14.0)
-                            .padding_vert(4.0)
-                            .margin_right(8.0)
-                            .border_radius(4.0)
-                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                            .font_bold()
-                            .color(config.color(LapceColor::PANEL_FOREGROUND))
-                            .border(1.0)
-                            .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                            .cursor(CursorStyle::Pointer)
-                            .apply_if(!has_file_path && !is_replace, |s| s.hide())
-                            .hover(|s| s.background(
-                                config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.15)
-                            ))
-                    }),
-                label(|| "Reject".to_string())
-                    .on_click_stop(move |_| {
-                        proxy_reject.request_async(
-                            lapce_rpc::proxy::ProxyRequest::AgentRejectToolCall {
-                                tool_call_id: tc_id_reject.clone(),
-                            },
-                            |_| {},
-                        );
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        s.padding_horiz(14.0)
-                            .padding_vert(4.0)
-                            .border_radius(4.0)
-                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                            .font_bold()
-                            .color(config.color(LapceColor::PANEL_FOREGROUND))
-                            .border(1.0)
-                            .border_color(config.color(LapceColor::LAPCE_BORDER))
-                            .cursor(CursorStyle::Pointer)
-                            .hover(|s| s.background(
-                                config.color(LapceColor::PANEL_HOVERED_BACKGROUND)
-                            ))
-                    }),
-            ))
-            .style(|s| s.flex_row().items_center()),
+            // Status message after accept/reject
+            {
+                let status_msg = match &tc.status {
+                    ToolCallStatus::Accepted => Some("✓ Changes accepted"),
+                    ToolCallStatus::Rejected => Some("↩ Changes reverted"),
+                    _ => None,
+                };
+                if let Some(msg) = status_msg {
+                    label(move || msg.to_string())
+                        .style(move |s| {
+                            let config = config.get();
+                            let color = match tc.status {
+                                ToolCallStatus::Accepted => config.color(LapceColor::LAPCE_ICON_ACTIVE),
+                                _ => config.color(LapceColor::EDITOR_DIM),
+                            };
+                            s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                .color(color)
+                                .margin_bottom(4.0)
+                        })
+                        .into_any()
+                } else {
+                    empty().into_any()
+                }
+            },
+            // Accept / View / Reject buttons (only show if still awaiting response)
+            {
+                let show_buttons = matches!(tc.status, ToolCallStatus::WaitingApproval | ToolCallStatus::AwaitingReview);
+                stack((
+                    label(|| "Accept".to_string())
+                        .on_click_stop(move |_| {
+                            proxy_accept.request_async(
+                                lapce_rpc::proxy::ProxyRequest::AgentApproveToolCall {
+                                    tool_call_id: tc_id.clone(),
+                                },
+                                |_| {},
+                            );
+                        })
+                        .style(move |s| {
+                            let config = config.get();
+                            s.padding_horiz(14.0)
+                                .padding_vert(4.0)
+                                .margin_right(8.0)
+                                .border_radius(4.0)
+                                .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                .font_bold()
+                                .color(config.color(LapceColor::PANEL_BACKGROUND))
+                                .background(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                                .cursor(CursorStyle::Pointer)
+                                .hover(|s| s.background(
+                                    config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.85)
+                                ))
+                        }),
+                    // View button - opens file or toggles diff preview
+                    label(|| "View".to_string())
+                        .on_click_stop(move |_| {
+                            if let Some(ref path) = view_path {
+                                // Open the file in editor
+                                internal_command.send(crate::command::InternalCommand::OpenFile {
+                                    path: path.clone(),
+                                });
+                            }
+                            // Also toggle the diff preview
+                            expanded.update(|v| *v = !*v);
+                        })
+                        .style(move |s| {
+                            let config = config.get();
+                            s.padding_horiz(14.0)
+                                .padding_vert(4.0)
+                                .margin_right(8.0)
+                                .border_radius(4.0)
+                                .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                .font_bold()
+                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                .border(1.0)
+                                .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                                .cursor(CursorStyle::Pointer)
+                                .apply_if(!has_file_path && !is_replace, |s| s.hide())
+                                .hover(|s| s.background(
+                                    config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.15)
+                                ))
+                        }),
+                    label(|| "Reject".to_string())
+                        .on_click_stop(move |_| {
+                            proxy_reject.request_async(
+                                lapce_rpc::proxy::ProxyRequest::AgentRejectToolCall {
+                                    tool_call_id: tc_id_reject.clone(),
+                                },
+                                |_| {},
+                            );
+                        })
+                        .style(move |s| {
+                            let config = config.get();
+                            s.padding_horiz(14.0)
+                                .padding_vert(4.0)
+                                .border_radius(4.0)
+                                .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                .font_bold()
+                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                .border(1.0)
+                                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                                .cursor(CursorStyle::Pointer)
+                                .hover(|s| s.background(
+                                    config.color(LapceColor::PANEL_HOVERED_BACKGROUND)
+                                ))
+                        }),
+                ))
+                .style(move |s| {
+                    s.flex_row()
+                        .items_center()
+                        .apply_if(!show_buttons, |s| s.hide())
+                })
+            },
         ))
         .style(|s| s.flex_col().gap(4.0).width_pct(100.0)),
     )
@@ -1421,8 +1454,10 @@ fn tool_call_card(
     let status_icon = match &tc.status {
         ToolCallStatus::Pending => "\u{25CB}",   // open circle
         ToolCallStatus::WaitingApproval => "\u{26A0}", // warning
+        ToolCallStatus::AwaitingReview => "\u{1F440}", // eyes (reviewing)
         ToolCallStatus::Running => "\u{25CF}",   // filled circle (pulsing via color)
         ToolCallStatus::Success => "\u{2713}",   // checkmark
+        ToolCallStatus::Accepted => "\u{2713}", // same as success
         ToolCallStatus::Error => "\u{2717}",     // X mark
         ToolCallStatus::Rejected => "\u{2718}",  // rejected
     };
@@ -1735,8 +1770,10 @@ fn server_tool_call_view(
     let status_icon = match &tc.status {
         ToolCallStatus::Pending => "\u{25CB}",
         ToolCallStatus::WaitingApproval => "\u{26A0}",
+        ToolCallStatus::AwaitingReview => "\u{1F440}", // eyes (reviewing)
         ToolCallStatus::Running => "\u{25CF}",
         ToolCallStatus::Success => "\u{2713}",
+        ToolCallStatus::Accepted => "\u{2713}", // same as success
         ToolCallStatus::Error => "\u{2717}",
         ToolCallStatus::Rejected => "\u{2718}",
     };
