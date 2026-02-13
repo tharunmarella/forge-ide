@@ -2484,20 +2484,17 @@ impl ProxyHandler for Dispatcher {
                                                         _ => format!("Modified: {}", path),
                                                     };
                                                     
+                                                    // Update the existing tool call entry to awaiting_review
+                                                    // (this shows Accept/Reject buttons in the UI)
+                                                    // NOTE: Do NOT also send AgentToolCallApprovalRequest — that
+                                                    // would create a duplicate entry. The "awaiting_review" status
+                                                    // is sufficient to show the approval buttons.
                                                     core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                         tool_call_id: tc_id.clone(),
                                                         tool_name: tc_name.clone(),
-                                                        arguments: String::new(),
-                                                        status: "awaiting_review".to_string(),
-                                                        output: Some(format!("{}\n\n{}", summary, result.output)),
-                                                    });
-                                                    
-                                                    // Send approval request with diff
-                                                    core_rpc.notification(CoreNotification::AgentToolCallApprovalRequest {
-                                                        tool_call_id: tc_id.clone(),
-                                                        tool_name: format!("Review: {}", tc_name),
-                                                        summary: format!("{} - Click Accept to keep, Reject to revert", summary),
                                                         arguments: args_json.clone(),
+                                                        status: "awaiting_review".to_string(),
+                                                        output: Some(format!("{} — Accept to keep, Reject to revert", summary)),
                                                     });
                                                     
                                                     // Wait for user review
