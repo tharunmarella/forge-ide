@@ -2975,8 +2975,10 @@ impl WindowTabData {
                 self.ai_chat.request_scroll_to_bottom();
             }
             CoreNotification::AgentPlan { steps } => {
-                // Add a plan entry to the chat
-                use crate::ai_chat::{new_plan, ChatPlanStep, ChatPlanStepStatus};
+                // Update the plan in the chat — replace existing plan entry if present,
+                // otherwise add a new one. This handles both initial plan display and
+                // subsequent step status updates (e.g., step going from in_progress → done).
+                use crate::ai_chat::{new_plan, ChatPlanStep, ChatPlanStepStatus, ChatEntryKind};
                 let plan_steps: Vec<ChatPlanStep> = steps
                     .iter()
                     .map(|s| ChatPlanStep {
@@ -2989,10 +2991,18 @@ impl WindowTabData {
                         },
                     })
                     .collect();
-                let entry = new_plan(plan_steps);
-                // Add to thinking steps (plan is part of thinking)
-                self.ai_chat.thinking_steps.update(|steps| {
-                    steps.push_back(entry);
+                
+                self.ai_chat.thinking_steps.update(|thinking| {
+                    // Find and replace existing plan entry, or append if first time
+                    if let Some(pos) = thinking.iter().position(|e| matches!(&e.kind, ChatEntryKind::Plan(_))) {
+                        let mut updated = new_plan(plan_steps);
+                        // Preserve the original entry ID so the UI doesn't flicker
+                        updated.id = thinking[pos].id;
+                        updated.version = thinking[pos].version + 1;
+                        thinking[pos] = updated;
+                    } else {
+                        thinking.push_back(new_plan(plan_steps));
+                    }
                 });
                 self.ai_chat.thinking_collapsed.set(false);
                 self.ai_chat.request_scroll_to_bottom();

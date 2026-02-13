@@ -2301,6 +2301,32 @@ impl ProxyHandler for Dispatcher {
                                     let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("done");
                                     let server_tool_calls = response.get("tool_calls").and_then(|t| t.as_array());
                                     
+                                    // Forward plan steps to IDE (sent on every turn so the UI updates as steps complete)
+                                    if let Some(plan_arr) = response.get("plan_steps").and_then(|p| p.as_array()) {
+                                        let steps: Vec<lapce_rpc::core::AgentPlanStep> = plan_arr
+                                            .iter()
+                                            .filter_map(|s| {
+                                                let number = s.get("number").and_then(|n| n.as_u64())? as u32;
+                                                let description = s.get("description").and_then(|d| d.as_str())?.to_string();
+                                                let status_str = s.get("status").and_then(|st| st.as_str()).unwrap_or("pending");
+                                                let step_status = match status_str {
+                                                    "in_progress" => lapce_rpc::core::AgentPlanStepStatus::InProgress,
+                                                    "done" => lapce_rpc::core::AgentPlanStepStatus::Done,
+                                                    _ => lapce_rpc::core::AgentPlanStepStatus::Pending,
+                                                };
+                                                Some(lapce_rpc::core::AgentPlanStep {
+                                                    number,
+                                                    description,
+                                                    status: step_status,
+                                                })
+                                            })
+                                            .collect();
+                                        if !steps.is_empty() {
+                                            tracing::info!("Forwarding {} plan steps to IDE", steps.len());
+                                            core_rpc.agent_plan(steps);
+                                        }
+                                    }
+                                    
                                     // Send answer text to UI
                                     if !answer.is_empty() {
                                         core_rpc.agent_text_chunk(answer.to_string(), false);
