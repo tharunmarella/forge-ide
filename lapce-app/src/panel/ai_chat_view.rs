@@ -1267,7 +1267,7 @@ fn approval_card(
     };
 
     // Expanded state for showing diff preview
-    let expanded = create_rw_signal(false);
+    let expanded = create_rw_signal(true);
     let diff_preview_clone = diff_preview.clone();
 
     container(
@@ -1361,35 +1361,7 @@ fn approval_card(
                                     config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.85)
                                 ))
                         }),
-                    // View button - opens file or toggles diff preview
-                    label(|| "View".to_string())
-                        .on_click_stop(move |_| {
-                            if let Some(ref path) = view_path {
-                                // Open the file in editor
-                                internal_command.send(crate::command::InternalCommand::OpenFile {
-                                    path: path.clone(),
-                                });
-                            }
-                            // Also toggle the diff preview
-                            expanded.update(|v| *v = !*v);
-                        })
-                        .style(move |s| {
-                            let config = config.get();
-                            s.padding_horiz(14.0)
-                                .padding_vert(4.0)
-                                .margin_right(8.0)
-                                .border_radius(4.0)
-                                .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                                .font_bold()
-                                .color(config.color(LapceColor::PANEL_FOREGROUND))
-                                .border(1.0)
-                                .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
-                                .cursor(CursorStyle::Pointer)
-                                .apply_if(!has_file_path && !is_replace, |s| s.hide())
-                                .hover(|s| s.background(
-                                    config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.15)
-                                ))
-                        }),
+
                     label(|| "Reject".to_string())
                         .on_click_stop(move |_| {
                             proxy_reject.request_async(
