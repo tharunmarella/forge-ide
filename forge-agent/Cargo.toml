@@ -38,8 +38,6 @@ tree-sitter-python = "0.21"
 tree-sitter-typescript = "0.21"
 tree-sitter-go = "0.21"
 
-# Database (session persistence + embeddings)
-rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Caching (moka - high-performance concurrent cache)
 moka = { version = "0.12", features = ["sync"] }

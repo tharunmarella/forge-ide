@@ -3,13 +3,9 @@ mod files;
 pub(crate) mod search;
 mod code;
 mod process;
-mod embeddings;       // Legacy: kept for backward compat, prefer forge-search
-mod embeddings_store; // Legacy: kept for backward compat, prefer forge-search
 mod treesitter;
 pub mod lint;
 
-// Legacy re-exports — prefer forge_search::client() for new code
-pub use embeddings::{EmbeddingProvider, EmbeddingStore};
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
 use serde::{Deserialize, Serialize};

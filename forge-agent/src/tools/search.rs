@@ -1,94 +1,10 @@
-use super::embeddings::{EmbeddingProvider, EmbeddingStore};
 use super::ToolResult;
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
-use std::sync::{OnceLock, RwLock as StdRwLock};
 use walkdir::WalkDir;
 
-// ── Cloud search API (forge-search) ──────────────────────────────
-
-/// Try forge-search cloud API first (handles auth automatically).
-/// Returns None if not configured or fails (caller should fall back).
-async fn try_cloud_search(query: &str, workdir: &Path) -> Option<ToolResult> {
-    let client = crate::forge_search::client();
-
-    // Derive workspace_id from the workspace path
-    let workspace_id = workdir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("default");
-
-    tracing::info!("Trying forge-search for query: {}", query);
-
-    let body: serde_json::Value = match client.search(workspace_id, query, 10).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!("forge-search request failed: {}", e);
-            return None;
-        }
-    };
-
-    // Format results from the API response
-    let results = body.get("results").and_then(|r: &serde_json::Value| r.as_array())?;
-    if results.is_empty() {
-        return None;
-    }
-
-    let output: Vec<String> = results
-        .iter()
-        .filter_map(|r: &serde_json::Value| {
-            let file_path = r.get("file_path")?.as_str()?;
-            let name = r.get("name")?.as_str().unwrap_or("");
-            let symbol_type = r.get("symbol_type")?.as_str().unwrap_or("unknown");
-            let content = r.get("content")?.as_str().unwrap_or("");
-            let start_line = r.get("start_line").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0);
-            let end_line = r.get("end_line").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0);
-            let score = r.get("score").and_then(|v: &serde_json::Value| v.as_f64()).unwrap_or(0.0);
-
-            // Format related symbols if present
-            let related_str = r
-                .get("related")
-                .and_then(|rel| rel.as_array())
-                .map(|rels| {
-                    let items: Vec<String> = rels
-                        .iter()
-                        .filter_map(|rel| {
-                            let rname = rel.get("name")?.as_str()?;
-                            let rrel = rel.get("relationship")?.as_str()?;
-                            Some(format!("  - {} ({})", rname, rrel))
-                        })
-                        .take(5)
-                        .collect();
-                    if items.is_empty() {
-                        String::new()
-                    } else {
-                        format!("\nRelated:\n{}", items.join("\n"))
-                    }
-                })
-                .unwrap_or_default();
-
-            Some(format!(
-                "## {}:{}-{} [{} `{}`] (relevance: {:.0}%)\n```\n{}\n```{}",
-                file_path,
-                start_line,
-                end_line,
-                symbol_type,
-                name,
-                score * 100.0,
-                truncate_lines(content, 30),
-                related_str,
-            ))
-        })
-        .collect();
-
-    if output.is_empty() {
-        return None;
-    }
-
-    tracing::info!("Cloud search returned {} results", output.len());
-    Some(ToolResult::ok(output.join("\n\n")))
-}
+// ── forge-search API ─────────────────────────────────────────────
 
 /// Trigger background indexing of the workspace via forge-search.
 /// Fire-and-forget: does not block the caller.
@@ -164,258 +80,94 @@ pub async fn ensure_indexed(workdir: &Path) -> (bool, i64) {
 // Re-export from forge_search for backwards compatibility
 pub use crate::forge_search::{should_skip_dir, is_indexable_file};
 
-// Global embedding provider config (set once on startup)
-static EMBEDDING_PROVIDER: OnceLock<StdRwLock<Option<EmbeddingProvider>>> = OnceLock::new();
+// ── Semantic search (forge-search only) ──────────────────────────
 
-fn get_provider_config() -> &'static StdRwLock<Option<EmbeddingProvider>> {
-    EMBEDDING_PROVIDER.get_or_init(|| StdRwLock::new(None))
-}
-
-/// Initialize embedding provider from LLM config (call once at startup)
-pub fn init_embedding_provider(provider: &str, api_key: Option<&str>, base_url: Option<&str>) {
-    let embedding_provider = EmbeddingProvider::from_config(provider, api_key, base_url);
-    if let Ok(mut guard) = get_provider_config().write() {
-        *guard = Some(embedding_provider);
-    }
-}
-
-/// Resolve the embedding provider: configured > env-based Gemini > Ollama fallback
-fn resolve_provider() -> EmbeddingProvider {
-    // 1. Check configured provider
-    if let Some(provider) = get_provider_config()
-        .read()
-        .ok()
-        .and_then(|g| g.clone())
-    {
-        // Skip Ollama default -- prefer Gemini from env if available
-        if !matches!(&provider, EmbeddingProvider::Ollama { .. }) {
-            return provider;
-        }
-    }
-
-    // 2. Check for GEMINI_API_KEY in environment (most users have this)
-    if let Ok(key) = std::env::var("GEMINI_API_KEY") {
-        if !key.is_empty() {
-            tracing::info!("Using Gemini text-embedding-004 for semantic search");
-            return EmbeddingProvider::Gemini { api_key: key };
-        }
-    }
-
-    // 3. Check for OPENAI_API_KEY
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        if !key.is_empty() {
-            return EmbeddingProvider::OpenAI {
-                api_key: key,
-                base_url: "https://api.openai.com/v1".to_string(),
-            };
-        }
-    }
-
-    // 4. Fallback to Ollama
-    EmbeddingProvider::Ollama {
-        base_url: "http://localhost:11434".to_string(),
-    }
-}
-
-// ── Semantic search (hybrid: embeddings + project tree) ──────────
-
-/// Semantic search using Gemini embeddings with SQLite persistence.
+/// Semantic search using forge-search backend (pgvector).
 ///
-/// This is the "hybrid" search:
-/// 1. Embeds the query using Gemini text-embedding-004
-/// 2. Searches the persistent embedding database for semantically similar chunks
-/// 3. Augments results with file-path context so the model knows where things are
-///
-/// If the database is empty, indexes the workspace first (one-time cost ~5-10s).
-/// Falls back to keyword search if embeddings are unavailable.
+/// Always uses the forge-search API. Falls back to keyword search
+/// only if the API is unreachable or returns no results.
 pub async fn semantic(args: &Value, workdir: &Path) -> ToolResult {
     let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
         return ToolResult::err("Missing 'query' parameter");
     };
 
-    // Try cloud search API first (if FORGE_SEARCH_URL is set)
-    if let Some(result) = try_cloud_search(query, workdir).await {
-        return result;
-    }
+    let client = crate::forge_search::client();
 
-    // Fall back to local embedding search
-    let provider = resolve_provider();
+    // Derive workspace_id from the workspace path
+    let workspace_id = workdir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("default");
 
-    // Open (or create) persistent embedding database
-    let db = match super::embeddings_store::EmbeddingDb::open(workdir, provider.clone()) {
-        Ok(db) => db,
+    tracing::info!("forge-search query: {}", query);
+
+    let body: serde_json::Value = match client.search(workspace_id, query, 10).await {
+        Ok(b) => b,
         Err(e) => {
-            tracing::warn!("Failed to open embedding database: {}", e);
+            tracing::warn!("forge-search request failed: {}", e);
             return keyword_search(query, workdir).await;
         }
     };
 
-    // Index if empty or very small
-    let chunk_count = db.chunk_count().await;
-    if chunk_count < 10 {
-        tracing::info!(
-            "Embedding database has {} chunks, indexing workspace with {:?}...",
-            chunk_count,
-            provider_label(&provider)
-        );
-
-        if let Err(e) = index_workspace(&db, &provider, workdir).await {
-            tracing::warn!("Indexing failed: {}", e);
-            return keyword_search(query, workdir).await;
-        }
-    }
-
-    // Embed the query
-    let store = match EmbeddingStore::new(provider.clone()) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!("Failed to create embedding store: {}", e);
-            return keyword_search(query, workdir).await;
-        }
+    // Format results from the API response
+    let results = match body.get("results").and_then(|r| r.as_array()) {
+        Some(r) if !r.is_empty() => r,
+        _ => return keyword_search(query, workdir).await,
     };
 
-    let query_embedding = match store.embed_texts_public(&[query]).await {
-        Ok(embs) if !embs.is_empty() => embs[0].clone(),
-        Ok(_) => {
-            tracing::warn!("Empty embedding returned for query");
-            return keyword_search(query, workdir).await;
-        }
-        Err(e) => {
-            tracing::warn!("Failed to embed query: {}", e);
-            return keyword_search(query, workdir).await;
-        }
-    };
+    let output: Vec<String> = results
+        .iter()
+        .filter_map(|r| {
+            let file_path = r.get("file_path")?.as_str()?;
+            let name = r.get("name")?.as_str().unwrap_or("");
+            let symbol_type = r.get("symbol_type")?.as_str().unwrap_or("unknown");
+            let content = r.get("content")?.as_str().unwrap_or("");
+            let start_line = r.get("start_line").and_then(|v| v.as_i64()).unwrap_or(0);
+            let end_line = r.get("end_line").and_then(|v| v.as_i64()).unwrap_or(0);
+            let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-    // Search
-    match db.search(&query_embedding, 10).await {
-        Ok(results) => {
-            if results.is_empty() {
-                return keyword_search(query, workdir).await;
-            }
-
-            // Filter out very low relevance results (score < 0.3)
-            let good_results: Vec<_> = results
-                .into_iter()
-                .filter(|(score, _)| *score > 0.30)
-                .collect();
-
-            if good_results.is_empty() {
-                // All results below threshold -- fall back to keyword
-                return keyword_search(query, workdir).await;
-            }
-
-            let output: Vec<String> = good_results
-                .iter()
-                .map(|(score, chunk)| {
-                    let type_info = if let Some(ref name) = chunk.name {
-                        format!("{} `{}`", chunk.chunk_type, name)
+            // Format related symbols if present
+            let related_str = r
+                .get("related")
+                .and_then(|rel| rel.as_array())
+                .map(|rels| {
+                    let items: Vec<String> = rels
+                        .iter()
+                        .filter_map(|rel| {
+                            let rname = rel.get("name")?.as_str()?;
+                            let rrel = rel.get("relationship")?.as_str()?;
+                            Some(format!("  - {} ({})", rname, rrel))
+                        })
+                        .take(5)
+                        .collect();
+                    if items.is_empty() {
+                        String::new()
                     } else {
-                        chunk.chunk_type.clone()
-                    };
-                    format!(
-                        "## {}:{}-{} [{}] (relevance: {:.0}%)\n```\n{}\n```",
-                        chunk.file_path,
-                        chunk.start_line,
-                        chunk.end_line,
-                        type_info,
-                        score * 100.0,
-                        truncate_lines(&chunk.content, 30)
-                    )
+                        format!("\nRelated:\n{}", items.join("\n"))
+                    }
                 })
-                .collect();
+                .unwrap_or_default();
 
-            ToolResult::ok(output.join("\n\n"))
-        }
-        Err(e) => {
-            tracing::warn!("Database search failed: {}", e);
-            keyword_search(query, workdir).await
-        }
-    }
-}
-
-fn provider_label(p: &EmbeddingProvider) -> &'static str {
-    match p {
-        EmbeddingProvider::Gemini { .. } => "Gemini",
-        EmbeddingProvider::OpenAI { .. } => "OpenAI",
-        EmbeddingProvider::Ollama { .. } => "Ollama",
-        EmbeddingProvider::None => "None",
-    }
-}
-
-// ── Workspace indexing ───────────────────────────────────────────
-
-/// Index workspace source files into the embedding database.
-///
-/// - Uses tree-sitter for smart function/struct-level chunking
-/// - Prepends file path + signature to each chunk for better embedding quality
-/// - Filters out test/bench files, non-project files, generated code
-/// - Batches embedding API calls for efficiency
-async fn index_workspace(
-    db: &super::embeddings_store::EmbeddingDb,
-    provider: &EmbeddingProvider,
-    workdir: &Path,
-) -> anyhow::Result<()> {
-    let store = EmbeddingStore::new(provider.clone())?;
-
-    // Collect source files -- be selective
-    let source_files: Vec<_> = WalkDir::new(workdir)
-        .max_depth(8)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.file_type().is_dir() {
-                let name = e.file_name().to_string_lossy();
-                return !should_skip_dir(&name);
-            }
-            true
+            Some(format!(
+                "## {}:{}-{} [{} `{}`] (relevance: {:.0}%)\n```\n{}\n```{}",
+                file_path,
+                start_line,
+                end_line,
+                symbol_type,
+                name,
+                score * 100.0,
+                truncate_lines(content, 30),
+                related_str,
+            ))
         })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy();
-            is_indexable_file(&name)
-        })
-        .take(300) // Safety cap
         .collect();
 
-    tracing::info!("Indexing {} source files...", source_files.len());
-
-    let mut total_chunks = 0;
-    let mut total_files = 0;
-
-    for entry in &source_files {
-        let path = entry.path();
-
-        match db.index_file(path, &store).await {
-            Ok(n) => {
-                total_chunks += n;
-                if n > 0 {
-                    total_files += 1;
-                }
-            }
-            Err(e) => {
-                tracing::debug!("Skip {}: {}", path.display(), e);
-            }
-        }
+    if output.is_empty() {
+        return keyword_search(query, workdir).await;
     }
 
-    tracing::info!(
-        "Indexed {} chunks from {} files (total files scanned: {})",
-        total_chunks,
-        total_files,
-        source_files.len()
-    );
-
-    Ok(())
-}
-
-// is_indexable_file is now in forge_search.rs and re-exported above
-
-fn is_code_file(name: &str) -> bool {
-    let code_ext = [
-        ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
-        ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
-    ];
-    code_ext.iter().any(|ext| name.ends_with(ext))
+    tracing::info!("forge-search returned {} results", output.len());
+    ToolResult::ok(output.join("\n\n"))
 }
 
 // ── Keyword search fallback ──────────────────────────────────────
@@ -816,17 +568,6 @@ pub fn pre_search_workspace(query: &str, workdir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    #[tokio::test]
-    async fn test_init_embedding_provider() {
-        init_embedding_provider("anthropic", Some("test-key"), None);
-        let provider = get_provider_config().read().unwrap();
-        assert!(matches!(
-            provider.as_ref(),
-            Some(EmbeddingProvider::Ollama { .. })
-        ));
-    }
 
     #[test]
     fn test_extract_search_keywords() {
