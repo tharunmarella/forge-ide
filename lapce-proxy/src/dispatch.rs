@@ -42,6 +42,7 @@ use lsp_types::{
 use parking_lot::Mutex;
 
 use crate::{
+    agent_terminal::AgentTerminalManager,
     buffer::{Buffer, get_mod_time, load_file},
     plugin::{PluginCatalogRpcHandler, catalog::PluginCatalog},
     terminal::{Terminal, TerminalSender},
@@ -57,7 +58,7 @@ pub struct Dispatcher {
     core_rpc: CoreRpcHandler,
     catalog_rpc: PluginCatalogRpcHandler,
     buffers: HashMap<PathBuf, Buffer>,
-    terminals: HashMap<TermId, TerminalSender>,
+    terminals: Arc<std::sync::Mutex<HashMap<TermId, TerminalSender>>>,
     file_watcher: FileWatcher,
     window_id: usize,
     tab_id: usize,
@@ -68,6 +69,8 @@ pub struct Dispatcher {
     /// Pending approval channels: tool_call_id -> oneshot sender (true=approved, false=rejected).
     /// The agent loop awaits on the receiver; the UI sends approve/reject via ProxyRequest.
     pending_approvals: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    /// Manages terminals created by the AI agent (visible in terminal panel).
+    agent_terminal_mgr: Arc<AgentTerminalManager>,
 }
 
 impl ProxyHandler for Dispatcher {
@@ -166,7 +169,7 @@ impl ProxyHandler for Dispatcher {
             }
             Shutdown {} => {
                 self.catalog_rpc.shutdown();
-                for (_, sender) in self.terminals.iter() {
+                for (_, sender) in self.terminals.lock().unwrap().iter() {
                     sender.send(Msg::Shutdown);
                 }
                 self.proxy_rpc.shutdown();
@@ -213,14 +216,14 @@ impl ProxyHandler for Dispatcher {
                 let tx = terminal.tx.clone();
                 let poller = terminal.poller.clone();
                 let sender = TerminalSender::new(tx, poller);
-                self.terminals.insert(term_id, sender);
+                self.terminals.lock().unwrap().insert(term_id, sender);
                 let rpc = self.core_rpc.clone();
                 thread::spawn(move || {
                     terminal.run(rpc);
                 });
             }
             TerminalWrite { term_id, content } => {
-                if let Some(tx) = self.terminals.get(&term_id) {
+                if let Some(tx) = self.terminals.lock().unwrap().get(&term_id) {
                     tx.send(Msg::Input(content.into_bytes().into()));
                 }
             }
@@ -229,7 +232,7 @@ impl ProxyHandler for Dispatcher {
                 width,
                 height,
             } => {
-                if let Some(tx) = self.terminals.get(&term_id) {
+                if let Some(tx) = self.terminals.lock().unwrap().get(&term_id) {
                     let size = WindowSize {
                         num_lines: height as u16,
                         num_cols: width as u16,
@@ -241,7 +244,7 @@ impl ProxyHandler for Dispatcher {
                 }
             }
             TerminalClose { term_id } => {
-                if let Some(tx) = self.terminals.remove(&term_id) {
+                if let Some(tx) = self.terminals.lock().unwrap().remove(&term_id) {
                     tx.send(Msg::Shutdown);
                 }
             }
@@ -2201,6 +2204,8 @@ impl ProxyHandler for Dispatcher {
                 let workspace = self.workspace.clone();
                 let _diff_snapshots = self.pending_diff_snapshots.clone();
                 let pending_approvals = self.pending_approvals.clone();
+                let agent_term_mgr = self.agent_terminal_mgr.clone();
+                let ide_terminals = self.terminals.clone();
                 let _ = (provider, model, api_key); // Unused — all LLM calls go through forge-search
 
                 thread::spawn(move || {
@@ -2264,10 +2269,10 @@ impl ProxyHandler for Dispatcher {
                         let conversation_id = format!("{}-{}", workspace_name, conv_id);
                         let mut tool_results: Vec<serde_json::Value> = Vec::new();
                         let mut is_first_turn = true;
+                        let mut turn = 0;
                         
-                        const MAX_CLOUD_TURNS: usize = 30;
-                        
-                        for turn in 0..MAX_CLOUD_TURNS {
+                        loop {
+                            turn += 1;
                             let mut chat_req = serde_json::json!({
                                 "workspace_id": workspace_name,
                                 "conversation_id": conversation_id,
@@ -2286,7 +2291,7 @@ impl ProxyHandler for Dispatcher {
                                 tool_results.clear();
                             }
 
-                            tracing::info!("Cloud chat turn {} for {}", turn + 1, conversation_id);
+                            tracing::info!("Cloud chat turn {} for {}", turn, conversation_id);
 
                             // ── Non-streaming JSON request to /chat ──
                             match fs_client.chat_with_body(&chat_req).await {
@@ -2402,7 +2407,13 @@ impl ProxyHandler for Dispatcher {
                                                     name: tc_name.clone(),
                                                     args: tc_args,
                                                 };
-                                                let result = execute_ide_tool(&tc_info, &workspace_path).await;
+                                                let result = execute_ide_tool(
+                                                    &tc_info,
+                                                    &workspace_path,
+                                                    &core_rpc,
+                                                    &agent_term_mgr,
+                                                    &ide_terminals,
+                                                ).await;
                                                 
                                                 core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                     tool_call_id: tc_id.clone(),
@@ -2441,13 +2452,6 @@ impl ProxyHandler for Dispatcher {
                                 }
                             }
                         }
-                        
-                        // Hit max cloud turns
-                        core_rpc.agent_text_chunk("\n\n[Reached maximum turns]".to_string(), false);
-                        core_rpc.agent_text_chunk(String::new(), true);
-                        proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
-                            message: "Reached maximum turns".to_string(),
-                        }));
                     });
                 });
             }
@@ -2851,15 +2855,75 @@ impl ProxyHandler for Dispatcher {
 
 /// Execute an IDE tool locally (the "Hands" executing what the "Brain" requested).
 /// This handles tool calls that need to run in the IDE context.
+///
+/// `execute_command` and `execute_background` are routed through the IDE's real
+/// terminal (PTY) so the user can see the output and the shell profile is loaded.
 async fn execute_ide_tool(
     tc: &forge_agent::ToolCallInfo,
     workspace_path: &std::path::Path,
+    core_rpc: &CoreRpcHandler,
+    agent_term_mgr: &AgentTerminalManager,
+    ide_terminals: &Arc<std::sync::Mutex<HashMap<TermId, TerminalSender>>>,
 ) -> forge_agent::tools::ToolResult {
     match tc.name.as_str() {
+        // ── Command execution: use real IDE terminal ──────────────
+        "execute_command" => {
+            let command = tc.args.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if command.is_empty() {
+                return forge_agent::tools::ToolResult::err("Missing 'command' parameter");
+            }
+            let timeout_secs = tc.args.get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(120)
+                .min(600);
+
+            agent_term_mgr.execute_command(
+                command, workspace_path, timeout_secs, core_rpc, ide_terminals,
+            )
+        }
+        "execute_background" => {
+            let command = tc.args.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if command.is_empty() {
+                return forge_agent::tools::ToolResult::err("Missing 'command' parameter");
+            }
+            let wait_seconds = tc.args.get("wait_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3);
+
+            agent_term_mgr.execute_background(
+                command, workspace_path, wait_seconds, core_rpc, ide_terminals,
+            )
+        }
+        "read_process_output" => {
+            let pid = tc.args.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32);
+            if let Some(pid) = pid {
+                // Check if this PID belongs to an agent terminal
+                if agent_term_mgr.has_terminal(pid) {
+                    let tail_lines = tc.args.get("tail_lines")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(100) as usize;
+                    if let Some(output) = agent_term_mgr.read_output(pid, tail_lines) {
+                        let is_running = agent_term_mgr.is_running(pid);
+                        return forge_agent::tools::ToolResult::ok(format!(
+                            "Running: {is_running}\n--- Output (tail {tail_lines} lines) ---\n{output}"
+                        ));
+                    }
+                }
+            }
+            // Fall through to default handler for non-agent-terminal PIDs
+            let tool_call_obj = forge_agent::tools::ToolCall {
+                name: tc.name.clone(),
+                arguments: tc.args.clone(),
+                thought_signature: None,
+            };
+            forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
+        }
+        // ── LSP tools: not yet available ─────────────────────────
         "lsp_go_to_definition" | "lsp_find_references" | "lsp_hover" | "lsp_rename" => {
-            // LSP tools require synchronous access to the language server
-            // which isn't available in this async context.
-            // Guide the agent to use the indexed code graph instead.
             forge_agent::tools::ToolResult::err(format!(
                 "LSP tool '{}' is not yet available in cloud mode. \
                 Use 'codebase_search' for semantic search or \
@@ -2868,6 +2932,7 @@ async fn execute_ide_tool(
                 tc.name
             ))
         }
+        // ── All other tools: use standard execution ──────────────
         _ => {
             let tool_call_obj = forge_agent::tools::ToolCall {
                 name: tc.name.clone(),
@@ -2942,13 +3007,14 @@ impl Dispatcher {
             core_rpc,
             catalog_rpc: plugin_rpc,
             buffers: HashMap::new(),
-            terminals: HashMap::new(),
+            terminals: Arc::new(std::sync::Mutex::new(HashMap::new())),
             file_watcher,
             window_id: 1,
             tab_id: 1,
             db_manager: crate::database::connection_manager::ConnectionManager::new(),
             pending_diff_snapshots: Arc::new(Mutex::new(HashMap::new())),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
+            agent_terminal_mgr: Arc::new(AgentTerminalManager::new()),
         }
     }
 
