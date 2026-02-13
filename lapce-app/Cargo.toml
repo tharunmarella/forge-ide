@@ -71,6 +71,7 @@ cpal    = { version = "0.15" }
 hound   = { version = "3.5" }
 # Clipboard image paste support (cross-platform: macOS, Windows, Linux)
 arboard = { version = "3.4", features = ["image-data"] }
+png = "0.18.0"
 
 [target.'cfg(target_os="macos")'.dependencies]
 fs_extra = "1.2.0"
