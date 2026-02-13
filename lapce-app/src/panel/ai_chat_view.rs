@@ -1934,8 +1934,10 @@ fn chat_input_area(
 
     let cursor_x = create_rw_signal(0.0);
 
-    let chat_data_send = chat_data.clone();
+    // Clone chat_data before closures consume it
     let chat_data_mic = chat_data.clone();
+    let chat_data_attach = chat_data.clone();
+    let chat_data_preview = chat_data.clone();
 
     // ── Image preview strip (shown above input when images are attached) ──
     let image_preview = dyn_stack(
@@ -1945,7 +1947,7 @@ fn chat_input_area(
         },
         |item: &(usize, lapce_rpc::proxy::AttachedImageData)| item.0,
         move |(idx, img)| {
-            let chat_data_rm = chat_data.clone();
+            let chat_data_rm = chat_data_preview.clone();
             let filename = img.filename.clone();
             stack((
                 label(move || filename.clone()).style(move |s| {
@@ -1987,8 +1989,49 @@ fn chat_input_area(
             .apply_if(!has_images, |s| s.hide())
     });
 
-    // ── Input bar: [text input] [mic] [send] ──
+    // ── Input bar: [attach] [text input] [mic] ──
+    // Enter sends message, so no Send button needed
     let input_bar = stack((
+        // Attach button (paperclip icon)
+        svg(move || {
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="32" d="M216.08 192v143.85a40.08 40.08 0 0 0 80.15 0l.13-188.55a67.94 67.94 0 1 0-135.87 0v189.82a95.51 95.51 0 1 0 191 0V159.74"/></svg>"#.to_string()
+        })
+        .on_click_stop(move |_| {
+            // Open file picker for images
+            use floem::action::open_file;
+            use floem::file::FileDialogOptions;
+            use base64::{Engine as _, engine::general_purpose::STANDARD};
+            
+            let chat_data = chat_data_attach.clone();
+            let options = FileDialogOptions::new()
+                .title("Attach Image");
+            
+            open_file(options, move |file_info| {
+                if let Some(mut file) = file_info {
+                    // Read the file and add as base64
+                    if let Some(path) = file.path.pop() {
+                        if let Ok(data) = std::fs::read(&path) {
+                            let mime = if path.extension().and_then(|e| e.to_str()) == Some("png") {
+                                "image/png"
+                            } else {
+                                "image/jpeg"
+                            };
+                            let base64_data = STANDARD.encode(&data);
+                            chat_data.add_image(base64_data, mime.to_string());
+                        }
+                    }
+                }
+            });
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.width(28.0)
+                .height(28.0)
+                .padding(6.0)
+                .cursor(CursorStyle::Pointer)
+                .color(config.color(LapceColor::EDITOR_DIM))
+                .hover(|s| s.color(config.color(LapceColor::EDITOR_FOREGROUND)))
+        }),
         // Input editor -- fills all remaining width
         scroll(
             text_input_view
@@ -2017,86 +2060,69 @@ fn chat_input_area(
                 .items_center()
                 .background(config.color(LapceColor::EDITOR_BACKGROUND))
         }),
-        // Mic button (uses SVG mic icon via Unicode fallback)
-        label(move || {
-            if is_recording.get() {
-                "\u{25A0}".to_string() // ■ stop square
-            } else {
-                "\u{1F399}".to_string() // 🎙 mic
-            }
-        })
-        .on_click_stop(move |_| {
-            chat_data_mic.toggle_recording();
-        })
-        .style(move |s| {
-            let config = config.get();
-            let recording = is_recording.get();
-            s.padding_horiz(8.0)
-                .height_pct(100.0)
-                .items_center()
-                .justify_center()
-                .cursor(CursorStyle::Pointer)
-                .font_size(14.0)
-                .border_left(1.0)
-                .border_color(config.color(LapceColor::LAPCE_BORDER))
-                .background(if recording {
-                    config.color(LapceColor::LAPCE_ERROR)
-                } else {
-                    config.color(LapceColor::EDITOR_BACKGROUND)
-                })
-                .hover(|s| {
-                    s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
-                })
-        }),
-        // Send button
-        label(move || {
-            if is_loading.get() {
-                "Stop".to_string()
-            } else {
-                "Send".to_string()
-            }
-        })
-        .on_click_stop(move |_| {
-            if !is_loading.get_untracked() {
-                chat_data_send.send_message();
-            }
-        })
-        .style(move |s| {
-            let config = config.get();
-            let loading = is_loading.get();
-            s.padding_horiz(14.0)
-                .height_pct(100.0)
-                .items_center()
-                .justify_center()
-                .cursor(if loading {
-                    CursorStyle::Default
-                } else {
-                    CursorStyle::Pointer
-                })
-                .font_bold()
-                .font_size(config.ui.font_size() as f32)
-                .color(config.color(LapceColor::PANEL_FOREGROUND))
-                .background(config.color(LapceColor::EDITOR_BACKGROUND))
-                .border_left(1.0)
-                .border_color(config.color(LapceColor::LAPCE_BORDER))
-                .apply_if(!loading, |s| {
-                    s.hover(|s| {
-                        s.background(
-                            config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                        )
+        // Mic button (SVG mic icon, or stop square when recording)
+        {
+            let is_rec = is_recording;
+            container(
+                dyn_stack(
+                    move || vec![is_rec.get()],
+                    |v| *v,
+                    move |recording| {
+                        if recording {
+                            // Stop square when recording
+                            label(|| "\u{25A0}".to_string())
+                                .style(move |s| {
+                                    let config = config.get();
+                                    s.font_size(16.0)
+                                        .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                })
+                                .into_any()
+                        } else {
+                            // Mic SVG icon
+                            svg(move || {
+                                r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9a1 1 0 0 1 1 1a8 8 0 0 1-6.999 7.938L13 20h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 10a1 1 0 1 1 2 0a6 6 0 0 0 12 0a1 1 0 0 1 1-1m-7-8a4 4 0 0 1 4 4v5a4 4 0 1 1-8 0V5a4 4 0 0 1 4-4"/></svg>"#.to_string()
+                            })
+                            .style(move |s| {
+                                let config = config.get();
+                                s.width(18.0)
+                                    .height(18.0)
+                                    .color(config.color(LapceColor::EDITOR_DIM))
+                            })
+                            .into_any()
+                        }
+                    },
+                )
+                .style(|s| s.items_center().justify_center()),
+            )
+            .on_click_stop(move |_| {
+                chat_data_mic.toggle_recording();
+            })
+            .style(move |s| {
+                let config = config.get();
+                let recording = is_recording.get();
+                s.width(32.0)
+                    .height_pct(100.0)
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::Pointer)
+                    .background(if recording {
+                        config.color(LapceColor::LAPCE_ERROR)
+                    } else {
+                        config.color(LapceColor::EDITOR_BACKGROUND)
                     })
-                })
-                .apply_if(loading, |s| {
-                    s.color(config.color(LapceColor::EDITOR_DIM))
-                })
-        }),
+                    .hover(|s| {
+                        s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                    })
+            })
+        },
     ))
     .style(move |s| {
         let config = config.get();
         s.width_pct(100.0)
-            .height(32.0)
+            .height(36.0)
             .items_center()
             .border(1.0)
+            .border_radius(6.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER))
             .background(config.color(LapceColor::EDITOR_BACKGROUND))
     });
