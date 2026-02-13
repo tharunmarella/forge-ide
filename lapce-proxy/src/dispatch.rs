@@ -506,6 +506,7 @@ impl ProxyHandler for Dispatcher {
         use ProxyRequest::*;
         match rpc {
             NewBuffer { buffer_id, path } => {
+                let path = self.resolve_path(path);
                 let buffer = Buffer::new(buffer_id, path.clone());
                 let content = buffer.rope.to_string();
                 let read_only = buffer.read_only;
@@ -1318,11 +1319,15 @@ impl ProxyHandler for Dispatcher {
                 let items = self
                     .buffers
                     .iter()
-                    .map(|(path, buffer)| TextDocumentItem {
-                        uri: Url::from_file_path(path).unwrap(),
-                        language_id: buffer.language_id.to_string(),
-                        version: buffer.rev as i32,
-                        text: buffer.get_document(),
+                    .filter_map(|(path, buffer)| {
+                        let abs_path = self.resolve_path(path.clone());
+                        let uri = Url::from_file_path(&abs_path).ok()?;
+                        Some(TextDocumentItem {
+                            uri,
+                            language_id: buffer.language_id.to_string(),
+                            version: buffer.rev as i32,
+                            text: buffer.get_document(),
+                        })
                     })
                     .collect();
                 let resp = ProxyResponse::GetOpenFilesContentResponse { items };
@@ -1673,6 +1678,7 @@ impl ProxyHandler for Dispatcher {
                     });
             }
             GetCodeLens { path } => {
+                let path = self.resolve_path(path);
                 let proxy_rpc = self.proxy_rpc.clone();
                 self.catalog_rpc
                     .get_code_lens(&path, move |plugin_id, result| {
@@ -3178,6 +3184,19 @@ impl Dispatcher {
 
     fn respond_rpc(&self, id: RequestId, result: Result<ProxyResponse, RpcError>) {
         self.proxy_rpc.handle_response(id, result);
+    }
+
+    /// Resolve a potentially relative path to an absolute one using the workspace root.
+    /// This prevents panics in `Url::from_file_path()` which fails on relative paths.
+    fn resolve_path(&self, path: PathBuf) -> PathBuf {
+        if path.is_absolute() {
+            path
+        } else if let Some(workspace) = &self.workspace {
+            workspace.join(&path)
+        } else {
+            // Last resort: use current directory
+            std::env::current_dir().unwrap_or_default().join(&path)
+        }
     }
 
     fn get_buffer_or_insert(&mut self, path: PathBuf) -> &mut Buffer {

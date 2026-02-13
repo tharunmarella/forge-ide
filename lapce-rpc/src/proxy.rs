@@ -1097,22 +1097,31 @@ pub trait ProxyHandler {
     fn handle_request(&mut self, id: RequestId, rpc: ProxyRequest);
 }
 
+/// Global counter for unique handler IDs (debugging)
+static HANDLER_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Clone)]
 pub struct ProxyRpcHandler {
     tx: Sender<ProxyRpc>,
     rx: Receiver<ProxyRpc>,
     id: Arc<AtomicU64>,
     pending: Arc<Mutex<HashMap<u64, ResponseHandler>>>,
+    /// Unique instance ID for debugging channel issues
+    instance_id: u64,
 }
 
 impl ProxyRpcHandler {
     pub fn new() -> Self {
+        let instance_id = HANDLER_COUNTER.fetch_add(1, Ordering::Relaxed);
+        tracing::info!("[RPC] ProxyRpcHandler::new() created instance_id={}", instance_id);
+        
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
             tx,
             rx,
             id: Arc::new(AtomicU64::new(0)),
             pending: Arc::new(Mutex::new(HashMap::new())),
+            instance_id,
         }
     }
 
@@ -1124,29 +1133,70 @@ impl ProxyRpcHandler {
     where
         H: ProxyHandler,
     {
+        use std::panic::AssertUnwindSafe;
         use ProxyRpc::*;
+        tracing::info!("[RPC] mainloop started, instance_id={}, channel_len={}", self.instance_id, self.rx.len());
+        let mut msg_count: u64 = 0;
         for msg in &self.rx {
+            msg_count += 1;
             match msg {
                 Request(id, request) => {
-                    handler.handle_request(id, request);
+                    let req_name = format!("{:?}", &request).chars().take(80).collect::<String>();
+                    tracing::info!("[RPC] mainloop msg#{}: Request id={}, type={}", msg_count, id, req_name);
+                    // Wrap in catch_unwind so a panic in one handler doesn't kill the mainloop
+                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        handler.handle_request(id, request);
+                    }));
+                    if let Err(panic_info) = result {
+                        let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        tracing::error!("[RPC] PANIC in handle_request for id={}: {}", id, panic_msg);
+                    }
                 }
                 Notification(notification) => {
-                    handler.handle_notification(notification);
+                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        handler.handle_notification(notification);
+                    }));
+                    if let Err(panic_info) = result {
+                        let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        tracing::error!("[RPC] PANIC in handle_notification: {}", panic_msg);
+                    }
                 }
                 Shutdown => {
+                    tracing::info!("[RPC] mainloop received Shutdown signal after {} msgs", msg_count);
                     return;
                 }
             }
         }
+        tracing::warn!("[RPC] mainloop channel closed after {} msgs", msg_count);
     }
 
     fn request_common(&self, request: ProxyRequest, rh: ResponseHandler) {
         let id = self.id.fetch_add(1, Ordering::Relaxed);
+        
+        // Debug: log AgentPrompt requests specifically
+        let is_agent = matches!(&request, ProxyRequest::AgentPrompt { .. });
+        if is_agent {
+            tracing::info!("[RPC] request_common (instance={}): sending AgentPrompt, id={}", self.instance_id, id);
+        }
 
         self.pending.lock().insert(id, rh);
 
         if let Err(err) = self.tx.send(ProxyRpc::Request(id, request)) {
-            tracing::error!("{:?}", err);
+            tracing::error!("[RPC] FAILED to send request id={}: {:?}", id, err);
+        } else if is_agent {
+            tracing::info!("[RPC] AgentPrompt id={} sent via instance={}", id, self.instance_id);
         }
     }
 

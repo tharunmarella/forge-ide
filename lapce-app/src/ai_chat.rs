@@ -463,8 +463,11 @@ impl AiChatData {
             return;
         }
 
+        tracing::info!("[AI_CHAT] send_message called, text_len={}", text.len());
+
         // Determine if forge-search auth is available (no API key needed).
         let forge_search_auth = self.is_forge_search_authenticated();
+        tracing::info!("[AI_CHAT] forge_search_auth={}", forge_search_auth);
 
         // Auto-index on first message if not indexed (only for forge-search)
         if forge_search_auth {
@@ -556,6 +559,11 @@ impl AiChatData {
         let images = self.attached_images.get_untracked();
         self.attached_images.set(Vec::new()); // Clear after sending
         
+        tracing::info!(
+            "[AI_CHAT] Sending AgentPrompt via proxy RPC: conv_id={}, provider={}, model={}, images={}",
+            conversation_id, provider, model, images.len()
+        );
+        
         self.common.proxy.request_async(
             lapce_rpc::proxy::ProxyRequest::AgentPrompt {
                 prompt: text,
@@ -567,6 +575,8 @@ impl AiChatData {
             },
             send,
         );
+        
+        tracing::info!("[AI_CHAT] AgentPrompt request_async called (queued to proxy)");
     }
 
     /// Add a pasted image (base64-encoded) to the pending attachments.

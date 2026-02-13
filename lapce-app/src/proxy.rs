@@ -52,15 +52,20 @@ pub fn new_proxy(
     plugin_configurations: HashMap<String, HashMap<String, serde_json::Value>>,
     term_tx: Sender<(TermId, TermEvent)>,
 ) -> ProxyData {
+    tracing::info!("[PROXY] new_proxy called for workspace: {:?}", workspace.path);
+    
     let proxy_rpc = ProxyRpcHandler::new();
     let core_rpc = CoreRpcHandler::new();
 
     {
         let core_rpc = core_rpc.clone();
         let proxy_rpc = proxy_rpc.clone();
+        let workspace_path_debug = workspace.path.clone();
         std::thread::Builder::new()
             .name("ProxyRpcHandler".to_owned())
             .spawn(move || {
+                tracing::info!("[PROXY] ProxyRpcHandler thread started for {:?}", workspace_path_debug);
+                
                 core_rpc.notification(CoreNotification::ProxyStatus {
                     status: ProxyStatus::Connecting,
                 });
@@ -72,14 +77,19 @@ pub fn new_proxy(
                     1,
                     1,
                 );
+                
+                tracing::info!("[PROXY] proxy_rpc.initialize() completed");
 
                 match &workspace.kind {
                     LapceWorkspaceType::Local => {
+                        tracing::info!("[PROXY] Starting local dispatcher");
                         let core_rpc = core_rpc.clone();
                         let proxy_rpc = proxy_rpc.clone();
                         let mut dispatcher = Dispatcher::new(core_rpc, proxy_rpc);
                         let proxy_rpc = dispatcher.proxy_rpc.clone();
+                        tracing::info!("[PROXY] Entering proxy_rpc.mainloop()");
                         proxy_rpc.mainloop(&mut dispatcher);
+                        tracing::info!("[PROXY] mainloop() exited (this is unexpected!)");
                     }
                     LapceWorkspaceType::RemoteSSH(remote) => {
                         if let Err(e) = start_remote(
