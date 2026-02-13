@@ -2355,11 +2355,11 @@ impl ProxyHandler for Dispatcher {
                                                 // Safe commands that don't need approval
                                                 let is_safe_command = if tc_name == "execute_command" || tc_name == "execute_background" {
                                                     let cmd_lower = cmd_str.to_lowercase();
-                                                    // Build/test/check commands are safe
+                                                    // Build/test/check commands — safe
                                                     cmd_lower.starts_with("npm run ")
                                                         || cmd_lower.starts_with("npm test")
                                                         || cmd_lower.starts_with("npm install")
-                                                        || cmd_lower.starts_with("npx tsc")
+                                                        || cmd_lower.starts_with("npm start")
                                                         || cmd_lower.starts_with("npx ")
                                                         || cmd_lower.starts_with("yarn ")
                                                         || cmd_lower.starts_with("pnpm ")
@@ -2373,20 +2373,41 @@ impl ProxyHandler for Dispatcher {
                                                         || cmd_lower.starts_with("python -m py_compile")
                                                         || cmd_lower.starts_with("python -m pytest")
                                                         || cmd_lower.starts_with("python -m mypy")
+                                                        || cmd_lower.starts_with("python ")
                                                         || cmd_lower.starts_with("pytest")
                                                         || cmd_lower.starts_with("pip install")
+                                                        || cmd_lower.starts_with("pip3 install")
+                                                        // Git: local operations are safe, remote ops need approval
                                                         || cmd_lower.starts_with("git status")
                                                         || cmd_lower.starts_with("git log")
                                                         || cmd_lower.starts_with("git diff")
                                                         || cmd_lower.starts_with("git branch")
                                                         || cmd_lower.starts_with("git show")
+                                                        || cmd_lower.starts_with("git add")
+                                                        || cmd_lower.starts_with("git commit")
+                                                        || cmd_lower.starts_with("git stash")
+                                                        || cmd_lower.starts_with("git checkout")
+                                                        || cmd_lower.starts_with("git switch")
+                                                        || cmd_lower.starts_with("git tag")
+                                                        || cmd_lower.starts_with("git remote -v")
+                                                        || cmd_lower.starts_with("git rev-parse")
+                                                        // Read-only / info commands
                                                         || cmd_lower.starts_with("cat ")
+                                                        || cmd_lower.starts_with("head ")
+                                                        || cmd_lower.starts_with("tail ")
+                                                        || cmd_lower.starts_with("wc ")
                                                         || cmd_lower.starts_with("ls")
                                                         || cmd_lower.starts_with("pwd")
                                                         || cmd_lower.starts_with("echo ")
                                                         || cmd_lower.starts_with("which ")
+                                                        || cmd_lower.starts_with("env ")
+                                                        || cmd_lower.starts_with("printenv")
                                                         || cmd_lower.starts_with("node -")
                                                         || cmd_lower.starts_with("rustc --")
+                                                        || cmd_lower.starts_with("mkdir ")
+                                                        || cmd_lower.starts_with("touch ")
+                                                        || cmd_lower.starts_with("cp ")
+                                                        || cmd_lower.starts_with("mv ")
                                                 } else {
                                                     false
                                                 };
