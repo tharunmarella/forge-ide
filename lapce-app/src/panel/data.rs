@@ -32,6 +32,7 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::Search,
             PanelKind::Plugin,         // Extensions/Plugins
             PanelKind::DatabaseManager, // Opens as editor tab
+            PanelKind::ProjectMapPage,  // Opens as editor tab
             // Note: SdkManager opens as editor tab via command palette, not in sidebar
         ],
     );
@@ -48,7 +49,7 @@ pub fn default_panel_order() -> PanelOrder {
     );
     order.insert(
         PanelPosition::RightTop,
-        im::vector![PanelKind::AiChat, PanelKind::DocumentSymbol,],
+        im::vector![PanelKind::AiChat, PanelKind::DocumentSymbol],
     );
 
     order

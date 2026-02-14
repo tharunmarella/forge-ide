@@ -29,6 +29,7 @@ use crate::{
     id::{
         DiffEditorId, EditorTabId, KeymapId, SettingsId, SplitId,
         ThemeColorSettingsId, VoltViewId, SdkManagerId, DatabaseManagerId, RunConfigEditorId,
+        ProjectMapPageId,
     },
     main_split::{Editors, MainSplitData},
     plugin::PluginData,
@@ -45,6 +46,7 @@ pub enum EditorTabChildInfo {
     Volt(VoltID),
     SdkManager,
     DatabaseManager,
+    ProjectMapPage,
     RunConfigEditor,
 }
 
@@ -78,6 +80,9 @@ impl EditorTabChildInfo {
             }
             EditorTabChildInfo::DatabaseManager => {
                 EditorTabChild::DatabaseManager(DatabaseManagerId::next())
+            }
+            EditorTabChildInfo::ProjectMapPage => {
+                EditorTabChild::ProjectMapPage(ProjectMapPageId::next())
             }
             EditorTabChildInfo::RunConfigEditor => {
                 EditorTabChild::RunConfigEditor(RunConfigEditorId::next())
@@ -145,6 +150,7 @@ pub enum EditorTabChildSource {
     Volt(VoltID),
     SdkManager,
     DatabaseManager,
+    ProjectMapPage,
     RunConfigEditor,
 }
 
@@ -158,6 +164,7 @@ pub enum EditorTabChild {
     Volt(VoltViewId, VoltID),
     SdkManager(SdkManagerId),
     DatabaseManager(DatabaseManagerId),
+    ProjectMapPage(ProjectMapPageId),
     RunConfigEditor(RunConfigEditorId),
 }
 
@@ -182,6 +189,7 @@ impl EditorTabChild {
             EditorTabChild::Volt(id, _) => id.to_raw(),
             EditorTabChild::SdkManager(id) => id.to_raw(),
             EditorTabChild::DatabaseManager(id) => id.to_raw(),
+            EditorTabChild::ProjectMapPage(id) => id.to_raw(),
             EditorTabChild::RunConfigEditor(id) => id.to_raw(),
         }
     }
@@ -218,6 +226,7 @@ impl EditorTabChild {
             EditorTabChild::Volt(_, id) => EditorTabChildInfo::Volt(id.to_owned()),
             EditorTabChild::SdkManager(_) => EditorTabChildInfo::SdkManager,
             EditorTabChild::DatabaseManager(_) => EditorTabChildInfo::DatabaseManager,
+            EditorTabChild::ProjectMapPage(_) => EditorTabChildInfo::ProjectMapPage,
             EditorTabChild::RunConfigEditor(_) => EditorTabChildInfo::RunConfigEditor,
         }
     }
@@ -439,6 +448,17 @@ impl EditorTabChild {
                     icon: config.ui_svg(LapceIcons::DATABASE),
                     color: Some(config.color(LapceColor::LAPCE_ICON_ACTIVE)),
                     name: "Database Manager".to_string(),
+                    path: None,
+                    confirmed: None,
+                    is_pristine: true,
+                }
+            }),
+            EditorTabChild::ProjectMapPage(_) => create_memo(move |_| {
+                let config = config.get();
+                EditorTabChildViewInfo {
+                    icon: config.ui_svg(LapceIcons::SEARCH),
+                    color: Some(config.color(LapceColor::LAPCE_ICON_ACTIVE)),
+                    name: "Project Map".to_string(),
                     path: None,
                     confirmed: None,
                     is_pristine: true,

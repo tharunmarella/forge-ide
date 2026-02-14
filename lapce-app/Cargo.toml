@@ -48,6 +48,7 @@ tracing-subscriber = { workspace = true }
 tracing-appender   = { workspace = true }
 url                = { workspace = true }
 uuid               = { workspace = true }
+petgraph           = { workspace = true }
 zstd               = { workspace = true }
 floem              = { workspace = true }
 

@@ -23,6 +23,8 @@ pub enum PanelKind {
     References,
     Implementation,
     AiChat,
+    ProjectMap,
+    ProjectMapPage,
 }
 
 impl PanelKind {
@@ -43,6 +45,8 @@ impl PanelKind {
             PanelKind::References => LapceIcons::REFERENCES,
             PanelKind::Implementation => LapceIcons::IMPLEMENTATION,
             PanelKind::AiChat => LapceIcons::AI_CHAT,
+            PanelKind::ProjectMap => LapceIcons::SEARCH,
+            PanelKind::ProjectMapPage => LapceIcons::SEARCH,
         }
     }
 
@@ -73,6 +77,8 @@ impl PanelKind {
             PanelKind::References => PanelPosition::BottomLeft,
             PanelKind::Implementation => PanelPosition::BottomLeft,
             PanelKind::AiChat => PanelPosition::RightTop,
+            PanelKind::ProjectMap => PanelPosition::RightTop,
+            PanelKind::ProjectMapPage => PanelPosition::LeftTop,
         }
     }
 }

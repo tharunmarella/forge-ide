@@ -3427,7 +3427,8 @@ impl WindowTabData {
             | PanelKind::DocumentSymbol
             | PanelKind::References
             | PanelKind::Implementation
-            | PanelKind::AiChat => {
+            | PanelKind::AiChat
+            | PanelKind::ProjectMap => {
                 // Some panels don't accept focus (yet). Fall back to visibility check
                 // in those cases.
                 self.panel.is_panel_visible(&kind)

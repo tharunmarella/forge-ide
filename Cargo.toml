@@ -90,6 +90,7 @@ tokio    = { version = "1", features = ["rt-multi-thread", "macros"] }
 sqlx     = { version = "0.8", features = ["runtime-tokio", "tls-native-tls", "postgres", "json"] }
 mongodb  = { version = "3" }
 uuid     = { version = "1", features = ["v4", "serde"] }
+petgraph           = "0.6"
 
 lsp-types = { version = "0.95.1", features = ["proposed"] }                                                  # not following semver, so should be locked to patch version updates only
 psp-types = { git = "https://github.com/lapce/psp-types", rev = "f7fea28f59e7b2d6faa1034a21679ad49b3524ad" }

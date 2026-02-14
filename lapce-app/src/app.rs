@@ -1411,6 +1411,9 @@ fn editor_tab_content(
             EditorTabChild::SdkManager(_) => {
                 sdk_manager_view(editors, common).into_any()
             }
+            EditorTabChild::ProjectMapPage(_) => {
+                project_map_panel(window_tab_data.clone(), PanelPosition::LeftTop).into_any()
+            }
             EditorTabChild::DatabaseManager(_) => {
                 let db_data = window_tab_data.database.clone();
                 database_manager_view(db_data, editors, common).into_any()

@@ -25,6 +25,7 @@ use super::{
     plugin_view::plugin_panel,
     position::{PanelContainerPosition, PanelPosition},
     problem_view::problem_panel,
+    project_map_view::project_map_panel,
     sdk_view::sdk_panel,
     source_control_view::source_control_panel,
     terminal_view::terminal_panel,
@@ -599,6 +600,9 @@ fn panel_view(
                 PanelKind::AiChat => {
                     ai_chat_panel(window_tab_data.clone(), position).into_any()
                 }
+                PanelKind::ProjectMap => {
+                    project_map_panel(window_tab_data.clone(), position).into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
@@ -643,6 +647,7 @@ fn bottom_panel_with_header(
         PanelKind::References => "References",
         PanelKind::Implementation => "Implementation",
         PanelKind::AiChat => "Forge AI",
+        PanelKind::ProjectMap => "Project Map",
         _ => "Panel",
     };
     let icon = kind.svg_name();
@@ -731,6 +736,7 @@ fn panel_icon_button(
         PanelKind::References => "References",
         PanelKind::Implementation => "Implementation",
         PanelKind::AiChat => "Forge AI",
+        PanelKind::ProjectMap => "Project Map",
     };
     let icon = p.svg_name();
     let is_active = {
@@ -757,6 +763,9 @@ fn panel_icon_button(
                 } else if p == PanelKind::DatabaseManager {
                     // DatabaseManager opens as editor tab, not as a panel
                     window_tab_data.main_split.open_database_manager();
+                } else if p == PanelKind::ProjectMapPage {
+                    // ProjectMapPage opens as editor tab, not as a panel
+                    window_tab_data.main_split.open_project_map();
                 } else {
                     window_tab_data.toggle_panel_visual(p);
                 }

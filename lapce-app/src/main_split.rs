@@ -1168,6 +1168,9 @@ impl MainSplitData {
                 EditorTabChildSource::DatabaseManager => {
                     EditorTabChild::DatabaseManager(DatabaseManagerId::next())
                 }
+                EditorTabChildSource::ProjectMapPage => {
+                    EditorTabChild::ProjectMapPage(ProjectMapPageId::next())
+                }
                 EditorTabChildSource::Volt(id) => {
                     EditorTabChild::Volt(VoltViewId::next(), id.to_owned())
                 }
@@ -1263,6 +1266,9 @@ impl MainSplitData {
                     true
                 }
                 (EditorTabChild::DatabaseManager(_), EditorTabChildSource::DatabaseManager) => {
+                    true
+                }
+                (EditorTabChild::ProjectMapPage(_), EditorTabChildSource::ProjectMapPage) => {
                     true
                 }
                 _ => false,
@@ -2567,6 +2573,10 @@ impl MainSplitData {
 
     pub fn open_database_manager(&self) {
         self.get_editor_tab_child(EditorTabChildSource::DatabaseManager, false, false);
+    }
+
+    pub fn open_project_map(&self) {
+        self.get_editor_tab_child(EditorTabChildSource::ProjectMapPage, false, false);
     }
 
     pub fn open_run_config_editor(&self) {

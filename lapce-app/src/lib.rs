@@ -29,6 +29,8 @@ pub mod keypress;
 pub mod listener;
 pub mod lsp;
 pub mod main_split;
+pub mod map_client;
+pub mod project_map;
 pub mod markdown;
 pub mod palette;
 pub mod panel;

@@ -2354,6 +2354,14 @@ impl ProxyHandler for Dispatcher {
                                     if status == "requires_action" {
                                         if let Some(tcs) = server_tool_calls {
                                             let mut has_tool_calls = false;
+                                            
+                                            // ── Parallel Execution for Safe Tools ──
+                                            // We separate tools into "safe" (read-only, can run in parallel)
+                                            // and "risky" (mutations, need approval, run sequentially).
+                                            
+                                            let mut safe_calls = Vec::new();
+                                            let mut risky_calls = Vec::new();
+                                            
                                             for tc_val in tcs {
                                                 let tc_id = tc_val.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
                                                 let tc_name = tc_val.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -2362,18 +2370,9 @@ impl ProxyHandler for Dispatcher {
                                                 if tc_name.is_empty() { continue; }
                                                 has_tool_calls = true;
                                                 
-                                                let args_json = serde_json::to_string(&tc_args).unwrap_or_default();
-                                                
-                                                // ── Smart approval: only ask for genuinely risky operations ──
-                                                // Tier 1 (auto-approve): read-only tools, safe commands
-                                                // Tier 2 (needs approval): file writes, deletes, risky commands
-                                                
                                                 let cmd_str = tc_args.get("command").and_then(|c| c.as_str()).unwrap_or("");
-                                                
-                                                // Safe commands that don't need approval
                                                 let is_safe_command = if tc_name == "execute_command" || tc_name == "execute_background" {
                                                     let cmd_lower = cmd_str.to_lowercase();
-                                                    // Build/test/check commands are safe
                                                     cmd_lower.starts_with("npm run ")
                                                         || cmd_lower.starts_with("npm test")
                                                         || cmd_lower.starts_with("npm install")
@@ -2409,15 +2408,78 @@ impl ProxyHandler for Dispatcher {
                                                     false
                                                 };
                                                 
-                                                // Separate approval strategy:
-                                                // FILE EDITS: Execute first, then ask for approval (with revert if rejected)
-                                                // RISKY COMMANDS: Ask before executing
                                                 let is_file_edit = matches!(tc_name.as_str(), 
                                                     "write_to_file" | "replace_in_file" | "apply_patch" | "delete_file");
                                                 
                                                 let is_risky_command = matches!(tc_name.as_str(), 
                                                     "execute_command" | "execute_background" | "lsp_rename")
                                                     && !is_safe_command;
+                                                
+                                                if is_file_edit || is_risky_command {
+                                                    risky_calls.push((tc_id, tc_name, tc_args, is_file_edit));
+                                                } else {
+                                                    safe_calls.push((tc_id, tc_name, tc_args));
+                                                }
+                                            }
+                                            
+                                            // 1. Execute safe calls in parallel
+                                            if !safe_calls.is_empty() {
+                                                let mut futures = Vec::new();
+                                                for (tc_id, tc_name, tc_args) in safe_calls {
+                                                    let args_json = serde_json::to_string(&tc_args).unwrap_or_default();
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: args_json,
+                                                        status: "running".to_string(),
+                                                        output: None,
+                                                    });
+                                                    
+                                                    let tc_info = forge_agent::ToolCallInfo {
+                                                        id: tc_id.clone(),
+                                                        name: tc_name.clone(),
+                                                        args: tc_args,
+                                                    };
+                                                    
+                                                    // Clone needed refs for the async block
+                                                    let wp = workspace_path.clone();
+                                                    let cr = core_rpc.clone();
+                                                    let atm = agent_term_mgr.clone();
+                                                    let it = ide_terminals.clone();
+                                                    
+                                                    futures.push(async move {
+                                                        let result = execute_ide_tool(
+                                                            &tc_info,
+                                                            &wp,
+                                                            &cr,
+                                                            &atm,
+                                                            &it,
+                                                        ).await;
+                                                        (tc_id, tc_name, result)
+                                                    });
+                                                }
+                                                
+                                                let results = futures_util::future::join_all(futures).await;
+                                                for (tc_id, tc_name, result) in results {
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: String::new(),
+                                                        status: if result.success { "completed" } else { "failed" }.to_string(),
+                                                        output: Some(result.output.clone()),
+                                                    });
+                                                    
+                                                    tool_results.push(serde_json::json!({
+                                                        "call_id": tc_id,
+                                                        "output": result.output,
+                                                        "success": result.success,
+                                                    }));
+                                                }
+                                            }
+                                            
+                                            // 2. Execute risky calls sequentially
+                                            for (tc_id, tc_name, tc_args, is_file_edit) in risky_calls {
+                                                let args_json = serde_json::to_string(&tc_args).unwrap_or_default();
                                                 
                                                 if is_file_edit {
                                                     // ═══ FILE EDIT FLOW: Execute First, Ask After ═══
@@ -2546,7 +2608,47 @@ impl ProxyHandler for Dispatcher {
                                                     }));
                                                     
                                                 } else {
-                                                    // ═══ AUTO-APPROVE FLOW: No approval needed ═══
+                                                    // ═══ RISKY COMMAND FLOW: Ask First, Execute After ═══
+                                                    // (execute_command, execute_background, lsp_rename)
+                                                    
+                                                    let summary = match tc_name.as_str() {
+                                                        "execute_command" => format!("Run command: {}", cmd_str),
+                                                        "execute_background" => format!("Start background process: {}", cmd_str),
+                                                        "lsp_rename" => format!("Rename symbol to: {}", tc_args.get("new_name").and_then(|v| v.as_str()).unwrap_or("?")),
+                                                        _ => format!("Execute risky tool: {}", tc_name),
+                                                    };
+                                                    
+                                                    // Request approval
+                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                        tool_call_id: tc_id.clone(),
+                                                        tool_name: tc_name.clone(),
+                                                        arguments: args_json.clone(),
+                                                        status: "waiting_approval".to_string(),
+                                                        output: Some(format!("{} — Accept to run, Reject to skip", summary)),
+                                                    });
+                                                    
+                                                    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                                                    pending_approvals.lock().insert(tc_id.clone(), tx);
+                                                    let approved = rx.await.unwrap_or(false);
+                                                    
+                                                    if !approved {
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc_id.clone(),
+                                                            tool_name: tc_name.clone(),
+                                                            arguments: String::new(),
+                                                            status: "rejected".to_string(),
+                                                            output: Some("Command rejected by user".to_string()),
+                                                        });
+                                                        
+                                                        tool_results.push(serde_json::json!({
+                                                            "call_id": tc_id,
+                                                            "output": "User rejected this command. It was not executed.",
+                                                            "success": false,
+                                                        }));
+                                                        continue;
+                                                    }
+                                                    
+                                                    // Approved — execute
                                                     core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                         tool_call_id: tc_id.clone(),
                                                         tool_name: tc_name.clone(),
@@ -2583,6 +2685,12 @@ impl ProxyHandler for Dispatcher {
                                                     }));
                                                 }
                                             }
+                                            
+                                            if has_tool_calls {
+                                                continue; // Loop back to send results to server
+                                            }
+                                        }
+                                    }
                                             
                                             if has_tool_calls {
                                                 continue; // Loop back to send results to server
