@@ -1444,7 +1444,9 @@ fn tool_call_card(
     let args_preview: String = tc.arguments.chars().take(200).collect();
     let output_preview = tc.output.clone().map(|o| {
         if o.len() > 300 {
-            format!("{}...", &o[..300])
+            // Use char boundaries instead of byte indexing to avoid panic
+            let truncated: String = o.chars().take(300).collect();
+            format!("{}...", truncated)
         } else {
             o
         }
