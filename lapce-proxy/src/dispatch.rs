@@ -1123,7 +1123,17 @@ impl ProxyHandler for Dispatcher {
             }
             GetInlayHints { path } => {
                 let proxy_rpc = self.proxy_rpc.clone();
-                let buffer = self.buffers.get(&path).unwrap();
+                let buffer = match self.buffers.get(&path) {
+                    Some(buf) => buf,
+                    None => {
+                        // Buffer not loaded yet, return empty hints
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::GetInlayHints { hints: Vec::new() }),
+                        );
+                        return;
+                    }
+                };
                 let range = Range {
                     start: Position::new(0, 0),
                     end: buffer.offset_to_position(buffer.len()),
@@ -1154,12 +1164,29 @@ impl ProxyHandler for Dispatcher {
                 );
             }
             GetSemanticTokens { path } => {
-                let buffer = self.buffers.get(&path).unwrap();
+                let proxy_rpc = self.proxy_rpc.clone();
+                let buffer = match self.buffers.get(&path) {
+                    Some(buf) => buf,
+                    None => {
+                        // Buffer not loaded yet, return empty styles
+                        proxy_rpc.handle_response(
+                            id,
+                            Ok(ProxyResponse::GetSemanticTokens {
+                                styles: SemanticStyles {
+                                    rev: 0,
+                                    path: path.clone(),
+                                    styles: Vec::new(),
+                                    len: 0,
+                                },
+                            }),
+                        );
+                        return;
+                    }
+                };
                 let text = buffer.rope.clone();
                 let rev = buffer.rev;
                 let len = buffer.len();
                 let local_path = path.clone();
-                let proxy_rpc = self.proxy_rpc.clone();
                 let catalog_rpc = self.catalog_rpc.clone();
 
                 let handle_tokens =
