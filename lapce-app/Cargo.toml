@@ -24,6 +24,8 @@ lapce-core         = { workspace = true }
 lapce-proxy        = { workspace = true }
 lapce-rpc          = { workspace = true }
 lapce-xi-rope      = { workspace = true }
+forge-agent       = { workspace = true }
+tokio             = { workspace = true }
 lsp-types          = { workspace = true }
 notify             = { workspace = true }
 once_cell          = { workspace = true }

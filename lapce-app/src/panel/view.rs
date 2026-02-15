@@ -597,6 +597,9 @@ fn panel_view(
                         implementation_panel(window_tab_data.clone(), position).into_any()
                     }
                 }
+                PanelKind::ProjectMapPage => {
+                    project_map_panel(window_tab_data.clone(), position).into_any()
+                }
                 PanelKind::AiChat => {
                     ai_chat_panel(window_tab_data.clone(), position).into_any()
                 }
@@ -737,6 +740,7 @@ fn panel_icon_button(
         PanelKind::Implementation => "Implementation",
         PanelKind::AiChat => "Forge AI",
         PanelKind::ProjectMap => "Project Map",
+        PanelKind::ProjectMapPage => "Project Map Page",
     };
     let icon = p.svg_name();
     let is_active = {

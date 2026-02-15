@@ -186,6 +186,14 @@ impl ForgeSearchClient {
         }
     }
 
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub async fn token(&self) -> String {
+        self.auth.read().await.token.clone()
+    }
+
     // ── Auth ─────────────────────────────────────────────────────
 
     /// URL to open in browser for sign-in

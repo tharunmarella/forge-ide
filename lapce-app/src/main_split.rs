@@ -47,7 +47,7 @@ use crate::{
         EditorTabChild, EditorTabChildSource, EditorTabData, EditorTabInfo,
     },
     id::{
-        DiffEditorId, EditorTabId, KeymapId, SettingsId, SplitId,
+        DiffEditorId, EditorTabId, KeymapId, SettingsId, SplitId, ProjectMapPageId,
         ThemeColorSettingsId, VoltViewId, SdkManagerId, DatabaseManagerId, RunConfigEditorId,
     },
     keypress::{EventRef, KeyPressData, KeyPressHandle},
@@ -541,6 +541,7 @@ impl MainSplitData {
             EditorTabChild::SdkManager(_) => None,
             EditorTabChild::DatabaseManager(_) => None,
             EditorTabChild::RunConfigEditor(_) => None,
+            EditorTabChild::ProjectMapPage(_) => None,
         }
     }
 
@@ -877,6 +878,7 @@ impl MainSplitData {
                         EditorTabChild::SdkManager(_) => true,
                         EditorTabChild::DatabaseManager(_) => true,
                         EditorTabChild::RunConfigEditor(_) => true,
+                        EditorTabChild::ProjectMapPage(_) => true,
                     };
 
                     if can_be_selected {
@@ -1108,6 +1110,28 @@ impl MainSplitData {
                         })
                     }
                 }
+                EditorTabChildSource::ProjectMapPage => {
+                    if let Some(index) =
+                        active_editor_tab.with_untracked(|editor_tab| {
+                            editor_tab.children.iter().position(|(_, _, child)| {
+                                matches!(child, EditorTabChild::ProjectMapPage(_))
+                            })
+                        })
+                    {
+                        Some(index)
+                    } else if ignore_unconfirmed {
+                        None
+                    } else {
+                        active_editor_tab.with_untracked(|editor_tab| {
+                            editor_tab
+                                .get_unconfirmed_editor_tab_child(
+                                    editors,
+                                    &diff_editors,
+                                )
+                                .map(|(i, _)| i)
+                        })
+                    }
+                }
             }
         };
 
@@ -1216,6 +1240,7 @@ impl MainSplitData {
                         EditorTabChild::SdkManager(_) => {}
                         EditorTabChild::DatabaseManager(_) => {}
                         EditorTabChild::RunConfigEditor(_) => {}
+            EditorTabChild::ProjectMapPage(_) => {}
                     }
                     (editor_tab_id, current_child.clone())
                 });
@@ -1300,6 +1325,7 @@ impl MainSplitData {
                 EditorTabChild::SdkManager(_) => {}
                 EditorTabChild::DatabaseManager(_) => {}
                 EditorTabChild::RunConfigEditor(_) => {}
+            EditorTabChild::ProjectMapPage(_) => {}
             }
 
             // Now loading the new child
@@ -1393,6 +1419,12 @@ impl MainSplitData {
                                 .iter()
                                 .position(|(_, _, child)| {
                                     matches!(child, EditorTabChild::RunConfigEditor(_))
+                                }),
+                            EditorTabChildSource::ProjectMapPage => editor_tab
+                                .children
+                                .iter()
+                                .position(|(_, _, child)| {
+                                    matches!(child, EditorTabChild::ProjectMapPage(_))
                                 }),
                         })
                     {
@@ -1705,6 +1737,9 @@ impl MainSplitData {
             }
             EditorTabChild::RunConfigEditor(_) => {
                 EditorTabChild::RunConfigEditor(RunConfigEditorId::next())
+            }
+            EditorTabChild::ProjectMapPage(_) => {
+                EditorTabChild::ProjectMapPage(ProjectMapPageId::next())
             }
         };
 
@@ -2051,6 +2086,7 @@ impl MainSplitData {
             EditorTabChild::SdkManager(_) => None,
             EditorTabChild::DatabaseManager(_) => None,
             EditorTabChild::RunConfigEditor(_) => None,
+            EditorTabChild::ProjectMapPage(_) => None,
         }
     }
 
@@ -2292,6 +2328,7 @@ impl MainSplitData {
             EditorTabChild::SdkManager(_) => {}
             EditorTabChild::DatabaseManager(_) => {}
             EditorTabChild::RunConfigEditor(_) => {}
+            EditorTabChild::ProjectMapPage(_) => {}
         }
 
         if editor_tab_children_len == 0 {
@@ -2906,6 +2943,7 @@ impl MainSplitData {
             EditorTabChild::SdkManager(_) => {}
             EditorTabChild::DatabaseManager(_) => {}
             EditorTabChild::RunConfigEditor(_) => {}
+            EditorTabChild::ProjectMapPage(_) => {}
         }
         Some(())
     }

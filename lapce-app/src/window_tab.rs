@@ -3428,7 +3428,8 @@ impl WindowTabData {
             | PanelKind::References
             | PanelKind::Implementation
             | PanelKind::AiChat
-            | PanelKind::ProjectMap => {
+            | PanelKind::ProjectMap
+            | PanelKind::ProjectMapPage => {
                 // Some panels don't accept focus (yet). Fall back to visibility check
                 // in those cases.
                 self.panel.is_panel_visible(&kind)

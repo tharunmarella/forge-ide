@@ -98,7 +98,7 @@ use crate::{
         PaletteStatus,
         item::{PaletteItem, PaletteItemContent},
     },
-    panel::{position::PanelContainerPosition, sdk_view::sdk_manager_view, database_view::database_manager_view, view::panel_container_view},
+    panel::{position::PanelContainerPosition, sdk_view::sdk_manager_view, database_view::database_manager_view, view::panel_container_view, project_map_view::project_map_panel, position::PanelPosition},
     plugin::{PluginData, plugin_info_view},
     run_config,
     settings::{settings_view, theme_color_settings_view},
@@ -1425,7 +1425,7 @@ fn editor_tab_content(
                 view.into_any()
             }
         };
-        child.style(|s| s.size_full())
+        child.style(|s: floem::style::Style| s.size_full())
     };
     let active = move || editor_tab.with(|t| t.active);
 

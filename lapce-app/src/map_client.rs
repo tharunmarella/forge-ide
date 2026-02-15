@@ -39,22 +39,28 @@ pub struct MapResponse {
 
 pub struct MapClient {
     base_url: String,
+    token: Option<String>,
     client: reqwest::blocking::Client,
 }
 
 impl MapClient {
-    pub fn new(base_url: String) -> Self {
+    pub fn new(base_url: String, token: Option<String>) -> Self {
         Self {
             base_url,
+            token,
             client: reqwest::blocking::Client::new(),
         }
     }
 
     pub fn get_map(&self, req: MapRequest) -> Result<MapResponse> {
         let url = format!("{}/map", self.base_url);
-        let resp = self.client.post(url)
-            .json(&req)
-            .send()?
+        let mut builder = self.client.post(url).json(&req);
+        
+        if let Some(token) = &self.token {
+            builder = builder.header("Authorization", format!("Bearer {}", token));
+        }
+        
+        let resp = builder.send()?
             .json::<MapResponse>()?;
         Ok(resp)
     }

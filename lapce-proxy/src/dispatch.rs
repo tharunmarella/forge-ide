@@ -2611,6 +2611,7 @@ impl ProxyHandler for Dispatcher {
                                                     // ═══ RISKY COMMAND FLOW: Ask First, Execute After ═══
                                                     // (execute_command, execute_background, lsp_rename)
                                                     
+                                                    let cmd_str = tc_args.get("command").and_then(|v| v.as_str()).unwrap_or("?");
                                                     let summary = match tc_name.as_str() {
                                                         "execute_command" => format!("Run command: {}", cmd_str),
                                                         "execute_background" => format!("Start background process: {}", cmd_str),
@@ -2685,12 +2686,6 @@ impl ProxyHandler for Dispatcher {
                                                     }));
                                                 }
                                             }
-                                            
-                                            if has_tool_calls {
-                                                continue; // Loop back to send results to server
-                                            }
-                                        }
-                                    }
                                             
                                             if has_tool_calls {
                                                 continue; // Loop back to send results to server
