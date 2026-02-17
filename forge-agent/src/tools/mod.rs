@@ -7,6 +7,7 @@ mod treesitter;
 pub mod lint;
 mod display;
 mod run_config;
+mod git;
 
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
@@ -21,6 +22,7 @@ pub use code::*;
 pub use process::*;
 pub use display::*;
 pub use run_config::*;
+pub use git::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
 pub use search::ensure_indexed;
@@ -66,6 +68,9 @@ pub enum Tool {
     RunProject,
     StopProject,
     
+    // Git operations
+    Git,
+    
     // Interaction
     AttemptCompletion,
     AskFollowupQuestion,
@@ -108,6 +113,7 @@ impl Tool {
             Self::ListRunConfigs => "list_run_configs",
             Self::RunProject => "run_project",
             Self::StopProject => "stop_project",
+            Self::Git => "git",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -147,6 +153,7 @@ impl Tool {
             "list_run_configs" => Some(Self::ListRunConfigs),
             "run_project" => Some(Self::RunProject),
             "stop_project" => Some(Self::StopProject),
+            "git" => Some(Self::Git),
             "attempt_completion" => Some(Self::AttemptCompletion),
             "ask_followup_question" => Some(Self::AskFollowupQuestion),
             "think" => Some(Self::Think),
@@ -368,6 +375,7 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::ListRunConfigs => run_config::list_run_configs(&tool.arguments, workdir).await,
         Tool::RunProject => run_config::run_project(&tool.arguments, workdir).await,
         Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
+        Tool::Git => git::git(&tool.arguments, workdir).await,
         
         // These are handled specially by the agent
         Tool::AttemptCompletion 
@@ -767,6 +775,51 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                 "properties": {
                     "config_name": { "type": "string", "description": "Name of the run configuration to stop. If not provided, stops the most recent one." }
                 }
+            }
+        }),
+        serde_json::json!({
+            "name": "git",
+            "description": "Unified git tool for essential source control operations. Integrates with IDE's native git for proper UI updates. Operations: status (check repo), stage/unstage (paths), commit (message), push/pull, branch (list/create/switch), log (history), diff (file changes).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": { 
+                        "type": "string", 
+                        "enum": ["status", "stage", "unstage", "commit", "push", "pull", "branch", "log", "diff"],
+                        "description": "Git operation to perform" 
+                    },
+                    "paths": { 
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "File paths (for stage/unstage operations)" 
+                    },
+                    "message": { 
+                        "type": "string", 
+                        "description": "Commit message (for commit operation)" 
+                    },
+                    "action": { 
+                        "type": "string", 
+                        "enum": ["list", "create", "switch"],
+                        "description": "Branch action (for branch operation)" 
+                    },
+                    "name": { 
+                        "type": "string", 
+                        "description": "Branch name (for branch create/switch)" 
+                    },
+                    "limit": { 
+                        "type": "integer", 
+                        "description": "Number of commits to show (for log operation, default: 10)" 
+                    },
+                    "path": { 
+                        "type": "string", 
+                        "description": "File path (for diff operation)" 
+                    },
+                    "staged": { 
+                        "type": "boolean", 
+                        "description": "Show staged changes (for diff operation, default: false)" 
+                    }
+                },
+                "required": ["operation"]
             }
         }),
         serde_json::json!({

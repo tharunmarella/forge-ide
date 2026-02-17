@@ -3040,6 +3040,68 @@ impl WindowTabData {
                     }
                 });
             }
+            CoreNotification::AgentRunProject { config_name, command, mode } => {
+                // Agent wants to run a project - execute through IDE's run system
+                use crate::debug::RunDebugMode;
+                use lapce_rpc::dap_types::{RunDebugConfig, DapId};
+                
+                // Determine the run mode
+                let run_mode = if mode == "debug" {
+                    RunDebugMode::Debug
+                } else {
+                    RunDebugMode::Run
+                };
+                
+                // Create a config from either config_name or command
+                let config = if let Some(name) = config_name {
+                    // Try to parse the name as a command
+                    // The name from detected configs should be something like "npm run dev" or "cargo run"
+                    // We'll use sh -c to execute it as a shell command
+                    RunDebugConfig {
+                        ty: None,
+                        name: name.clone(),
+                        program: "sh".to_string(),
+                        args: Some(vec!["-c".to_string(), name.clone()]),
+                        cwd: None,
+                        env: None,
+                        prelaunch: None,
+                        debug_command: None,
+                        dap_id: DapId::next(),
+                        tracing_output: false,
+                        config_source: lapce_rpc::dap_types::ConfigSource::Palette,
+                    }
+                } else if let Some(cmd) = command {
+                    // Create a config from the command
+                    RunDebugConfig {
+                        ty: None,
+                        name: cmd.clone(),
+                        program: "sh".to_string(),
+                        args: Some(vec!["-c".to_string(), cmd.clone()]),
+                        cwd: None,
+                        env: None,
+                        prelaunch: None,
+                        debug_command: None,
+                        dap_id: DapId::next(),
+                        tracing_output: false,
+                        config_source: lapce_rpc::dap_types::ConfigSource::Palette,
+                    }
+                } else {
+                    // No config or command provided
+                    return;
+                };
+                
+                // Execute through the IDE's run system
+                self.run_and_debug(cx, &run_mode, &config);
+            }
+            CoreNotification::AgentStopProject { config_name } => {
+                // Agent wants to stop a running project
+                // Find the most recent run/debug terminal and close it
+                if let Some(term_id) = self.terminal.debug.active_term.get_untracked() {
+                    self.common.proxy.terminal_close(term_id);
+                }
+                // If config_name was provided, we could search for specific terminal,
+                // but for now just stop the most recent one
+            }
             _ => {}
         }
     }

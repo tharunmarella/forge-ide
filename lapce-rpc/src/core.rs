@@ -226,6 +226,18 @@ pub enum CoreNotification {
     },
     /// All pending diffs for the current agent turn have been sent.
     AgentDiffsDone {},
+    
+    // ── Agent Run Configuration ──────────────────────────
+    /// Agent wants to run a project configuration - trigger terminal execution.
+    AgentRunProject {
+        config_name: Option<String>,
+        command: Option<String>,
+        mode: String,  // "run" or "debug"
+    },
+    /// Agent wants to stop a running project.
+    AgentStopProject {
+        config_name: Option<String>,
+    },
 
     // ── AI Inline Completion (ghost text) ────────────────
     /// Response to an AI inline completion request.

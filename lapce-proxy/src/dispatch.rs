@@ -3338,6 +3338,84 @@ async fn execute_ide_tool(
                 tc.name
             ))
         }
+        // ── Run Configuration tools: forward to IDE ──────────
+        "list_run_configs" => {
+            // Use the proxy's existing handler to get configs
+            let workspace = workspace_path.to_path_buf();
+            let detected = crate::run_config_detector::detect_run_configs(&workspace);
+            
+            // Format the output nicely for the agent
+            let mut output = String::from("=== Available Run Configurations ===\n\n");
+            
+            if detected.is_empty() {
+                output.push_str("No run configurations detected.\n");
+                output.push_str("\nYou can create a custom configuration in .lapce/run.toml\n");
+            } else {
+                output.push_str("Detected configurations:\n\n");
+                for (i, config) in detected.iter().enumerate() {
+                    output.push_str(&format!("{}. {}\n", i + 1, config.name));
+                    output.push_str(&format!("   Command: {}\n", config.command));
+                    if !config.args.is_empty() {
+                        output.push_str(&format!("   Args: {}\n", config.args.join(" ")));
+                    }
+                    if let Some(cwd) = &config.cwd {
+                        output.push_str(&format!("   Working Dir: {}\n", cwd));
+                    }
+                    output.push_str("\n");
+                }
+            }
+            
+            forge_agent::tools::ToolResult::ok(output)
+        }
+        "run_project" => {
+            let config_name = tc.args.get("config_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let command = tc.args.get("command")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let mode = tc.args.get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("run")
+                .to_string();
+            
+            // Send notification to IDE to run the project
+            core_rpc.notification(CoreNotification::AgentRunProject {
+                config_name: config_name.clone(),
+                command: command.clone(),
+                mode: mode.clone(),
+            });
+            
+            let desc = if let Some(name) = config_name {
+                format!("Running '{}' in {} mode", name, mode)
+            } else if let Some(cmd) = command {
+                format!("Running command '{}' in {} mode", cmd, mode)
+            } else {
+                "No config or command specified".to_string()
+            };
+            
+            forge_agent::tools::ToolResult::ok(format!(
+                "✓ {}. Opening terminal...", desc
+            ))
+        }
+        "stop_project" => {
+            let config_name = tc.args.get("config_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            
+            // Send notification to IDE to stop the project
+            core_rpc.notification(CoreNotification::AgentStopProject {
+                config_name: config_name.clone(),
+            });
+            
+            let desc = if let Some(name) = config_name {
+                format!("Stopping '{}'", name)
+            } else {
+                "Stopping most recent project".to_string()
+            };
+            
+            forge_agent::tools::ToolResult::ok(format!("✓ {}", desc))
+        }
         // ── All other tools: use standard execution ──────────────
         _ => {
             let tool_call_obj = forge_agent::tools::ToolCall {
