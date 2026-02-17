@@ -5,6 +5,7 @@ mod code;
 mod process;
 mod treesitter;
 pub mod lint;
+mod display;
 
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
@@ -17,6 +18,7 @@ pub use files::*;
 pub use search::*;
 pub use code::*;
 pub use process::*;
+pub use display::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
 pub use search::ensure_indexed;
@@ -52,6 +54,10 @@ pub enum Tool {
     GetSymbolDefinition,
     FindSymbolReferences,
     Diagnostics,
+    
+    // Display
+    ShowCode,
+    ShowDiagram,
     
     // Interaction
     AttemptCompletion,
@@ -90,6 +96,8 @@ impl Tool {
             Self::GetSymbolDefinition => "get_symbol_definition",
             Self::FindSymbolReferences => "find_symbol_references",
             Self::Diagnostics => "diagnostics",
+            Self::ShowCode => "show_code",
+            Self::ShowDiagram => "show_diagram",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -124,6 +132,8 @@ impl Tool {
             "get_symbol_definition" => Some(Self::GetSymbolDefinition),
             "find_symbol_references" => Some(Self::FindSymbolReferences),
             "diagnostics" => Some(Self::Diagnostics),
+            "show_code" => Some(Self::ShowCode),
+            "show_diagram" => Some(Self::ShowDiagram),
             "attempt_completion" => Some(Self::AttemptCompletion),
             "ask_followup_question" => Some(Self::AskFollowupQuestion),
             "think" => Some(Self::Think),
@@ -340,6 +350,8 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::GetSymbolDefinition => code::get_definition(&tool.arguments, workdir).await,
         Tool::FindSymbolReferences => code::find_references(&tool.arguments, workdir).await,
         Tool::Diagnostics => lint::diagnostics(&tool.arguments, workdir).await,
+        Tool::ShowCode => display::show_code(&tool.arguments, workdir).await,
+        Tool::ShowDiagram => display::show_diagram(&tool.arguments, workdir).await,
         
         // These are handled specially by the agent
         Tool::AttemptCompletion 
@@ -684,6 +696,31 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                     "fix": { "type": "boolean", "description": "If true, attempt to auto-fix issues (when supported by the linter)" }
                 },
                 "required": ["path"]
+            }
+        }),
+        serde_json::json!({
+            "name": "show_code",
+            "description": "Display a code block in the chat with syntax highlighting. Use this to show code examples, explain code snippets, or present generated code before writing it to a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": { "type": "string", "description": "The code to display" },
+                    "language": { "type": "string", "description": "Programming language for syntax highlighting (e.g., 'rust', 'python', 'javascript', 'typescript', 'json'). Default: 'plaintext'" },
+                    "title": { "type": "string", "description": "Optional title/description for the code block" }
+                },
+                "required": ["code"]
+            }
+        }),
+        serde_json::json!({
+            "name": "show_diagram",
+            "description": "Display a Mermaid diagram in the chat. Use this to visualize system architecture, workflows, class diagrams, sequence diagrams, or any concept that benefits from visual representation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "diagram_code": { "type": "string", "description": "Mermaid diagram code (e.g., 'graph TD; A-->B; B-->C;')" },
+                    "title": { "type": "string", "description": "Optional title/description for the diagram" }
+                },
+                "required": ["diagram_code"]
             }
         }),
         serde_json::json!({

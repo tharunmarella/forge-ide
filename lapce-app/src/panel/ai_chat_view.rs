@@ -27,6 +27,7 @@ use floem::{
         Decorators, container, dyn_stack, empty, img, label, rich_text, scroll, stack,
         svg,
     },
+    text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, TextLayout},
 };
 
 use super::position::PanelPosition;
@@ -924,8 +925,8 @@ fn message_bubble(
     // Parse markdown once for assistant messages (only called for finalized content)
     let md_content = if is_assistant {
         let cfg = config.get_untracked();
-        let chat_font = (cfg.ui.font_size() as f32 - 2.0).max(11.0);
-        crate::markdown::parse_markdown_sized(&content, 1.4, &cfg, chat_font)
+        let chat_font = (cfg.ui.font_size() as f32).max(13.0);
+        crate::markdown::parse_markdown_sized(&content, 1.5, &cfg, chat_font)
     } else {
         Vec::new()
     };
@@ -935,9 +936,9 @@ fn message_bubble(
             // Role label
             label(move || role_label.to_string()).style(move |s| {
                 let config = config.get();
-                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                s.font_size((config.ui.font_size() as f32).max(12.0))
                     .font_bold()
-                    .margin_bottom(3.0)
+                    .margin_bottom(4.0)
                     .color(if is_user {
                         config.color(LapceColor::LAPCE_ICON_ACTIVE)
                     } else if is_system {
@@ -1026,9 +1027,10 @@ fn message_bubble(
                 label(move || content.clone())
                     .style(move |s| {
                         let config = config.get();
-                        s.font_size((config.ui.font_size() as f32 - 2.0).max(11.0))
+                        s.font_size((config.ui.font_size() as f32).max(13.0))
                             .width_pct(100.0)
                             .min_width(0.0)
+                            .line_height(1.5)
                             .color(config.color(LapceColor::EDITOR_FOREGROUND))
                     })
                     .into_any()
@@ -1042,6 +1044,7 @@ fn message_bubble(
             .padding_vert(6.0)
             .width_pct(100.0)
             .min_width(0.0)
+            .margin_horiz(8.0)
             .border_bottom(1.0)
             .border_color(
                 config
@@ -1214,6 +1217,24 @@ fn file_tool_card(
     })
 }
 
+fn create_terminal_text_layout(
+    text: &str,
+    config: &crate::config::LapceConfig,
+) -> TextLayout {
+    let mut text_layout = TextLayout::new();
+    let family: Vec<FamilyOwned> = FamilyOwned::parse_list("monospace").collect();
+    let font_size = (config.ui.font_size() as f32 - 1.0).max(11.0);
+    
+    let attrs = Attrs::new()
+        .family(&family)
+        .font_size(font_size)
+        .line_height(LineHeightValue::Normal(1.4))
+        .color(config.color(LapceColor::EDITOR_FOREGROUND));
+        
+    text_layout.set_text(text, AttrsList::new(attrs), None);
+    text_layout
+}
+
 /// Approval card — shown when a mutating tool needs user permission.
 /// Displays the tool name, summary, and Accept/Reject/View buttons.
 fn approval_card(
@@ -1279,11 +1300,38 @@ fn approval_card(
                     .font_bold()
                     .color(config.color(LapceColor::LAPCE_WARN))
             }),
-            label(move || summary.clone()).style(move |s| {
+            // Terminal output styled like a scrollable terminal window
+            container(
+                scroll(
+                    {
+                        let summary = summary.clone();
+                        rich_text(move || {
+                            let config = config.get();
+                            create_terminal_text_layout(&summary, &config)
+                        })
+                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                    }
+                )
+                .style(|s| {
+                    s.width_pct(100.0)
+                        .min_height(50.0)
+                        .max_height(300.0)
+                })
+            )
+            .style(move |s| {
                 let config = config.get();
-                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                    .color(config.color(LapceColor::PANEL_FOREGROUND))
-                    .margin_bottom(6.0)
+                s.width_pct(100.0)
+                    .min_width(0.0)
+                    .margin_bottom(8.0)
+                    .padding(10.0)
+                    .border_radius(6.0)
+                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                    .border(1.0)
+                    .border_color(
+                        config
+                            .color(LapceColor::LAPCE_BORDER)
+                            .multiply_alpha(0.8),
+                    )
             }),
             // Diff preview (shown when expanded)
             container(
@@ -1436,13 +1484,29 @@ fn tool_call_card(
 
     let tool_name = tc.name.clone();
     let elapsed = tc.elapsed_display.clone();
-
-    // Collapse/expand state
-    let collapsed = create_rw_signal(true);
+    
+    // Special handling for show_code and show_diagram tools - always start expanded
+    let is_show_code = tool_name == "show_code";
+    let is_show_diagram = tool_name == "show_diagram";
+    let collapsed = create_rw_signal(!is_show_code && !is_show_diagram);
 
     // Details (shown when expanded)
     let args_preview: String = tc.arguments.chars().take(200).collect();
-    let output_preview = tc.output.clone().map(|o| {
+    
+    // Parse code blocks or mermaid diagrams from output
+    let (code_block, code_language, code_title, mermaid_diagram, mermaid_title, regular_output) = 
+        if is_show_code {
+            let (code, lang, title, remaining) = parse_code_block(&tc.output.clone().unwrap_or_default());
+            (code, lang, title, None, None, remaining)
+        } else if is_show_diagram {
+            let (diagram, title, remaining) = parse_mermaid_block(&tc.output.clone().unwrap_or_default());
+            (None, None, None, diagram, title, remaining)
+        } else {
+            (None, None, None, None, None, tc.output.clone())
+        };
+    
+    // For preview in collapsed state or has_details check, we use truncated output
+    let output_preview = regular_output.clone().map(|o| {
         if o.len() > 300 {
             // Use char boundaries instead of byte indexing to avoid panic
             let truncated: String = o.chars().take(300).collect();
@@ -1451,7 +1515,7 @@ fn tool_call_card(
             o
         }
     });
-    let has_details = !args_preview.is_empty() || output_preview.is_some();
+    let has_details = !args_preview.is_empty() || output_preview.is_some() || code_block.is_some() || mermaid_diagram.is_some();
 
     container(
         stack((
@@ -1525,34 +1589,212 @@ fn tool_call_card(
                         label(move || args.clone()).style(move |s| {
                             let config = config.get();
                             s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                .font_family("monospace".to_string())
                                 .width_pct(100.0)
                                 .min_width(0.0)
                                 .margin_top(4.0)
                                 .color(config.color(LapceColor::EDITOR_DIM))
                                 .apply_if(args_preview.is_empty(), |s| s.hide())
                         }),
-                        // Output
+                        // Code block (for show_code tool)
                         {
-                            let out = output.clone();
-                            label(move || out.clone().unwrap_or_default()).style(
-                                move |s| {
-                                    let config = config.get();
-                                    s.font_size(
-                                        (config.ui.font_size() as f32 - 2.0).max(10.0),
-                                    )
-                                    .width_pct(100.0)
-                                    .min_width(0.0)
-                                    .margin_top(4.0)
-                                    .padding(4.0)
-                                    .background(
-                                        config
-                                            .color(LapceColor::PANEL_BACKGROUND)
-                                            .multiply_alpha(0.5),
-                                    )
-                                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                                    .apply_if(output_preview.is_none(), |s| s.hide())
-                                },
+                            let code = code_block.clone();
+                            let lang = code_language.clone();
+                            let title = code_title.clone();
+                            container(
+                                stack((
+                                    // Title (if present)
+                                    {
+                                        let t = title.clone();
+                                        label(move || t.clone().unwrap_or_default()).style(move |s| {
+                                            let config = config.get();
+                                            s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                                                .font_bold()
+                                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                                .margin_bottom(6.0)
+                                                .apply_if(title.is_none(), |s| s.hide())
+                                        })
+                                    },
+                                    // Language badge
+                                    {
+                                        let l = lang.clone();
+                                        container(
+                                            label(move || l.clone().unwrap_or_else(|| "code".to_string())).style(move |s| {
+                                                let config = config.get();
+                                                s.font_size((config.ui.font_size() as f32 - 3.0).max(9.0))
+                                                    .font_family("monospace".to_string())
+                                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                            })
+                                        )
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            s.padding_horiz(8.0)
+                                                .padding_vert(3.0)
+                                                .margin_bottom(6.0)
+                                                .border_radius(3.0)
+                                                .background(
+                                                    config
+                                                        .color(LapceColor::PANEL_BACKGROUND)
+                                                        .multiply_alpha(0.7),
+                                                )
+                                                .border(1.0)
+                                                .border_color(
+                                                    config
+                                                        .color(LapceColor::LAPCE_BORDER)
+                                                        .multiply_alpha(0.5),
+                                                )
+                                        })
+                                    },
+                                    // Code content
+                                    label(move || code.clone().unwrap_or_default()).style(move |s| {
+                                        let config = config.get();
+                                        s.font_size(
+                                            (config.ui.font_size() as f32 - 1.0).max(11.0),
+                                        )
+                                        .font_family("monospace".to_string())
+                                        .width_pct(100.0)
+                                        .min_width(0.0)
+                                        .line_height(1.5)
+                                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                    }),
+                                ))
+                                .style(|s| s.flex_col().width_pct(100.0))
                             )
+                            .style(move |s| {
+                                let config = config.get();
+                                s.width_pct(100.0)
+                                    .min_width(0.0)
+                                    .margin_top(8.0)
+                                    .padding(12.0)
+                                    .border_radius(8.0)
+                                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                                    .border(1.0)
+                                    .border_color(
+                                        config
+                                            .color(LapceColor::LAPCE_BORDER)
+                                            .multiply_alpha(0.8),
+                                    )
+                                    .apply_if(code_block.is_none(), |s| s.hide())
+                            })
+                        },
+                        // Mermaid diagram (for show_diagram tool)
+                        {
+                            let diagram = mermaid_diagram.clone();
+                            let diagram_title = mermaid_title.clone();
+                            container(
+                                stack((
+                                    // Title (if present)
+                                    {
+                                        let t = diagram_title.clone();
+                                        label(move || t.clone().unwrap_or_default()).style(move |s| {
+                                            let config = config.get();
+                                            s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                                                .font_bold()
+                                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                                .margin_bottom(12.0)
+                                                .apply_if(diagram_title.is_none(), |s| s.hide())
+                                        })
+                                    },
+                                    // Diagram placeholder (since Floem doesn't have web view)
+                                    // We'll generate an HTML file and provide a clickable link
+                                    stack((
+                                        label(|| "🎨 Diagram generated".to_string()).style(move |s| {
+                                            let config = config.get();
+                                            s.font_size((config.ui.font_size() as f32).max(13.0))
+                                                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                                .margin_bottom(8.0)
+                                        }),
+                                        label(move || {
+                                            if let Some(ref diag) = diagram {
+                                                format!("Click to open diagram in browser\n\n{}", 
+                                                    if diag.len() > 100 { 
+                                                        format!("{}...", &diag[..100])
+                                                    } else {
+                                                        diag.clone()
+                                                    }
+                                                )
+                                            } else {
+                                                String::new()
+                                            }
+                                        }).style(move |s| {
+                                            let config = config.get();
+                                            s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                                .font_family("monospace".to_string())
+                                                .width_pct(100.0)
+                                                .min_width(0.0)
+                                                .line_height(1.5)
+                                                .color(config.color(LapceColor::EDITOR_DIM))
+                                                .cursor(CursorStyle::Pointer)
+                                        }),
+                                    ))
+                                    .on_click_stop({
+                                        let mermaid_diagram_clone = mermaid_diagram.clone();
+                                        move |_| {
+                                            if let Some(ref diag) = mermaid_diagram_clone {
+                                                // Generate HTML file with Mermaid.js and open in browser
+                                                if let Err(e) = open_mermaid_in_browser(diag) {
+                                                    tracing::error!("Failed to open diagram: {}", e);
+                                                }
+                                            }
+                                        }
+                                    })
+                                    .style(|s| s.flex_col()),
+                                ))
+                                .style(|s| s.flex_col().width_pct(100.0))
+                            )
+                            .style(move |s| {
+                                let config = config.get();
+                                s.width_pct(100.0)
+                                    .min_width(0.0)
+                                    .margin_top(8.0)
+                                    .padding(16.0)
+                                    .border_radius(8.0)
+                                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                                    .border(1.0)
+                                    .border_color(
+                                        config
+                                            .color(LapceColor::LAPCE_BORDER)
+                                            .multiply_alpha(0.8),
+                                    )
+                                    .apply_if(mermaid_diagram.is_none(), |s| s.hide())
+                            })
+                        },
+                        // Regular output - styled like a scrollable terminal window
+                        {
+                            let out = regular_output.clone();
+                            container(
+                                scroll(
+                                    {
+                                        let out = out.clone();
+                                        rich_text(move || {
+                                            let config = config.get();
+                                            create_terminal_text_layout(&out.clone().unwrap_or_default(), &config)
+                                        })
+                                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                                    }
+                                )
+                                .style(|s| {
+                                    s.width_pct(100.0)
+                                        .min_height(50.0)
+                                        .max_height(300.0)
+                                })
+                            )
+                            .style(move |s| {
+                                let config = config.get();
+                                s.width_pct(100.0)
+                                    .min_width(0.0)
+                                    .margin_top(8.0)
+                                    .padding(10.0)
+                                    .border_radius(6.0)
+                                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                                    .border(1.0)
+                                    .border_color(
+                                        config
+                                            .color(LapceColor::LAPCE_BORDER)
+                                            .multiply_alpha(0.8),
+                                    )
+                                    .apply_if(regular_output.is_none(), |s| s.hide())
+                            })
                         },
                     ))
                     .style(|s| s.flex_col().width_pct(100.0)),
@@ -2007,6 +2249,7 @@ fn chat_input_area(
         s.flex_row()
             .padding(4.0)
             .width_pct(100.0)
+            .margin_horiz(8.0)
             .apply_if(!has_images, |s| s.hide())
     });
 
@@ -2077,7 +2320,7 @@ fn chat_input_area(
                     }
                 })
                 .style(|s| {
-                    s.padding_vert(6.0).padding_horiz(8.0).min_width_pct(100.0)
+                    s.padding_vert(6.0).padding_horiz(8.0).flex_grow(1.0).min_width(0.0)
                 }),
         )
         .ensure_visible(move || {
@@ -2158,6 +2401,7 @@ fn chat_input_area(
         s.width_pct(100.0)
             .height(36.0)
             .items_center()
+            .margin_horiz(8.0)
             .border(1.0)
             .border_radius(6.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER))
@@ -2168,3 +2412,178 @@ fn chat_input_area(
     stack((image_preview, input_bar))
         .style(|s| s.flex_col().width_pct(100.0))
 }
+
+/// Parse code block from tool output.
+/// Returns (code_content, language, title, remaining_output).
+fn parse_code_block(output: &str) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+    // Check for title line (=== Title ===)
+    let (title, rest) = if let Some(title_end) = output.find("\n\n") {
+        let first_line = &output[..title_end];
+        if first_line.starts_with("=== ") && first_line.ends_with(" ===") {
+            let title_text = first_line.trim_start_matches("=== ").trim_end_matches(" ===").to_string();
+            (Some(title_text), &output[title_end + 2..])
+        } else {
+            (None, output)
+        }
+    } else {
+        (None, output)
+    };
+    
+    // Check for code block markers [CODE:language] ... [/CODE]
+    if let Some(start_idx) = rest.find("[CODE:") {
+        if let Some(end_bracket) = rest[start_idx..].find(']') {
+            let language = rest[start_idx + 6..start_idx + end_bracket].to_string();
+            let code_start = start_idx + end_bracket + 2; // skip "]\n"
+            
+            if let Some(end_idx) = rest[code_start..].find("[/CODE]") {
+                let code_content = rest[code_start..code_start + end_idx].trim().to_string();
+                
+                // Remaining output (before code block + after code block)
+                let before = &rest[..start_idx];
+                let after = &rest[code_start + end_idx + 7..]; // skip "[/CODE]"
+                let remaining = format!("{}{}", before.trim(), after.trim()).trim().to_string();
+                let remaining_output = if remaining.is_empty() { None } else { Some(remaining) };
+                
+                return (Some(code_content), Some(language), title, remaining_output);
+            }
+        }
+    }
+    
+    // No code block found, return original output
+    (None, None, title, Some(output.to_string()))
+}
+
+/// Parse mermaid diagram from tool output.
+/// Returns (diagram_code, title, remaining_output).
+fn parse_mermaid_block(output: &str) -> (Option<String>, Option<String>, Option<String>) {
+    // Check for title line (=== Title ===)
+    let (title, rest) = if let Some(title_end) = output.find("\n\n") {
+        let first_line = &output[..title_end];
+        if first_line.starts_with("=== ") && first_line.ends_with(" ===") {
+            let title_text = first_line.trim_start_matches("=== ").trim_end_matches(" ===").to_string();
+            (Some(title_text), &output[title_end + 2..])
+        } else {
+            (None, output)
+        }
+    } else {
+        (None, output)
+    };
+    
+    // Check for mermaid markers [MERMAID] ... [/MERMAID]
+    if let Some(start_idx) = rest.find("[MERMAID]") {
+        let diagram_start = start_idx + 10; // skip "[MERMAID]\n"
+        
+        if let Some(end_idx) = rest[diagram_start..].find("[/MERMAID]") {
+            let diagram_code = rest[diagram_start..diagram_start + end_idx].trim().to_string();
+            
+            // Remaining output (before diagram + after diagram)
+            let before = &rest[..start_idx];
+            let after = &rest[diagram_start + end_idx + 10..]; // skip "[/MERMAID]"
+            let remaining = format!("{}{}", before.trim(), after.trim()).trim().to_string();
+            let remaining_output = if remaining.is_empty() { None } else { Some(remaining) };
+            
+            return (Some(diagram_code), title, remaining_output);
+        }
+    }
+    
+    // No mermaid block found
+    (None, title, Some(output.to_string()))
+}
+
+/// Generate an HTML file with Mermaid.js and open it in the browser
+fn open_mermaid_in_browser(diagram_code: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::path::PathBuf;
+    
+    // Create temp directory for diagram HTML files
+    let temp_dir = std::env::temp_dir().join("forge-diagrams");
+    fs::create_dir_all(&temp_dir)?;
+    
+    // Generate unique filename based on diagram hash
+    let hash = format!("{:x}", md5::compute(diagram_code.as_bytes()));
+    let html_path: PathBuf = temp_dir.join(format!("diagram-{}.html", hash));
+    
+    // HTML template with Mermaid.js CDN
+    let html_content = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forge IDE - Mermaid Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }}
+        .container {{
+            max-width: 1200px;
+            width: 100%;
+        }}
+        .diagram-container {{
+            background: #252526;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }}
+        .mermaid {{
+            text-align: center;
+        }}
+        .footer {{
+            text-align: center;
+            margin-top: 16px;
+            font-size: 12px;
+            color: #858585;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="diagram-container">
+            <pre class="mermaid">
+{}
+            </pre>
+        </div>
+        <div class="footer">
+            Generated by Forge IDE
+        </div>
+    </div>
+    <script>
+        mermaid.initialize({{ 
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {{
+                primaryColor: '#0d6efd',
+                primaryTextColor: '#fff',
+                primaryBorderColor: '#0d6efd',
+                lineColor: '#6c757d',
+                secondaryColor: '#198754',
+                tertiaryColor: '#ffc107',
+                background: '#252526',
+                mainBkg: '#252526',
+                secondBkg: '#1e1e1e',
+                textColor: '#d4d4d4',
+                border1: '#3e3e42',
+                border2: '#6c757d'
+            }}
+        }});
+    </script>
+</body>
+</html>"#, diagram_code);
+    
+    // Write HTML file
+    fs::write(&html_path, html_content)?;
+    
+    // Open in default browser
+    opener::open(&html_path)?;
+    
+    Ok(())
+}
+
