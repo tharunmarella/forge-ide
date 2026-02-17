@@ -1681,6 +1681,7 @@ fn tool_call_card(
                         {
                             let diagram = mermaid_diagram.clone();
                             let diagram_title = mermaid_title.clone();
+                            
                             container(
                                 stack((
                                     // Title (if present)
@@ -1695,50 +1696,53 @@ fn tool_call_card(
                                                 .apply_if(diagram_title.is_none(), |s| s.hide())
                                         })
                                     },
-                                    // Diagram placeholder (since Floem doesn't have web view)
-                                    // We'll generate an HTML file and provide a clickable link
-                                    stack((
-                                        label(|| "🎨 Diagram generated".to_string()).style(move |s| {
-                                            let config = config.get();
-                                            s.font_size((config.ui.font_size() as f32).max(13.0))
-                                                .color(config.color(LapceColor::PANEL_FOREGROUND))
-                                                .margin_bottom(8.0)
-                                        }),
-                                        label(move || {
-                                            if let Some(ref diag) = diagram {
-                                                format!("Click to open diagram in browser\n\n{}", 
-                                                    if diag.len() > 100 { 
-                                                        format!("{}...", &diag[..100])
-                                                    } else {
-                                                        diag.clone()
+                                    // Diagram preview and link
+                                    {
+                                        let diagram_for_label = diagram.clone();
+                                        let diagram_for_click = diagram.clone();
+                                        
+                                        stack((
+                                            label(|| "🎨 Diagram ready".to_string()).style(move |s| {
+                                                let config = config.get();
+                                                s.font_size((config.ui.font_size() as f32).max(13.0))
+                                                    .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                                    .margin_bottom(8.0)
+                                            }),
+                                            label(move || {
+                                                if let Some(ref diag) = diagram_for_label {
+                                                    format!("Click to open interactive diagram in browser\n\n{}", 
+                                                        if diag.len() > 100 { 
+                                                            format!("{}...", &diag[..100])
+                                                        } else {
+                                                            diag.clone()
+                                                        }
+                                                    )
+                                                } else {
+                                                    String::new()
+                                                }
+                                            }).style(move |s| {
+                                                let config = config.get();
+                                                s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                                                    .font_family("monospace".to_string())
+                                                    .width_pct(100.0)
+                                                    .min_width(0.0)
+                                                    .line_height(1.5)
+                                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                                    .cursor(CursorStyle::Pointer)
+                                            }),
+                                        ))
+                                        .on_click_stop({
+                                            let diag = diagram_for_click;
+                                            move |_| {
+                                                if let Some(ref d) = diag {
+                                                    if let Err(e) = open_mermaid_in_browser(d) {
+                                                        tracing::error!("Failed to open diagram: {}", e);
                                                     }
-                                                )
-                                            } else {
-                                                String::new()
-                                            }
-                                        }).style(move |s| {
-                                            let config = config.get();
-                                            s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                                                .font_family("monospace".to_string())
-                                                .width_pct(100.0)
-                                                .min_width(0.0)
-                                                .line_height(1.5)
-                                                .color(config.color(LapceColor::EDITOR_DIM))
-                                                .cursor(CursorStyle::Pointer)
-                                        }),
-                                    ))
-                                    .on_click_stop({
-                                        let mermaid_diagram_clone = mermaid_diagram.clone();
-                                        move |_| {
-                                            if let Some(ref diag) = mermaid_diagram_clone {
-                                                // Generate HTML file with Mermaid.js and open in browser
-                                                if let Err(e) = open_mermaid_in_browser(diag) {
-                                                    tracing::error!("Failed to open diagram: {}", e);
                                                 }
                                             }
-                                        }
-                                    })
-                                    .style(|s| s.flex_col()),
+                                        })
+                                        .style(|s| s.flex_col())
+                                    },
                                 ))
                                 .style(|s| s.flex_col().width_pct(100.0))
                             )
@@ -2490,12 +2494,12 @@ fn parse_mermaid_block(output: &str) -> (Option<String>, Option<String>, Option<
     (None, title, Some(output.to_string()))
 }
 
-/// Generate an HTML file with Mermaid.js and open it in the browser
+/// Generate an HTML file with Mermaid.js and open it in the browser.
 fn open_mermaid_in_browser(diagram_code: &str) -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
     use std::path::PathBuf;
     
-    // Create temp directory for diagram HTML files
+    // Create temp directory for diagram files
     let temp_dir = std::env::temp_dir().join("forge-diagrams");
     fs::create_dir_all(&temp_dir)?;
     
@@ -2512,68 +2516,257 @@ fn open_mermaid_in_browser(diagram_code: &str) -> Result<(), Box<dyn std::error:
     <title>Forge IDE - Mermaid Diagram</title>
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0;
-            padding: 20px;
             background: #1e1e1e;
             color: #d4d4d4;
+            overflow: hidden;
+            height: 100vh;
+        }}
+        .header {{
+            background: #252526;
+            padding: 12px 20px;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .title {{
+            font-size: 14px;
+            color: #858585;
+        }}
+        .controls {{
+            display: flex;
+            gap: 8px;
+        }}
+        .btn {{
+            background: #3e3e42;
+            border: none;
+            color: #d4d4d4;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.2s;
+        }}
+        .btn:hover {{
+            background: #505050;
+        }}
+        .btn:active {{
+            background: #5a5a5a;
+        }}
+        .diagram-wrapper {{
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 49px);
+            overflow: hidden;
+            background: #1e1e1e;
+        }}
+        .diagram-container {{
+            width: 100%;
+            height: 100%;
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 100vh;
+            transform-origin: center center;
+            transition: transform 0.2s ease-out;
+            cursor: grab;
         }}
-        .container {{
-            max-width: 1200px;
-            width: 100%;
-        }}
-        .diagram-container {{
-            background: #252526;
-            border-radius: 8px;
-            padding: 24px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        .diagram-container.grabbing {{
+            cursor: grabbing;
         }}
         .mermaid {{
             text-align: center;
+            background: #252526;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         }}
-        .footer {{
-            text-align: center;
-            margin-top: 16px;
+        .zoom-info {{
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            background: rgba(37, 37, 38, 0.95);
+            padding: 6px 12px;
+            border-radius: 4px;
             font-size: 12px;
             color: #858585;
+            pointer-events: none;
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="diagram-container">
+    <div class="header">
+        <div class="title">Generated by Forge IDE • Interactive Diagram</div>
+        <div class="controls">
+            <button class="btn" id="zoomIn">Zoom In (+)</button>
+            <button class="btn" id="zoomOut">Zoom Out (-)</button>
+            <button class="btn" id="resetZoom">Reset (0)</button>
+            <button class="btn" id="fullscreen">Fullscreen (F)</button>
+        </div>
+    </div>
+    <div class="diagram-wrapper" id="wrapper">
+        <div class="diagram-container" id="diagramContainer">
             <pre class="mermaid">
 {}
             </pre>
         </div>
-        <div class="footer">
-            Generated by Forge IDE
-        </div>
+        <div class="zoom-info" id="zoomInfo">100%</div>
     </div>
     <script>
+        // Auto-fix common Mermaid syntax issues before rendering
+        function fixMermaidSyntax(code) {{
+            return code.replace(/([A-Z][A-Za-z0-9]*)\[([^\]]*[():,-][^\]]*)\]/g, (match, nodeId, label) => {{
+                if (label.startsWith('"') && label.endsWith('"')) {{
+                    return match;
+                }}
+                return `${{nodeId}}["${{label}}"]`;
+            }});
+        }}
+        
+        // Get the mermaid code and fix it
+        const mermaidElement = document.querySelector('.mermaid');
+        if (mermaidElement) {{
+            const originalCode = mermaidElement.textContent;
+            const fixedCode = fixMermaidSyntax(originalCode);
+            mermaidElement.textContent = fixedCode;
+        }}
+        
+        // Initialize Mermaid
         mermaid.initialize({{ 
             startOnLoad: true,
             theme: 'dark',
             themeVariables: {{
-                primaryColor: '#0d6efd',
-                primaryTextColor: '#fff',
-                primaryBorderColor: '#0d6efd',
-                lineColor: '#6c757d',
-                secondaryColor: '#198754',
-                tertiaryColor: '#ffc107',
-                background: '#252526',
-                mainBkg: '#252526',
-                secondBkg: '#1e1e1e',
+                primaryColor: '#89b4fa',
+                primaryTextColor: '#cdd6f4',
+                primaryBorderColor: '#585b70',
+                lineColor: '#a6adc8',
+                secondaryColor: '#313244',
+                tertiaryColor: '#1e1e2e',
+                background: '#1e1e1e',
+                mainBkg: '#1e1e2e',
+                secondBkg: '#252526',
                 textColor: '#d4d4d4',
                 border1: '#3e3e42',
-                border2: '#6c757d'
+                border2: '#6c757d',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
             }}
         }});
+        
+        // Simple pan/zoom implementation
+        setTimeout(() => {{
+            const container = document.getElementById('diagramContainer');
+            const wrapper = document.getElementById('wrapper');
+            const zoomInfo = document.getElementById('zoomInfo');
+            
+            let scale = 1;
+            let translateX = 0;
+            let translateY = 0;
+            let isDragging = false;
+            let startX = 0;
+            let startY = 0;
+            
+            function updateTransform() {{
+                container.style.transform = `translate(${{translateX}}px, ${{translateY}}px) scale(${{scale}})`;
+                zoomInfo.textContent = Math.round(scale * 100) + '%';
+            }}
+            
+            function zoom(delta, centerX, centerY) {{
+                const oldScale = scale;
+                scale = Math.max(0.1, Math.min(5, scale + delta));
+                
+                // Zoom towards cursor/center
+                if (centerX !== undefined && centerY !== undefined) {{
+                    const rect = wrapper.getBoundingClientRect();
+                    const x = centerX - rect.left;
+                    const y = centerY - rect.top;
+                    
+                    translateX = x - (x - translateX) * (scale / oldScale);
+                    translateY = y - (y - translateY) * (scale / oldScale);
+                }}
+                
+                updateTransform();
+            }}
+            
+            // Zoom controls
+            document.getElementById('zoomIn').addEventListener('click', () => {{
+                zoom(0.2);
+            }});
+            
+            document.getElementById('zoomOut').addEventListener('click', () => {{
+                zoom(-0.2);
+            }});
+            
+            document.getElementById('resetZoom').addEventListener('click', () => {{
+                scale = 1;
+                translateX = 0;
+                translateY = 0;
+                updateTransform();
+            }});
+            
+            // Fullscreen
+            document.getElementById('fullscreen').addEventListener('click', () => {{
+                if (!document.fullscreenElement) {{
+                    document.documentElement.requestFullscreen();
+                }} else {{
+                    document.exitFullscreen();
+                }}
+            }});
+            
+            // Mouse wheel zoom
+            wrapper.addEventListener('wheel', (e) => {{
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                zoom(delta, e.clientX, e.clientY);
+            }});
+            
+            // Pan with mouse
+            container.addEventListener('mousedown', (e) => {{
+                isDragging = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+                container.classList.add('grabbing');
+            }});
+            
+            document.addEventListener('mousemove', (e) => {{
+                if (isDragging) {{
+                    translateX = e.clientX - startX;
+                    translateY = e.clientY - startY;
+                    updateTransform();
+                }}
+            }});
+            
+            document.addEventListener('mouseup', () => {{
+                isDragging = false;
+                container.classList.remove('grabbing');
+            }});
+            
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {{
+                if (e.key === '+' || e.key === '=') {{
+                    zoom(0.2);
+                }} else if (e.key === '-') {{
+                    zoom(-0.2);
+                }} else if (e.key === '0') {{
+                    scale = 1;
+                    translateX = 0;
+                    translateY = 0;
+                    updateTransform();
+                }} else if (e.key === 'f' || e.key === 'F') {{
+                    if (!document.fullscreenElement) {{
+                        document.documentElement.requestFullscreen();
+                    }} else {{
+                        document.exitFullscreen();
+                    }}
+                }}
+            }});
+            
+        }}, 500);
     </script>
 </body>
 </html>"#, diagram_code);

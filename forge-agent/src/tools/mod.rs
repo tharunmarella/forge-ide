@@ -6,6 +6,7 @@ mod process;
 mod treesitter;
 pub mod lint;
 mod display;
+mod run_config;
 
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
@@ -19,6 +20,7 @@ pub use search::*;
 pub use code::*;
 pub use process::*;
 pub use display::*;
+pub use run_config::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
 pub use search::ensure_indexed;
@@ -59,6 +61,11 @@ pub enum Tool {
     ShowCode,
     ShowDiagram,
     
+    // Run configuration
+    ListRunConfigs,
+    RunProject,
+    StopProject,
+    
     // Interaction
     AttemptCompletion,
     AskFollowupQuestion,
@@ -98,6 +105,9 @@ impl Tool {
             Self::Diagnostics => "diagnostics",
             Self::ShowCode => "show_code",
             Self::ShowDiagram => "show_diagram",
+            Self::ListRunConfigs => "list_run_configs",
+            Self::RunProject => "run_project",
+            Self::StopProject => "stop_project",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -134,6 +144,9 @@ impl Tool {
             "diagnostics" => Some(Self::Diagnostics),
             "show_code" => Some(Self::ShowCode),
             "show_diagram" => Some(Self::ShowDiagram),
+            "list_run_configs" => Some(Self::ListRunConfigs),
+            "run_project" => Some(Self::RunProject),
+            "stop_project" => Some(Self::StopProject),
             "attempt_completion" => Some(Self::AttemptCompletion),
             "ask_followup_question" => Some(Self::AskFollowupQuestion),
             "think" => Some(Self::Think),
@@ -352,6 +365,9 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::Diagnostics => lint::diagnostics(&tool.arguments, workdir).await,
         Tool::ShowCode => display::show_code(&tool.arguments, workdir).await,
         Tool::ShowDiagram => display::show_diagram(&tool.arguments, workdir).await,
+        Tool::ListRunConfigs => run_config::list_run_configs(&tool.arguments, workdir).await,
+        Tool::RunProject => run_config::run_project(&tool.arguments, workdir).await,
+        Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
         
         // These are handled specially by the agent
         Tool::AttemptCompletion 
@@ -721,6 +737,36 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                     "title": { "type": "string", "description": "Optional title/description for the diagram" }
                 },
                 "required": ["diagram_code"]
+            }
+        }),
+        serde_json::json!({
+            "name": "list_run_configs",
+            "description": "List all available run configurations detected from the project. This automatically finds npm/yarn scripts, cargo bins, python modules, go packages, and other runnable targets. Use this BEFORE running a project to see what's available.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        serde_json::json!({
+            "name": "run_project",
+            "description": "Run the project using the IDE's run configuration system. This opens a proper terminal tab with UI integration. BETTER than execute_command for running apps, servers, tests, or build scripts. First call list_run_configs() to see available options, then use this tool.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "config_name": { "type": "string", "description": "Name of detected run configuration (e.g., 'npm run dev', 'cargo run', 'python main.py'). Get this from list_run_configs()." },
+                    "command": { "type": "string", "description": "Custom command to run if config_name not provided. Use config_name when possible." },
+                    "mode": { "type": "string", "enum": ["run", "debug"], "description": "Run mode: 'run' for normal execution, 'debug' to enable breakpoints. Default: 'run'" }
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "stop_project",
+            "description": "Stop a running project/process started with run_project(). If no config_name provided, stops the most recently started process.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "config_name": { "type": "string", "description": "Name of the run configuration to stop. If not provided, stops the most recent one." }
+                }
             }
         }),
         serde_json::json!({

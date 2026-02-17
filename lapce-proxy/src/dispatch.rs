@@ -1993,6 +1993,49 @@ impl ProxyHandler for Dispatcher {
                 }));
             }
             
+            // Agent Run Configuration handlers
+            AgentListRunConfigs {} => {
+                use crate::run_config_detector::detect_run_configs;
+                let configs = if let Some(workspace) = self.workspace.as_ref() {
+                    detect_run_configs(workspace)
+                } else {
+                    Vec::new()
+                };
+                self.respond_rpc(id, Ok(ProxyResponse::AgentListRunConfigsResponse { configs }));
+            }
+            
+            AgentRunProject { config_name, command, mode } => {
+                // This needs to be forwarded to the IDE/frontend to actually execute
+                // The proxy doesn't have UI context to open terminal tabs
+                // For now, we'll return a message indicating it needs IDE execution
+                let message = if let Some(name) = config_name {
+                    format!("Run config '{}' in {} mode", name, mode)
+                } else if let Some(cmd) = command {
+                    format!("Run command '{}' in {} mode", cmd, mode)
+                } else {
+                    "No config or command provided".to_string()
+                };
+                
+                self.respond_rpc(id, Ok(ProxyResponse::AgentRunProjectResponse {
+                    success: true,
+                    message,
+                    terminal_id: None,  // Will be set by IDE
+                }));
+            }
+            
+            AgentStopProject { config_name } => {
+                let message = if let Some(name) = config_name {
+                    format!("Stop project '{}'", name)
+                } else {
+                    "Stop most recent project".to_string()
+                };
+                
+                self.respond_rpc(id, Ok(ProxyResponse::AgentStopProjectResponse {
+                    success: true,
+                    message,
+                }));
+            }
+            
             DeleteRunConfig { name } => {
                 let result = if let Some(workspace) = self.workspace.as_ref() {
                     let run_toml = workspace.join(".lapce").join("run.toml");

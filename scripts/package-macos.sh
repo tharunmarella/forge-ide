@@ -145,9 +145,41 @@ cp "$PROJECT_DIR/extra/macos/Lapce.app/Contents/Resources/lapce.icns" "$APP_DIR/
 # Step 6: Create PkgInfo
 echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
-# Step 7: Ad-hoc codesign (required for arm64 macOS)
-echo "==> Code signing (ad-hoc)..."
-codesign --force --deep --sign - "$APP_DIR"
+# Step 7: Code signing
+echo "==> Code signing..."
+# Check if CODESIGN_IDENTITY environment variable is set
+if [ -z "${CODESIGN_IDENTITY:-}" ]; then
+    echo "WARNING: No signing identity set (CODESIGN_IDENTITY not set)"
+    echo "Using ad-hoc signature. App will require manual approval on first launch."
+    echo ""
+    echo "To properly sign for distribution:"
+    echo "  1. Get an Apple Developer account and create a Developer ID certificate"
+    echo "  2. Find your identity: security find-identity -v -p codesigning"
+    echo "  3. Export CODESIGN_IDENTITY='Developer ID Application: Your Name (TEAM_ID)'"
+    echo "  4. Re-run this script"
+    echo ""
+    codesign --force --deep --sign - "$APP_DIR"
+else
+    echo "Signing with identity: $CODESIGN_IDENTITY"
+    # Sign with hardened runtime and timestamp (required for notarization)
+    codesign --force --deep \
+        --options runtime \
+        --timestamp \
+        --sign "$CODESIGN_IDENTITY" \
+        "$APP_DIR"
+    
+    # Verify signature
+    echo "==> Verifying signature..."
+    codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+    
+    echo ""
+    echo "✓ App successfully signed with Developer ID"
+    echo ""
+    echo "For full distribution without warnings, you should also notarize:"
+    echo "  1. Create a zip: ditto -c -k --keepParent '$APP_DIR' Forge-IDE.zip"
+    echo "  2. Submit for notarization: xcrun notarytool submit Forge-IDE.zip --apple-id YOUR_EMAIL --team-id TEAM_ID --password APP_SPECIFIC_PASSWORD --wait"
+    echo "  3. Staple the ticket: xcrun stapler staple '$APP_DIR'"
+fi
 
 echo "==> App bundle created at: $APP_DIR"
 

@@ -403,11 +403,19 @@ pub fn panel_container_view(
     if !is_bottom {
         // Left/Right panels: horizontal layout [icons | content]
         stack((
-            panel_picker(window_tab_data.clone(), position.first()),
+            // panel_picker(window_tab_data.clone(), position.first()), // Removed sidebar as requested
             stack((
                 panel_view(window_tab_data.clone(), position.first()),
                 panel_view(window_tab_data.clone(), position.second()),
-            )).style(|s| s.flex_col().flex_grow(1.0).height_pct(100.0)),
+            ))
+            .style(move |s| {
+                let config = config.get();
+                s.flex_col()
+                    .flex_grow(1.0)
+                    .height_pct(100.0)
+                    .border_left(1.0)
+                    .border_color(config.color(LapceColor::LAPCE_BORDER))
+            }),
             resize_drag_view(position),
             stack((drop_view(position.first()), drop_view(position.second()))).style(
                 move |s| {

@@ -27,6 +27,8 @@ pub enum OutputKind {
     Default,
     /// Shell command output -- always preserve exit code and error info.
     Shell,
+    /// Display tools (show_code, show_diagram) -- never truncate, always preserve full content.
+    Display,
 }
 
 /// Result of masking a tool output.
@@ -50,6 +52,15 @@ pub struct MaskedOutput {
 pub fn mask_output(output: &str, kind: OutputKind) -> MaskedOutput {
     let total_chars = output.len();
     let total_lines = output.lines().count();
+
+    // Display output: never truncate (show_code, show_diagram need full content)
+    if kind == OutputKind::Display {
+        return MaskedOutput {
+            text: output.to_string(),
+            saved_path: None,
+            was_truncated: false,
+        };
+    }
 
     // Small output: return as-is
     if total_chars <= SMALL_THRESHOLD {

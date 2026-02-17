@@ -399,6 +399,17 @@ pub enum ProxyRequest {
     DeleteRunConfig {
         name: String,
     },
+    
+    // Run Configuration Execution (for agent)
+    AgentListRunConfigs {},
+    AgentRunProject {
+        config_name: Option<String>,
+        command: Option<String>,
+        mode: String,  // "run" or "debug"
+    },
+    AgentStopProject {
+        config_name: Option<String>,
+    },
     GetRunConfigs {},
 
     // Database Manager
@@ -911,6 +922,20 @@ pub enum ProxyResponse {
         user: Vec<crate::dap_types::RunDebugConfig>,
     },
     RunConfigSaveResponse {
+        success: bool,
+        message: String,
+    },
+    
+    // Agent Run Configuration Responses
+    AgentListRunConfigsResponse {
+        configs: Vec<DetectedRunConfig>,
+    },
+    AgentRunProjectResponse {
+        success: bool,
+        message: String,
+        terminal_id: Option<String>,
+    },
+    AgentStopProjectResponse {
         success: bool,
         message: String,
     },
@@ -2225,6 +2250,29 @@ impl ProxyRpcHandler {
 
     pub fn proto_detect_project_tools(&self, f: impl ProxyCallback + 'static) {
         self.request_async(ProxyRequest::ProtoDetectProjectTools {}, f);
+    }
+    
+    // Agent Run Configuration methods
+    pub fn agent_list_run_configs(&self, f: impl ProxyCallback + 'static) {
+        self.request_async(ProxyRequest::AgentListRunConfigs {}, f);
+    }
+    
+    pub fn agent_run_project(
+        &self,
+        config_name: Option<String>,
+        command: Option<String>,
+        mode: String,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::AgentRunProject { config_name, command, mode }, f);
+    }
+    
+    pub fn agent_stop_project(
+        &self,
+        config_name: Option<String>,
+        f: impl ProxyCallback + 'static,
+    ) {
+        self.request_async(ProxyRequest::AgentStopProject { config_name }, f);
     }
     
     // Run Configuration methods
