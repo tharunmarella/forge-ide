@@ -2305,7 +2305,7 @@ impl ProxyHandler for Dispatcher {
 
                         // ══════════════════════════════════════════════════════
                         // All LLM calls go through forge-search cloud.
-                        // Uses the /chat endpoint (JSON, not SSE) with multi-turn tool loop.
+                        // Uses the /chat/stream endpoint (SSE) with real-time event streaming.
                         // ══════════════════════════════════════════════════════
                         let workspace_name = workspace_path
                             .file_name()
@@ -2381,48 +2381,104 @@ impl ProxyHandler for Dispatcher {
 
                             tracing::info!("Cloud chat turn {} for {}", turn, conversation_id);
 
-                            // ── Non-streaming JSON request to /chat ──
-                            match fs_client.chat_with_body(&chat_req).await {
-                                Ok(response) => {
-                                    // Parse the response - it's a JSON object with answer, tool_calls, status
-                                    let answer = response.get("answer").and_then(|a| a.as_str()).unwrap_or("");
-                                    let status = response.get("status").and_then(|s| s.as_str()).unwrap_or("done");
-                                    let server_tool_calls = response.get("tool_calls").and_then(|t| t.as_array());
+                            // ── SSE Streaming request to /chat/stream ──
+                            use futures_util::StreamExt;
+                            match fs_client.chat_stream(&chat_req).await {
+                                Ok(mut stream) => {
+                                    // Process SSE events as they arrive
+                                    let mut final_answer = String::new();
+                                    let mut final_status = String::from("done");
+                                    let mut ide_tool_calls: Vec<serde_json::Value> = Vec::new();
                                     
-                                    // Forward plan steps to IDE (sent on every turn so the UI updates as steps complete)
-                                    if let Some(plan_arr) = response.get("plan_steps").and_then(|p| p.as_array()) {
-                                        let steps: Vec<lapce_rpc::core::AgentPlanStep> = plan_arr
-                                            .iter()
-                                            .filter_map(|s| {
-                                                let number = s.get("number").and_then(|n| n.as_u64())? as u32;
-                                                let description = s.get("description").and_then(|d| d.as_str())?.to_string();
-                                                let status_str = s.get("status").and_then(|st| st.as_str()).unwrap_or("pending");
-                                                let step_status = match status_str {
-                                                    "in_progress" => lapce_rpc::core::AgentPlanStepStatus::InProgress,
-                                                    "done" => lapce_rpc::core::AgentPlanStepStatus::Done,
-                                                    _ => lapce_rpc::core::AgentPlanStepStatus::Pending,
-                                                };
-                                                Some(lapce_rpc::core::AgentPlanStep {
-                                                    number,
-                                                    description,
-                                                    status: step_status,
-                                                })
-                                            })
-                                            .collect();
-                                        if !steps.is_empty() {
-                                            tracing::info!("Forwarding {} plan steps to IDE", steps.len());
-                                            core_rpc.agent_plan(steps);
+                                    while let Some(event) = stream.next().await {
+                                        use forge_agent::forge_search::SseEvent;
+                                        
+                                        match event {
+                                            // Agent reasoning/thinking
+                                            SseEvent::Thinking { step_type, message, detail } => {
+                                                tracing::debug!("[SSE] Thinking: {}: {}", step_type, &message[..message.len().min(50)]);
+                                                core_rpc.agent_thinking_step(step_type, message, detail.unwrap_or_default());
+                                            }
+                                            
+                                            // Server tool execution started
+                                            SseEvent::ToolStart { tool_call_id, tool_name, arguments } => {
+                                                tracing::info!("[SSE] Server tool starting: {} (id={})", tool_name, tool_call_id);
+                                                let args_str = arguments.to_string();
+                                                core_rpc.agent_server_tool_start(tool_call_id, tool_name, args_str);
+                                            }
+                                            
+                                            // Server tool execution completed
+                                            SseEvent::ToolEnd { tool_call_id, tool_name, result_summary, success } => {
+                                                tracing::info!("[SSE] Server tool completed: {} (id={}, success={})", tool_name, tool_call_id, success);
+                                                core_rpc.agent_server_tool_end(tool_call_id, tool_name, result_summary, success);
+                                            }
+                                            
+                                            // Incremental text output
+                                            SseEvent::TextDelta { text } => {
+                                                tracing::debug!("[SSE] Text delta: {} chars", text.len());
+                                                core_rpc.agent_text_chunk(text.clone(), false);
+                                                final_answer.push_str(&text);
+                                            }
+                                            
+                                            // Agent's plan steps
+                                            SseEvent::Plan { steps } => {
+                                                let plan_steps: Vec<lapce_rpc::core::AgentPlanStep> = steps
+                                                    .iter()
+                                                    .map(|s| {
+                                                        let status = match s.status.as_str() {
+                                                            "in_progress" => lapce_rpc::core::AgentPlanStepStatus::InProgress,
+                                                            "done" => lapce_rpc::core::AgentPlanStepStatus::Done,
+                                                            _ => lapce_rpc::core::AgentPlanStepStatus::Pending,
+                                                        };
+                                                        lapce_rpc::core::AgentPlanStep {
+                                                            number: s.number,
+                                                            description: s.description.clone(),
+                                                            status,
+                                                        }
+                                                    })
+                                                    .collect();
+                                                if !plan_steps.is_empty() {
+                                                    tracing::info!("[SSE] Forwarding {} plan steps to IDE", plan_steps.len());
+                                                    core_rpc.agent_plan(plan_steps);
+                                                }
+                                            }
+                                            
+                                            // IDE tool calls needed
+                                            SseEvent::RequiresAction { tool_calls } => {
+                                                tracing::info!("[SSE] Requires IDE action: {} tool calls", tool_calls.len());
+                                                final_status = "requires_action".to_string();
+                                                ide_tool_calls = tool_calls.iter().map(|tc| {
+                                                    serde_json::json!({
+                                                        "id": tc.id,
+                                                        "name": tc.name,
+                                                        "args": tc.args,
+                                                    })
+                                                }).collect();
+                                            }
+                                            
+                                            // Stream complete
+                                            SseEvent::Done { answer } => {
+                                                if let Some(ans) = answer {
+                                                    if final_answer.is_empty() {
+                                                        final_answer = ans;
+                                                    }
+                                                }
+                                                tracing::info!("[SSE] Stream complete");
+                                                break;
+                                            }
+                                            
+                                            // Error occurred
+                                            SseEvent::Error { error } => {
+                                                tracing::error!("[SSE] Stream error: {}", error);
+                                                core_rpc.agent_error(error.clone());
+                                                proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentError { error }));
+                                                return;
+                                            }
                                         }
                                     }
                                     
-                                    // Send answer text to UI
-                                    if !answer.is_empty() {
-                                        core_rpc.agent_text_chunk(answer.to_string(), false);
-                                    }
-                                    
-                                    // Check for tool calls that need IDE execution
-                                    if status == "requires_action" {
-                                        if let Some(tcs) = server_tool_calls {
+                                    // Now handle IDE tool calls if needed (same logic as before)
+                                    if final_status == "requires_action" && !ide_tool_calls.is_empty() {
                                             let mut has_tool_calls = false;
                                             
                                             // ── Parallel Execution for Safe Tools ──
@@ -2432,7 +2488,7 @@ impl ProxyHandler for Dispatcher {
                                             let mut safe_calls = Vec::new();
                                             let mut risky_calls = Vec::new();
                                             
-                                            for tc_val in tcs {
+                                            for tc_val in &ide_tool_calls {
                                                 let tc_id = tc_val.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
                                                 let tc_name = tc_val.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                                                 let tc_args = tc_val.get("args").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
@@ -2766,7 +2822,7 @@ impl ProxyHandler for Dispatcher {
                                     // Done
                                     core_rpc.agent_text_chunk(String::new(), true);
                                     proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
-                                        message: answer.to_string(),
+                                        message: final_answer.clone(),
                                     }));
                                     return;
                                 }
