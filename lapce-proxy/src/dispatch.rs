@@ -2397,7 +2397,7 @@ impl ProxyHandler for Dispatcher {
                                             // Agent reasoning/thinking
                                             SseEvent::Thinking { step_type, message, detail } => {
                                                 tracing::debug!("[SSE] Thinking: {}: {}", step_type, &message[..message.len().min(50)]);
-                                                core_rpc.agent_thinking_step(step_type, message, detail.unwrap_or_default());
+                                                core_rpc.agent_thinking_step(step_type, message, detail);
                                             }
                                             
                                             // Server tool execution started
@@ -2816,7 +2816,6 @@ impl ProxyHandler for Dispatcher {
                                             if has_tool_calls {
                                                 continue; // Loop back to send results to server
                                             }
-                                        }
                                     }
                                     
                                     // Done
