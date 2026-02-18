@@ -3416,6 +3416,27 @@ async fn execute_ide_tool(
             
             forge_agent::tools::ToolResult::ok(format!("✓ {}", desc))
         }
+        // ── Git tool: execute git operations ──────────
+        "git" => {
+            let operation = tc.args.get("operation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            
+            if operation.is_empty() {
+                return forge_agent::tools::ToolResult::err(
+                    "Missing 'operation' parameter. Valid: status, stage, unstage, commit, push, pull, branch, log, diff"
+                );
+            }
+            
+            // For now, execute git commands via the standard tool execution
+            // In the future, we can add RPC calls to use IDE's native git
+            let tool_call_obj = forge_agent::tools::ToolCall {
+                name: tc.name.clone(),
+                arguments: tc.args.clone(),
+                thought_signature: None,
+            };
+            forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
+        }
         // ── All other tools: use standard execution ──────────────
         _ => {
             let tool_call_obj = forge_agent::tools::ToolCall {
