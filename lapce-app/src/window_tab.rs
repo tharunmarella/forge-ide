@@ -3092,6 +3092,11 @@ impl WindowTabData {
                 
                 // Execute through the IDE's run system
                 self.run_and_debug(cx, &run_mode, &config);
+                
+                // Ensure Terminal panel is visible at bottom
+                if !self.panel.is_panel_visible(&PanelKind::Terminal) {
+                    self.toggle_panel_visual_at_position(PanelKind::Terminal, PanelPosition::BottomLeft);
+                }
             }
             CoreNotification::AgentStopProject { config_name } => {
                 // Agent wants to stop a running project

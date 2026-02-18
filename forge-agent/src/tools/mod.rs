@@ -8,6 +8,7 @@ pub mod lint;
 mod display;
 mod run_config;
 mod git;
+mod sdk_manager;
 
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
@@ -23,6 +24,7 @@ pub use process::*;
 pub use display::*;
 pub use run_config::*;
 pub use git::*;
+pub use sdk_manager::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
 pub use search::ensure_indexed;
@@ -71,6 +73,9 @@ pub enum Tool {
     // Git operations
     Git,
     
+    // SDK Management
+    SdkManager,
+    
     // Interaction
     AttemptCompletion,
     AskFollowupQuestion,
@@ -114,6 +119,7 @@ impl Tool {
             Self::RunProject => "run_project",
             Self::StopProject => "stop_project",
             Self::Git => "git",
+            Self::SdkManager => "sdk_manager",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -154,6 +160,7 @@ impl Tool {
             "run_project" => Some(Self::RunProject),
             "stop_project" => Some(Self::StopProject),
             "git" => Some(Self::Git),
+            "sdk_manager" => Some(Self::SdkManager),
             "attempt_completion" => Some(Self::AttemptCompletion),
             "ask_followup_question" => Some(Self::AskFollowupQuestion),
             "think" => Some(Self::Think),
@@ -376,6 +383,7 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::RunProject => run_config::run_project(&tool.arguments, workdir).await,
         Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
         Tool::Git => git::git(&tool.arguments, workdir).await,
+        Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
         
         // These are handled specially by the agent
         Tool::AttemptCompletion 
@@ -817,6 +825,33 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                     "staged": { 
                         "type": "boolean", 
                         "description": "Show staged changes (for diff operation, default: false)" 
+                    }
+                },
+                "required": ["operation"]
+            }
+        }),
+        serde_json::json!({
+            "name": "sdk_manager",
+            "description": "Manage development tools and runtimes (Node.js, Python, Rust, Go, etc.) via proto. Better than raw commands - handles cross-platform installation, version management, and project detection automatically. Operations: install, list_installed, list_available, detect_project, uninstall, versions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": { 
+                        "type": "string", 
+                        "enum": ["install", "list_installed", "list_available", "detect_project", "uninstall", "versions"],
+                        "description": "SDK management operation to perform" 
+                    },
+                    "tool": { 
+                        "type": "string", 
+                        "description": "Tool name (e.g., 'node', 'python', 'rust', 'go')" 
+                    },
+                    "version": { 
+                        "type": "string",
+                        "description": "Specific version to install/uninstall (e.g., '18.0.0', 'latest')" 
+                    },
+                    "pin": {
+                        "type": "boolean",
+                        "description": "Whether to pin the installed version (make it available in PATH). Defaults to true."
                     }
                 },
                 "required": ["operation"]
