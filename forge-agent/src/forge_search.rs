@@ -532,12 +532,19 @@ impl ForgeSearchClient {
 /// SSE format: "data: {json}\n\n" for each event.
 fn parse_sse_events(data: &str) -> Vec<SseEvent> {
     let mut events = Vec::new();
+    let mut current_event_type: Option<String> = None;
     
     for line in data.lines() {
         let line = line.trim();
         
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        
+        // Parse "event: <type>" lines
+        if let Some(event_type) = line.strip_prefix("event:") {
+            current_event_type = Some(event_type.trim().to_string());
             continue;
         }
         
@@ -548,17 +555,36 @@ fn parse_sse_events(data: &str) -> Vec<SseEvent> {
             // Handle [DONE] marker (OpenAI style)
             if json_str == "[DONE]" {
                 events.push(SseEvent::Done { answer: None });
+                current_event_type = None;
                 continue;
             }
             
-            // Parse JSON event
-            match serde_json::from_str::<SseEvent>(json_str) {
-                Ok(event) => events.push(event),
-                Err(e) => {
-                    tracing::warn!("Failed to parse SSE event: {} - {}", e, json_str);
-                    // Try to extract as raw text delta if it looks like text
-                    if !json_str.is_empty() && !json_str.starts_with('{') {
-                        events.push(SseEvent::TextDelta { text: json_str.to_string() });
+            // Parse JSON data based on event type
+            if let Some(ref event_type) = current_event_type {
+                match parse_sse_event_with_type(event_type, json_str) {
+                    Ok(event) => {
+                        events.push(event);
+                        current_event_type = None; // Reset after successful parse
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse SSE event type '{}': {} - {}", event_type, e, json_str);
+                        // Try to extract as raw text delta if it looks like text
+                        if !json_str.is_empty() && !json_str.starts_with('{') {
+                            events.push(SseEvent::TextDelta { text: json_str.to_string() });
+                        }
+                        current_event_type = None;
+                    }
+                }
+            } else {
+                // Fallback: try to parse as the old format with type embedded in JSON
+                match serde_json::from_str::<SseEvent>(json_str) {
+                    Ok(event) => events.push(event),
+                    Err(e) => {
+                        tracing::warn!("Failed to parse SSE event (no event type): {} - {}", e, json_str);
+                        // Try to extract as raw text delta if it looks like text
+                        if !json_str.is_empty() && !json_str.starts_with('{') {
+                            events.push(SseEvent::TextDelta { text: json_str.to_string() });
+                        }
                     }
                 }
             }
@@ -566,6 +592,104 @@ fn parse_sse_events(data: &str) -> Vec<SseEvent> {
     }
     
     events
+}
+
+/// Public test function for SSE parsing
+#[cfg(test)]
+pub fn parse_sse_events_test(data: &str) -> Vec<SseEvent> {
+    parse_sse_events(data)
+}
+
+fn parse_sse_event_with_type(event_type: &str, json_str: &str) -> Result<SseEvent, serde_json::Error> {
+    match event_type {
+        "thinking" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            Ok(SseEvent::Thinking {
+                step_type: data.get("step_type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                message: data.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                detail: data.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            })
+        }
+        "tool_start" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            Ok(SseEvent::ToolStart {
+                tool_call_id: data.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                tool_name: data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                arguments: data.get("arguments").cloned().unwrap_or(serde_json::Value::Null),
+            })
+        }
+        "tool_end" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            Ok(SseEvent::ToolEnd {
+                tool_call_id: data.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                tool_name: data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                result_summary: data.get("result_summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                success: data.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+        }
+        "text_delta" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            Ok(SseEvent::TextDelta {
+                text: data.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            })
+        }
+        "plan" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            let steps = data.get("steps")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .enumerate()
+                        .filter_map(|(i, step)| {
+                            Some(SsePlanStep {
+                                number: step.get("number").and_then(|v| v.as_u64()).unwrap_or(i as u64 + 1) as u32,
+                                description: step.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                status: step.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string(),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(SseEvent::Plan { steps })
+        }
+        "requires_action" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            let tool_calls = data.get("tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|tc| {
+                            Some(ToolCallInfo {
+                                id: tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                name: tc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                args: tc.get("args").cloned().unwrap_or(serde_json::Value::Object(Default::default())),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(SseEvent::RequiresAction { tool_calls })
+        }
+        "done" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            Ok(SseEvent::Done {
+                answer: data.get("answer").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            })
+        }
+        "error" => {
+            let data: serde_json::Value = serde_json::from_str(json_str)?;
+            Ok(SseEvent::Error {
+                error: data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string(),
+            })
+        }
+        _ => {
+            // Unknown event type, return an error
+            Err(serde_json::Error::io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Unknown event type: {}", event_type)
+            )))
+        }
+    }
 }
 
 // ── Index Result ─────────────────────────────────────────────────
@@ -693,4 +817,81 @@ fn jwt_claim(token: &str, claim: &str) -> Option<String> {
     let payload_bytes = engine.decode(parts[1]).ok()?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
     payload.get(claim)?.as_str().map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sse_parsing_with_forge_search_format() {
+        let test_data = r#"event: thinking
+data: {"step_type": "start", "message": "Processing request...", "detail": ""}
+
+event: text_delta
+data: {"text": "Hello"}
+
+event: text_delta
+data: {"text": " world"}
+
+event: tool_start
+data: {"tool_call_id": "123", "tool_name": "search_files", "arguments": {"query": "test"}}
+
+event: tool_end
+data: {"tool_call_id": "123", "tool_name": "search_files", "result_summary": "Found 5 files", "success": true}
+
+event: done
+data: {"answer": "Task completed successfully"}
+"#;
+
+        let events = parse_sse_events(test_data);
+        
+        assert_eq!(events.len(), 6);
+        
+        // Check thinking event
+        if let SseEvent::Thinking { step_type, message, .. } = &events[0] {
+            assert_eq!(step_type, "start");
+            assert_eq!(message, "Processing request...");
+        } else {
+            panic!("Expected Thinking event, got {:?}", events[0]);
+        }
+        
+        // Check text delta events
+        if let SseEvent::TextDelta { text } = &events[1] {
+            assert_eq!(text, "Hello");
+        } else {
+            panic!("Expected TextDelta event, got {:?}", events[1]);
+        }
+        
+        if let SseEvent::TextDelta { text } = &events[2] {
+            assert_eq!(text, " world");
+        } else {
+            panic!("Expected TextDelta event, got {:?}", events[2]);
+        }
+        
+        // Check tool start event
+        if let SseEvent::ToolStart { tool_call_id, tool_name, .. } = &events[3] {
+            assert_eq!(tool_call_id, "123");
+            assert_eq!(tool_name, "search_files");
+        } else {
+            panic!("Expected ToolStart event, got {:?}", events[3]);
+        }
+        
+        // Check tool end event
+        if let SseEvent::ToolEnd { tool_call_id, tool_name, result_summary, success } = &events[4] {
+            assert_eq!(tool_call_id, "123");
+            assert_eq!(tool_name, "search_files");
+            assert_eq!(result_summary, "Found 5 files");
+            assert_eq!(*success, true);
+        } else {
+            panic!("Expected ToolEnd event, got {:?}", events[4]);
+        }
+        
+        // Check done event
+        if let SseEvent::Done { answer } = &events[5] {
+            assert_eq!(answer.as_ref().unwrap(), "Task completed successfully");
+        } else {
+            panic!("Expected Done event, got {:?}", events[5]);
+        }
+    }
 }
