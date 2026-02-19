@@ -34,7 +34,7 @@ use super::position::PanelPosition;
 use crate::{
     ai_chat::{
         AiChatData, ChatEntry, ChatEntryKind, ChatRole, ChatToolCall, ToolCallStatus,
-        ChatThinkingStep, ChatPlan, ChatPlanStep, ChatPlanStepStatus, ChatServerToolCall,
+        ChatPlan, ChatPlanStep, ChatPlanStepStatus, ChatServerToolCall,
         ALL_PROVIDERS, models_for_provider,
     },
     config::{color::LapceColor, icon::LapceIcons},
@@ -645,16 +645,24 @@ fn chat_message_list(
 ) -> impl View {
     let entries = chat_data.entries;
     let chat_data_dropdown = chat_data.clone();
-    let chat_data_thinking = chat_data.clone();
     let is_loading = chat_data.is_loading;
     let has_first_token = chat_data.has_first_token;
     let streaming_text = chat_data.streaming_text;
     let scroll_trigger = chat_data.scroll_trigger;
 
+    // Session-level auto-approve flag — shared across all approval cards in this view.
+    let auto_approve_session = floem::reactive::create_rw_signal(false);
+
+    // Track the actual pixel width of the panel so text can be pre-wrapped.
+    // Scroll containers give children unconstrained horizontal width in taffy,
+    // so rich_text's built-in wrapping never fires. We fix this by pre-calling
+    // text_layout.set_size(panel_width) before the layout pass.
+    let panel_width = floem::reactive::create_rw_signal(0.0_f64);
+
     stack((
         // ── Dropdown overlay (shown when dropdown_open is true) ──
         model_dropdown_panel(config, chat_data_dropdown),
-        // ── Messages + thinking section + streaming indicator ──
+        // ── Messages + streaming indicator ──
         scroll(
             stack((
                 // ── Chat entries ──
@@ -666,40 +674,49 @@ fn chat_message_list(
                     |entry: &ChatEntry| entry.key(),
                     {
                         let proxy = proxy.clone();
-                        move |entry| chat_entry_view(config, entry, internal_command, proxy.clone())
+                        move |entry| chat_entry_view(config, entry, internal_command, proxy.clone(), panel_width, auto_approve_session)
                     },
                 )
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
 
-                // ── Collapsible thinking section ──
-                // Shows server-side activity (thinking steps, server tool calls, plan).
-                // Auto-collapses when the final answer arrives.
-                thinking_section(config, chat_data_thinking, internal_command, proxy.clone()),
-
-                // ── Streaming text preview (plain text, fast) ──
+                // ── Streaming text preview (rich text, pre-wrapped) ──
                 // Shown while the assistant is actively streaming.
-                // This avoids re-parsing markdown on every chunk.
+                // Uses panel_width to pre-set TextLayout size since scroll containers
+                // give children unconstrained width and rich_text can't auto-wrap.
                 {
-                    label(move || {
-                        let text = streaming_text.get();
-                        if text.is_empty() {
-                            String::new()
-                        } else {
-                            text
-                        }
-                    })
+                    container(
+                        rich_text(move || {
+                            let text = streaming_text.get();
+                            if text.is_empty() {
+                                return TextLayout::new();
+                            }
+                            let config = config.get();
+                            let font_size = (config.ui.font_size() as f32 - 2.0).max(11.0);
+                            let mut text_layout = TextLayout::new();
+                            let attrs = Attrs::new()
+                                .font_size(font_size)
+                                .line_height(LineHeightValue::Normal(1.5))
+                                .color(config.color(LapceColor::EDITOR_FOREGROUND));
+                            text_layout.set_text(&text, AttrsList::new(attrs), None);
+                            // Pre-wrap at the actual panel pixel width (minus padding)
+                            let w = panel_width.get() as f32;
+                            if w > 40.0 {
+                                text_layout.set_size(w - 40.0, f32::MAX);
+                            }
+                            text_layout
+                        })
+                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                    )
                     .style(move |s| {
                         let config = config.get();
                         let text = streaming_text.get();
                         let loading = is_loading.get();
                         let has_token = has_first_token.get();
                         let show = loading && has_token && !text.is_empty();
-                        s.font_size((config.ui.font_size() as f32 - 2.0).max(11.0))
-                            .width_pct(100.0)
+                        s.width_pct(100.0)
                             .min_width(0.0)
                             .padding_horiz(10.0)
                             .padding_vert(6.0)
-                            .color(config.color(LapceColor::EDITOR_FOREGROUND))
                             .background(config.color(LapceColor::EDITOR_BACKGROUND))
                             .apply_if(!show, |s| s.hide())
                     })
@@ -735,12 +752,21 @@ fn chat_message_list(
                 .set(floem::style::OverflowX, floem::taffy::style::Overflow::Hidden)
         }),
     ))
+    .on_resize(move |rect| {
+        // Update the tracked panel width whenever the outer container resizes.
+        // This triggers re-computation of all rich_text closures that read panel_width,
+        // which pre-calls set_size() on their TextLayouts and requests a re-layout.
+        let w = rect.width();
+        if (panel_width.get_untracked() - w).abs() > 1.0 {
+            panel_width.set(w);
+        }
+    })
     .style(|s| {
         s.flex_col()
             .flex_grow(1.0)
             .flex_basis(0.0)
             .width_pct(100.0)
-            .min_width(0.0) // Allow shrinking below content width
+            .min_width(0.0)
     })
 }
 
@@ -866,15 +892,17 @@ fn chat_entry_view(
     entry: ChatEntry,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
     proxy: lapce_rpc::proxy::ProxyRpcHandler,
+    panel_width: floem::reactive::RwSignal<f64>,
+    auto_approve_session: floem::reactive::RwSignal<bool>,
 ) -> impl View {
     match entry.kind {
         ChatEntryKind::Message { role, content } => {
-            message_bubble(config, role, content).into_any()
+            message_bubble(config, role, content, panel_width).into_any()
         }
         ChatEntryKind::ToolCall(tc) => {
-            // Approval-pending tools get Accept/Reject buttons
+            // Approval-pending tools get Accept/Reject/Approve-All buttons
             if tc.status == ToolCallStatus::WaitingApproval || tc.status == ToolCallStatus::AwaitingReview {
-                return approval_card(config, tc, proxy, internal_command).into_any();
+                return approval_card(config, tc, proxy, internal_command, auto_approve_session).into_any();
             }
             // File-related tools get a special clickable file block
             let is_file_tool = matches!(
@@ -887,14 +915,9 @@ fn chat_entry_view(
                 tool_call_card(config, tc).into_any()
             }
         }
-        ChatEntryKind::ThinkingStep(step) => {
-            thinking_step_view(config, step).into_any()
-        }
-        ChatEntryKind::Plan(plan) => {
-            plan_view(config, plan).into_any()
-        }
-        ChatEntryKind::ServerToolCall(tc) => {
-            server_tool_call_view(config, tc).into_any()
+        ChatEntryKind::ThinkingStep(_) | ChatEntryKind::Plan(_) | ChatEntryKind::ServerToolCall(_) => {
+            // These entry types were used by the removed thinking section — render nothing.
+            empty().into_any()
         }
     }
 }
@@ -912,6 +935,7 @@ fn message_bubble(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     role: ChatRole,
     content: String,
+    panel_width: floem::reactive::RwSignal<f64>,
 ) -> impl View {
     let is_user = role == ChatRole::User;
     let is_system = role == ChatRole::System;
@@ -957,8 +981,17 @@ fn message_bubble(
                         use crate::markdown::MarkdownContent;
                         match md_item {
                             MarkdownContent::Text(text_layout) => container(
-                                rich_text(move || text_layout.clone())
-                                    .style(|s| s.width_pct(100.0).min_width(0.0)),
+                                rich_text(move || {
+                                    // Pre-wrap at actual pixel width to work around scroll
+                                    // containers giving children unconstrained horizontal space.
+                                    let mut layout = text_layout.clone();
+                                    let w = panel_width.get() as f32;
+                                    if w > 60.0 {
+                                        layout.set_size(w - 60.0, f32::MAX);
+                                    }
+                                    layout
+                                })
+                                .style(|s| s.width_pct(100.0).min_width(0.0)),
                             )
                             .style(|s| s.width_pct(100.0).min_width(0.0))
                             .into_any(),
@@ -1030,13 +1063,14 @@ fn message_bubble(
                         s.font_size((config.ui.font_size() as f32).max(13.0))
                             .width_pct(100.0)
                             .min_width(0.0)
+                            .max_width_pct(100.0)
                             .line_height(1.5)
                             .color(config.color(LapceColor::EDITOR_FOREGROUND))
                     })
                     .into_any()
             },
         ))
-        .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
+        .style(|s| s.flex_col().width_pct(100.0).min_width(0.0).max_width_pct(100.0)),
     )
     .style(move |s| {
         let config = config.get();
@@ -1044,6 +1078,7 @@ fn message_bubble(
             .padding_vert(6.0)
             .width_pct(100.0)
             .min_width(0.0)
+            .max_width_pct(100.0)
             .margin_horiz(8.0)
             .border_bottom(1.0)
             .border_color(
@@ -1242,13 +1277,16 @@ fn approval_card(
     tc: ChatToolCall,
     proxy: lapce_rpc::proxy::ProxyRpcHandler,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+    auto_approve_session: floem::reactive::RwSignal<bool>,
 ) -> impl View {
     let tool_name = tc.name.clone();
     let summary = tc.output.clone().unwrap_or_else(|| format!("Execute: {}", tool_name));
     let tc_id = tc.id.clone();
     let tc_id_reject = tc.id.clone();
+    let tc_id_approve_all = tc.id.clone();
     let proxy_accept = proxy.clone();
     let proxy_reject = proxy.clone();
+    let proxy_approve_all = proxy.clone();
 
     // Extract file path from arguments for "View" button (for file-related tools)
     let file_path: Option<std::path::PathBuf> = serde_json::from_str::<serde_json::Value>(&tc.arguments)
@@ -1434,6 +1472,54 @@ fn approval_card(
                                     config.color(LapceColor::PANEL_HOVERED_BACKGROUND)
                                 ))
                         }),
+
+                    // "Approve All Future" — auto-approves everything in this session
+                    // except dangerous ops (delete_file). Hidden once already active.
+                    label(move || {
+                        if auto_approve_session.get() {
+                            "✓ Auto-approving".to_string()
+                        } else {
+                            "Approve All Future".to_string()
+                        }
+                    })
+                    .on_click_stop(move |_| {
+                        if !auto_approve_session.get_untracked() {
+                            auto_approve_session.set(true);
+                            // Approve current tool call + tell proxy to enable session auto-approve
+                            proxy_approve_all.request_async(
+                                lapce_rpc::proxy::ProxyRequest::AgentApproveToolCall {
+                                    tool_call_id: tc_id_approve_all.clone(),
+                                },
+                                |_| {},
+                            );
+                            proxy_approve_all.request_async(
+                                lapce_rpc::proxy::ProxyRequest::AgentApproveAllFuture {},
+                                |_| {},
+                            );
+                        }
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        let active = auto_approve_session.get();
+                        s.margin_left(8.0)
+                            .padding_horiz(14.0)
+                            .padding_vert(4.0)
+                            .border_radius(4.0)
+                            .font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                            .border(1.0)
+                            .cursor(if active { CursorStyle::Default } else { CursorStyle::Pointer })
+                            .apply_if(active, |s| {
+                                s.color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                                    .border_color(config.color(LapceColor::LAPCE_ICON_ACTIVE).multiply_alpha(0.4))
+                            })
+                            .apply_if(!active, |s| {
+                                s.color(config.color(LapceColor::PANEL_FOREGROUND).multiply_alpha(0.7))
+                                    .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.5))
+                                    .hover(|s| s.background(
+                                        config.color(LapceColor::PANEL_HOVERED_BACKGROUND)
+                                    ))
+                            })
+                    }),
                 ))
                 .style(move |s| {
                     s.flex_row()
@@ -1830,10 +1916,11 @@ fn tool_call_card(
     })
 }
 
-/// View for a thinking step (server-side activity).
+/// View for a thinking step (server-side activity) — kept for pattern matching but not rendered.
+#[allow(dead_code)]
 fn thinking_step_view(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
-    step: ChatThinkingStep,
+    step: crate::ai_chat::ChatThinkingStep,
 ) -> impl View {
     // Icon based on step type
     let icon = match step.step_type.as_str() {
@@ -2066,109 +2153,6 @@ fn server_tool_call_view(
     })
 }
 
-/// Collapsible thinking section that groups all thinking steps and server tool calls.
-fn thinking_section(
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
-    chat_data: AiChatData,
-    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
-    proxy: lapce_rpc::proxy::ProxyRpcHandler,
-) -> impl View {
-    let thinking_steps = chat_data.thinking_steps;
-    let thinking_collapsed = chat_data.thinking_collapsed;
-
-    container(
-        stack((
-            // ── Header (clickable to toggle collapse) ──
-            stack((
-                // Chevron
-                label(move || {
-                    if thinking_collapsed.get() { "\u{25B6}" } else { "\u{25BC}" }.to_string()
-                })
-                .style(move |s| {
-                    let config = config.get();
-                    s.font_size(8.0)
-                        .margin_right(6.0)
-                        .color(config.color(LapceColor::EDITOR_DIM))
-                }),
-                // Title
-                label(move || "Thinking...".to_string()).style(move |s| {
-                    let config = config.get();
-                    s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
-                        .font_bold()
-                        .color(config.color(LapceColor::EDITOR_DIM))
-                }),
-                // Summary (shown when collapsed)
-                {
-                    label(move || {
-                        let steps = thinking_steps.get();
-                        let count = steps.len();
-                        if count == 0 {
-                            String::new()
-                        } else {
-                            format!("({} steps)", count)
-                        }
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        let collapsed = thinking_collapsed.get();
-                        s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                            .margin_left(8.0)
-                            .color(config.color(LapceColor::EDITOR_DIM).multiply_alpha(0.7))
-                            .apply_if(!collapsed, |s| s.hide())
-                    })
-                },
-            ))
-            .on_click_stop(move |_| {
-                thinking_collapsed.update(|v| *v = !*v);
-            })
-            .style(move |s| {
-                s.items_center()
-                    .width_pct(100.0)
-                    .padding_vert(4.0)
-                    .cursor(CursorStyle::Pointer)
-            }),
-
-            // ── Content (hidden when collapsed) ──
-            {
-                container(
-                    dyn_stack(
-                        move || {
-                            let steps = thinking_steps.get();
-                            steps.iter().cloned().collect::<Vec<_>>()
-                        },
-                        |entry: &ChatEntry| entry.key(),
-                        {
-                            let proxy = proxy.clone();
-                            move |entry| chat_entry_view(config, entry, internal_command, proxy.clone())
-                        },
-                    )
-                    .style(|s| s.flex_col().width_pct(100.0)),
-                )
-                .style(move |s| {
-                    let collapsed = thinking_collapsed.get();
-                    s.width_pct(100.0)
-                        .apply_if(collapsed, |s| s.hide())
-                })
-            },
-        ))
-        .style(|s| s.flex_col().width_pct(100.0)),
-    )
-    .style(move |s| {
-        let config = config.get();
-        let steps = thinking_steps.get();
-        let is_empty = steps.is_empty();
-        s.padding_horiz(8.0)
-            .padding_vert(4.0)
-            .margin_horiz(4.0)
-            .margin_vert(4.0)
-            .width_pct(100.0)
-            .min_width(0.0)
-            .border(1.0)
-            .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.3))
-            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.2))
-            .apply_if(is_empty, |s| s.hide())
-    })
-}
 
 /// Chat input area using the shared editor from AiChatData.
 fn chat_input_area(

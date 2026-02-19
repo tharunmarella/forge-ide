@@ -478,6 +478,8 @@ pub enum ProxyRequest {
     AgentRejectToolCall {
         tool_call_id: String,
     },
+    /// Auto-approve all future tool calls this session (except dangerous ones like delete_file).
+    AgentApproveAllFuture {},
 
     // ── AI Diff Accept/Reject ────────────────────────────
     /// Accept an AI-proposed diff (write the new content to disk).

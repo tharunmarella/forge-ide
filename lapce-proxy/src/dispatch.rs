@@ -70,6 +70,9 @@ pub struct Dispatcher {
     /// Pending approval channels: tool_call_id -> oneshot sender (true=approved, false=rejected).
     /// The agent loop awaits on the receiver; the UI sends approve/reject via ProxyRequest.
     pending_approvals: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    /// When true, all future tool calls are auto-approved (except dangerous ones like delete_file).
+    /// Set by AgentApproveAllFuture and cleared when a new agent session starts.
+    auto_approve_session: Arc<std::sync::atomic::AtomicBool>,
     /// Manages terminals created by the AI agent (visible in terminal panel).
     agent_terminal_mgr: Arc<AgentTerminalManager>,
 }
@@ -2281,6 +2284,9 @@ impl ProxyHandler for Dispatcher {
                 let workspace = self.workspace.clone();
                 let diff_snapshots = self.pending_diff_snapshots.clone();
                 let pending_approvals = self.pending_approvals.clone();
+                let auto_approve_session = self.auto_approve_session.clone();
+                // Reset auto-approve at the start of each new agent session
+                auto_approve_session.store(false, std::sync::atomic::Ordering::Relaxed);
                 let agent_term_mgr = self.agent_terminal_mgr.clone();
                 let ide_terminals = self.terminals.clone();
                 let _ = (provider, model, api_key); // Unused — all LLM calls go through forge-search
@@ -2389,6 +2395,9 @@ impl ProxyHandler for Dispatcher {
                                     let mut final_answer = String::new();
                                     let mut final_status = String::from("done");
                                     let mut ide_tool_calls: Vec<serde_json::Value> = Vec::new();
+                                    // Track whether any text arrived via text_delta so we can
+                                    // detect silent loss and fall back to done.answer.
+                                    let mut streamed_any_text = false;
                                     
                                     while let Some(event) = stream.next().await {
                                         use forge_agent::forge_search::SseEvent;
@@ -2400,10 +2409,21 @@ impl ProxyHandler for Dispatcher {
                                                 core_rpc.agent_thinking_step(step_type, message, detail);
                                             }
                                             
-                                            // Server tool execution started
+                                            // Server tool execution started.
+                                            // arguments is a JSON object — pretty-print it as a
+                                            // compact JSON string for display in the tool card.
                                             SseEvent::ToolStart { tool_call_id, tool_name, arguments } => {
                                                 tracing::info!("[SSE] Server tool starting: {} (id={})", tool_name, tool_call_id);
-                                                let args_str = arguments.to_string();
+                                                let args_str = match &arguments {
+                                                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                                                        serde_json::to_string(&arguments).unwrap_or_default()
+                                                    }
+                                                    serde_json::Value::String(s) => {
+                                                        // Already a string — use as-is (handles legacy double-encoded args)
+                                                        s.clone()
+                                                    }
+                                                    other => other.to_string(),
+                                                };
                                                 core_rpc.agent_server_tool_start(tool_call_id, tool_name, args_str);
                                             }
                                             
@@ -2415,9 +2435,12 @@ impl ProxyHandler for Dispatcher {
                                             
                                             // Incremental text output
                                             SseEvent::TextDelta { text } => {
-                                                tracing::debug!("[SSE] Text delta: {} chars", text.len());
-                                                core_rpc.agent_text_chunk(text.clone(), false);
-                                                final_answer.push_str(&text);
+                                                if !text.is_empty() {
+                                                    tracing::debug!("[SSE] Text delta: {} chars", text.len());
+                                                    core_rpc.agent_text_chunk(text.clone(), false);
+                                                    final_answer.push_str(&text);
+                                                    streamed_any_text = true;
+                                                }
                                             }
                                             
                                             // Agent's plan steps
@@ -2463,7 +2486,7 @@ impl ProxyHandler for Dispatcher {
                                                         final_answer = ans;
                                                     }
                                                 }
-                                                tracing::info!("[SSE] Stream complete");
+                                                tracing::info!("[SSE] Stream complete (streamed_text={})", streamed_any_text);
                                                 break;
                                             }
                                             
@@ -2475,6 +2498,16 @@ impl ProxyHandler for Dispatcher {
                                                 return;
                                             }
                                         }
+                                    }
+                                    
+                                    // Fallback: if no text_delta events arrived but the done event
+                                    // carried an answer (e.g. all chunks were split at boundaries and
+                                    // the buffer fix wasn't enough, or the server sent the answer
+                                    // only in done.answer), push it as a single text chunk so the
+                                    // UI always shows something.
+                                    if !streamed_any_text && !final_answer.is_empty() {
+                                        tracing::warn!("[SSE] No text_delta events received — using done.answer as fallback ({} chars)", final_answer.len());
+                                        core_rpc.agent_text_chunk(final_answer.clone(), false);
                                     }
                                     
                                     // Now handle IDE tool calls if needed (same logic as before)
@@ -2603,6 +2636,9 @@ impl ProxyHandler for Dispatcher {
                                                 }
                                             }
                                             
+                                            // Tools that always require explicit approval even when auto-approve is on
+                                            const ALWAYS_ASK: &[&str] = &["delete_file"];
+
                                             // 2. Execute risky calls sequentially
                                             for (tc_id, tc_name, tc_args, is_file_edit) in risky_calls {
                                                 let args_json = serde_json::to_string(&tc_args).unwrap_or_default();
@@ -2685,11 +2721,27 @@ impl ProxyHandler for Dispatcher {
                                                         output: Some(format!("{} — Accept to keep, Reject to revert", summary)),
                                                     });
                                                     
-                                                    // Wait for user review
-                                                    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-                                                    pending_approvals.lock().insert(tc_id.clone(), tx);
-                                                    let approved = rx.await.unwrap_or(false);
-                                                    
+                                                    // Wait for user review (skip if auto-approve is on)
+                                                    // delete_file is always dangerous — always ask
+                                                    let approved = if auto_approve_session.load(std::sync::atomic::Ordering::Relaxed)
+                                                        && !ALWAYS_ASK.contains(&tc_name.as_str())
+                                                    {
+                                                        tracing::info!("Auto-approving {} (session auto-approve)", tc_name);
+                                                        diff_snapshots.lock().remove(&tc_id);
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc_id.clone(),
+                                                            tool_name: tc_name.clone(),
+                                                            arguments: String::new(),
+                                                            status: "accepted".to_string(),
+                                                            output: Some("Auto-approved".to_string()),
+                                                        });
+                                                        true
+                                                    } else {
+                                                        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                                                        pending_approvals.lock().insert(tc_id.clone(), tx);
+                                                        rx.await.unwrap_or(false)
+                                                    };
+
                                                     if !approved {
                                                         // User rejected — revert from snapshot
                                                         if let Some((rel_path, old_content)) = diff_snapshots.lock().remove(&tc_id) {
@@ -2745,18 +2797,31 @@ impl ProxyHandler for Dispatcher {
                                                         _ => format!("Execute risky tool: {}", tc_name),
                                                     };
                                                     
-                                                    // Request approval
-                                                    core_rpc.notification(CoreNotification::AgentToolCallUpdate {
-                                                        tool_call_id: tc_id.clone(),
-                                                        tool_name: tc_name.clone(),
-                                                        arguments: args_json.clone(),
-                                                        status: "waiting_approval".to_string(),
-                                                        output: Some(format!("{} — Accept to run, Reject to skip", summary)),
-                                                    });
-                                                    
-                                                    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-                                                    pending_approvals.lock().insert(tc_id.clone(), tx);
-                                                    let approved = rx.await.unwrap_or(false);
+                                                    // Request approval (skip if auto-approve is on; delete_file always asks)
+                                                    let approved = if auto_approve_session.load(std::sync::atomic::Ordering::Relaxed)
+                                                        && !ALWAYS_ASK.contains(&tc_name.as_str())
+                                                    {
+                                                        tracing::info!("Auto-approving {} (session auto-approve)", tc_name);
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc_id.clone(),
+                                                            tool_name: tc_name.clone(),
+                                                            arguments: args_json.clone(),
+                                                            status: "running".to_string(),
+                                                            output: None,
+                                                        });
+                                                        true
+                                                    } else {
+                                                        core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                                                            tool_call_id: tc_id.clone(),
+                                                            tool_name: tc_name.clone(),
+                                                            arguments: args_json.clone(),
+                                                            status: "waiting_approval".to_string(),
+                                                            output: Some(format!("{} — Accept to run, Reject to skip", summary)),
+                                                        });
+                                                        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                                                        pending_approvals.lock().insert(tc_id.clone(), tx);
+                                                        rx.await.unwrap_or(false)
+                                                    };
                                                     
                                                     if !approved {
                                                         core_rpc.notification(CoreNotification::AgentToolCallUpdate {
@@ -2930,6 +2995,18 @@ impl ProxyHandler for Dispatcher {
                 }
                 self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
                     message: format!("Approved: {tool_call_id}"),
+                }));
+            }
+            AgentApproveAllFuture {} => {
+                tracing::info!("Auto-approve all future tool calls enabled for this session");
+                self.auto_approve_session.store(true, std::sync::atomic::Ordering::Relaxed);
+                // Also unblock any currently-pending approval
+                let senders: Vec<_> = self.pending_approvals.lock().drain().collect();
+                for (_id, sender) in senders {
+                    let _ = sender.send(true);
+                }
+                self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
+                    message: "Auto-approve enabled for this session".to_string(),
                 }));
             }
             AgentRejectToolCall { tool_call_id } => {
@@ -3574,6 +3651,7 @@ impl Dispatcher {
             db_manager: crate::database::connection_manager::ConnectionManager::new(),
             pending_diff_snapshots: Arc::new(Mutex::new(HashMap::new())),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
+            auto_approve_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             agent_terminal_mgr: Arc::new(AgentTerminalManager::new()),
         }
     }
