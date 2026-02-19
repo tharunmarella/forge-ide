@@ -1259,14 +1259,59 @@ fn create_terminal_text_layout(
     let mut text_layout = TextLayout::new();
     let family: Vec<FamilyOwned> = FamilyOwned::parse_list("monospace").collect();
     let font_size = (config.ui.font_size() as f32 - 1.0).max(11.0);
-    
+
     let attrs = Attrs::new()
         .family(&family)
         .font_size(font_size)
         .line_height(LineHeightValue::Normal(1.4))
         .color(config.color(LapceColor::EDITOR_FOREGROUND));
-        
+
     text_layout.set_text(text, AttrsList::new(attrs), None);
+    text_layout
+}
+
+/// Build a TextLayout for a diff string where lines starting with "+ " are green
+/// and lines starting with "- " are red. All other lines use the default foreground color.
+fn create_diff_text_layout(
+    diff_text: &str,
+    config: &crate::config::LapceConfig,
+) -> TextLayout {
+    let family: Vec<FamilyOwned> = FamilyOwned::parse_list("monospace").collect();
+    let font_size = (config.ui.font_size() as f32 - 2.0).max(10.0);
+    let default_color = config.color(LapceColor::EDITOR_FOREGROUND);
+    let added_color = config.color(LapceColor::TERMINAL_GREEN);
+    let removed_color = config.color(LapceColor::TERMINAL_RED);
+
+    let base_attrs = Attrs::new()
+        .family(&family)
+        .font_size(font_size)
+        .line_height(LineHeightValue::Normal(1.4))
+        .color(default_color);
+
+    let mut attrs_list = AttrsList::new(base_attrs.clone());
+
+    // Walk through the text byte-by-byte, tracking line spans for coloring.
+    let mut byte_pos = 0usize;
+    for line in diff_text.split('\n') {
+        let line_len = line.len();
+        let color_opt = if line.starts_with("+ ") {
+            Some(added_color)
+        } else if line.starts_with("- ") {
+            Some(removed_color)
+        } else {
+            None
+        };
+        if let Some(color) = color_opt {
+            attrs_list.add_span(
+                byte_pos..byte_pos + line_len,
+                base_attrs.clone().color(color),
+            );
+        }
+        byte_pos += line_len + 1; // +1 for the '\n' separator
+    }
+
+    let mut text_layout = TextLayout::new();
+    text_layout.set_text(diff_text, attrs_list, None);
     text_layout
 }
 
@@ -1288,39 +1333,90 @@ fn approval_card(
     let proxy_reject = proxy.clone();
     let proxy_approve_all = proxy.clone();
 
+    // Parse arguments once for all subsequent extractions
+    let args_value: Option<serde_json::Value> = serde_json::from_str(&tc.arguments).ok();
+
     // Extract file path from arguments for "View" button (for file-related tools)
-    let file_path: Option<std::path::PathBuf> = serde_json::from_str::<serde_json::Value>(&tc.arguments)
-        .ok()
+    let file_path: Option<std::path::PathBuf> = args_value
+        .as_ref()
         .and_then(|v| v.get("path").and_then(|p| p.as_str()).map(std::path::PathBuf::from));
     let has_file_path = file_path.is_some();
     let view_path = file_path.clone();
 
-    // For replace_in_file, also extract old_str to show in diff preview
-    let is_replace = tc.name == "replace_in_file";
-    let diff_preview: Option<String> = if is_replace {
-        serde_json::from_str::<serde_json::Value>(&tc.arguments)
-            .ok()
-            .and_then(|v| {
-                let old_str = v.get("old_str").and_then(|s| s.as_str())?;
-                let new_str = v.get("new_str").and_then(|s| s.as_str())?;
-                // Create a simple diff preview
-                let old_lines: Vec<&str> = old_str.lines().take(5).collect();
-                let new_lines: Vec<&str> = new_str.lines().take(5).collect();
-                let mut preview = String::new();
-                for line in &old_lines {
-                    preview.push_str(&format!("- {}\n", line));
-                }
-                if old_str.lines().count() > 5 {
-                    preview.push_str("  ...\n");
-                }
-                for line in &new_lines {
-                    preview.push_str(&format!("+ {}\n", line));
-                }
-                if new_str.lines().count() > 5 {
-                    preview.push_str("  ...\n");
-                }
-                Some(preview)
-            })
+    // Compute action header: "Verb: filename: description"
+    let action_verb = match tc.name.as_str() {
+        "replace_in_file" | "apply_patch" => "Edit",
+        "write_to_file" => "Write",
+        "delete_file" => "Delete",
+        "run_command" | "execute_command" | "bash" => "Run",
+        "rename_file" | "move_file" => "Rename",
+        _ => "Action",
+    };
+    let short_filename = args_value
+        .as_ref()
+        .and_then(|v| v.get("path").and_then(|p| p.as_str()))
+        .map(|p| {
+            std::path::Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(p)
+                .to_string()
+        })
+        .unwrap_or_else(|| tool_name.clone());
+    let action_desc = match tc.name.as_str() {
+        "replace_in_file" => {
+            let n = args_value
+                .as_ref()
+                .and_then(|v| v.get("old_str").and_then(|s| s.as_str()))
+                .map(|s| s.lines().count())
+                .unwrap_or(0);
+            format!("replaced {} line{}", n, if n == 1 { "" } else { "s" })
+        }
+        "write_to_file" => "created/updated file".to_string(),
+        "delete_file" => "deleted file".to_string(),
+        "apply_patch" => "applied patch".to_string(),
+        "run_command" | "execute_command" | "bash" => args_value
+            .as_ref()
+            .and_then(|v| v.get("command").and_then(|c| c.as_str()))
+            .unwrap_or("command")
+            .to_string(),
+        _ => tool_name.clone(),
+    };
+    let header_text = format!("{}: {}: {}", action_verb, short_filename, action_desc);
+
+    // Build diff preview for file-edit tools — all lines, no truncation
+    let is_file_edit = matches!(
+        tc.name.as_str(),
+        "replace_in_file" | "write_to_file" | "apply_patch"
+    );
+    let diff_preview: Option<String> = if tc.name == "replace_in_file" {
+        args_value.as_ref().and_then(|v| {
+            let old_str = v.get("old_str").and_then(|s| s.as_str())?;
+            let new_str = v.get("new_str").and_then(|s| s.as_str())?;
+            let mut preview = String::new();
+            for line in old_str.lines() {
+                preview.push_str("- ");
+                preview.push_str(line);
+                preview.push('\n');
+            }
+            for line in new_str.lines() {
+                preview.push_str("+ ");
+                preview.push_str(line);
+                preview.push('\n');
+            }
+            Some(preview)
+        })
+    } else if tc.name == "write_to_file" {
+        args_value.as_ref().and_then(|v| {
+            let content = v.get("content").and_then(|s| s.as_str())?;
+            let mut preview = String::new();
+            for line in content.lines() {
+                preview.push_str("+ ");
+                preview.push_str(line);
+                preview.push('\n');
+            }
+            Some(preview)
+        })
     } else {
         None
     };
@@ -1331,8 +1427,8 @@ fn approval_card(
 
     container(
         stack((
-            // Tool name + summary
-            label(move || format!("Approve {}?", tool_name)).style(move |s| {
+            // Action header: "Verb: filename: description"
+            label(move || header_text.clone()).style(move |s| {
                 let config = config.get();
                 s.font_size((config.ui.font_size() as f32 - 1.0).max(10.0))
                     .font_bold()
@@ -1370,24 +1466,28 @@ fn approval_card(
                             .color(LapceColor::LAPCE_BORDER)
                             .multiply_alpha(0.8),
                     )
+                    .apply_if(is_file_edit, |s| s.hide())
             }),
-            // Diff preview (shown when expanded)
+            // Colored diff view — scrollable, red for removed lines, green for added
             container(
-                label(move || diff_preview_clone.clone().unwrap_or_default())
-                    .style(move |s| {
+                scroll(
+                    rich_text(move || {
                         let config = config.get();
-                        s.font_size((config.ui.font_size() as f32 - 3.0).max(9.0))
-                            .font_family("monospace".to_string())
-                            .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                            .width_pct(100.0)
+                        create_diff_text_layout(
+                            diff_preview_clone.as_deref().unwrap_or(""),
+                            &config,
+                        )
                     })
+                    .style(|s| s.width_pct(100.0).min_width(0.0)),
+                )
+                .style(|s| s.width_pct(100.0).max_height(500.0)),
             )
             .style(move |s| {
                 let is_expanded = expanded.get();
                 let has_diff = diff_preview.is_some();
                 let config = config.get();
                 s.width_pct(100.0)
-                    .padding(6.0)
+                    .padding(8.0)
                     .margin_bottom(6.0)
                     .border_radius(4.0)
                     .background(config.color(LapceColor::EDITOR_BACKGROUND))

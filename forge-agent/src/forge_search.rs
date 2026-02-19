@@ -388,19 +388,37 @@ impl ForgeSearchClient {
             return Err(anyhow!("Chat stream failed ({}): {}", status, text));
         }
 
-        // Parse SSE stream: each event is "data: {json}\n\n"
-        let stream = resp.bytes_stream().flat_map(|result| {
-            let events: Vec<SseEvent> = match result {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    parse_sse_events(&text)
-                }
-                Err(e) => {
-                    vec![SseEvent::Error { error: e.to_string() }]
-                }
-            };
-            futures_util::stream::iter(events)
-        });
+        // Parse SSE stream.
+        //
+        // TCP chunks do NOT align with SSE event boundaries — a single
+        // "event: text_delta\ndata: {...}\n\n" can arrive split across
+        // multiple chunks.  We buffer raw bytes and only emit events once
+        // we see the "\n\n" delimiter that marks the end of an SSE event.
+        let stream = {
+            let mut buffer = String::new();
+            resp.bytes_stream().flat_map(move |result| {
+                let events: Vec<SseEvent> = match result {
+                    Ok(bytes) => {
+                        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                        // Drain complete events (terminated by "\n\n") from the buffer.
+                        let mut events = Vec::new();
+                        while let Some(pos) = buffer.find("\n\n") {
+                            // Include the delimiter itself so parse_sse_events
+                            // sees a well-formed event block.
+                            let complete = buffer[..pos + 2].to_string();
+                            buffer.drain(..pos + 2);
+                            events.extend(parse_sse_events(&complete));
+                        }
+                        events
+                    }
+                    Err(e) => {
+                        vec![SseEvent::Error { error: e.to_string() }]
+                    }
+                };
+                futures_util::stream::iter(events)
+            })
+        };
 
         Ok(stream)
     }

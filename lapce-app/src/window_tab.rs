@@ -1300,7 +1300,13 @@ impl WindowTabData {
                 self.toggle_panel_focus(PanelKind::Problem);
             }
             ToggleSearchFocus => {
-                self.toggle_panel_focus(PanelKind::Search);
+                // Open search as a popup instead of side panel
+                let current_focus = self.common.focus.get_untracked();
+                if current_focus == Focus::SearchPopup {
+                    self.common.focus.set(Focus::Workbench);
+                } else {
+                    self.common.focus.set(Focus::SearchPopup);
+                }
             }
             ToggleTerminalVisual => {
                 self.toggle_panel_visual(PanelKind::Terminal);
@@ -1321,13 +1327,7 @@ impl WindowTabData {
                 self.toggle_panel_visual(PanelKind::Debug);
             }
             ToggleSearchVisual => {
-                // Open search as a popup instead of side panel
-                let current_focus = self.common.focus.get_untracked();
-                if current_focus == Focus::SearchPopup {
-                    self.common.focus.set(Focus::Workbench);
-                } else {
-                    self.common.focus.set(Focus::SearchPopup);
-                }
+                self.toggle_panel_focus(PanelKind::Search);
             }
             FocusEditor => {
                 self.common.focus.set(Focus::Workbench);
@@ -2902,15 +2902,27 @@ impl WindowTabData {
             }
             CoreNotification::AgentError { error } => {
                 use crate::ai_chat::{ChatRole, new_message};
+                // Flush any partial streamed text so it isn't lost silently.
+                let partial = self.ai_chat.streaming_text.get_untracked();
+                if !partial.is_empty() {
+                    self.ai_chat.entries.update(|entries| {
+                        entries.push_back(new_message(ChatRole::Assistant, partial));
+                    });
+                }
                 self.ai_chat.entries.update(|entries| {
                     entries.push_back(new_message(
                         ChatRole::System,
                         format!("Error: {}", error),
                     ));
                 });
+                // Reset all transient streaming state so the next request starts clean.
                 self.ai_chat.streaming_text.set(String::new());
                 self.ai_chat.has_first_token.set(false);
                 self.ai_chat.is_loading.set(false);
+                // Collapse and clear the thinking section — stale steps from a failed
+                // request must not bleed into the next conversation turn.
+                self.ai_chat.thinking_collapsed.set(true);
+                self.ai_chat.thinking_steps.set(im::Vector::new());
             }
             CoreNotification::AgentDiffPreview {
                 diff_id,

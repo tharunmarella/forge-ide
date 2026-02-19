@@ -114,6 +114,7 @@ pub fn search_popup(window_tab_data: Rc<WindowTabData>) -> impl View {
         .size_full()
         .flex_col()
         .items_center()
+        .justify_content(floem::style::JustifyContent::Center)
         .background(Color::BLACK.multiply_alpha(0.5))
         .pointer_events_auto()
     })
