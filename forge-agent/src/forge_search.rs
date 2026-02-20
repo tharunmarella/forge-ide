@@ -623,46 +623,46 @@ fn parse_sse_event_with_type(event_type: &str, json_str: &str) -> Result<SseEven
         "thinking" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             Ok(SseEvent::Thinking {
-                step_type: data.get("step_type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                message: data.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                detail: data.get("detail").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                step_type: data.get("step_type").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                message: data.get("message").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                detail: data.get("detail").and_then(|v: &serde_json::Value| v.as_str()).map(|s: &str| s.to_string()),
             })
         }
         "tool_start" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             Ok(SseEvent::ToolStart {
-                tool_call_id: data.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                tool_name: data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                tool_call_id: data.get("tool_call_id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                tool_name: data.get("tool_name").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
                 arguments: data.get("arguments").cloned().unwrap_or(serde_json::Value::Null),
             })
         }
         "tool_end" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             Ok(SseEvent::ToolEnd {
-                tool_call_id: data.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                tool_name: data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                result_summary: data.get("result_summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                tool_call_id: data.get("tool_call_id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                tool_name: data.get("tool_name").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                result_summary: data.get("result_summary").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
                 success: data.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
             })
         }
         "text_delta" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             Ok(SseEvent::TextDelta {
-                text: data.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                text: data.get("text").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
             })
         }
         "plan" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             let steps = data.get("steps")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
+                .and_then(|v: &serde_json::Value| v.as_array())
+                .map(|arr: &Vec<serde_json::Value>| {
                     arr.iter()
                         .enumerate()
                         .filter_map(|(i, step)| {
                             Some(SsePlanStep {
-                                number: step.get("number").and_then(|v| v.as_u64()).unwrap_or(i as u64 + 1) as u32,
-                                description: step.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                status: step.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string(),
+                                number: step.get("number").and_then(|v: &serde_json::Value| v.as_u64()).unwrap_or(i as u64 + 1) as u32,
+                                description: step.get("description").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                                status: step.get("status").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("pending").to_string(),
                             })
                         })
                         .collect()
@@ -673,13 +673,13 @@ fn parse_sse_event_with_type(event_type: &str, json_str: &str) -> Result<SseEven
         "requires_action" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             let tool_calls = data.get("tool_calls")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
+                .and_then(|v: &serde_json::Value| v.as_array())
+                .map(|arr: &Vec<serde_json::Value>| {
                     arr.iter()
                         .filter_map(|tc| {
                             Some(ToolCallInfo {
-                                id: tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                name: tc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                id: tc.get("id").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
+                                name: tc.get("name").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("").to_string(),
                                 args: tc.get("args").cloned().unwrap_or(serde_json::Value::Object(Default::default())),
                             })
                         })
@@ -691,13 +691,13 @@ fn parse_sse_event_with_type(event_type: &str, json_str: &str) -> Result<SseEven
         "done" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             Ok(SseEvent::Done {
-                answer: data.get("answer").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                answer: data.get("answer").and_then(|v: &serde_json::Value| v.as_str()).map(|s: &str| s.to_string()),
             })
         }
         "error" => {
             let data: serde_json::Value = serde_json::from_str(json_str)?;
             Ok(SseEvent::Error {
-                error: data.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string(),
+                error: data.get("error").and_then(|v: &serde_json::Value| v.as_str()).unwrap_or("Unknown error").to_string(),
             })
         }
         _ => {

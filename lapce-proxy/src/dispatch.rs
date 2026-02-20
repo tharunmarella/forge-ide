@@ -17,7 +17,8 @@ use crossbeam_channel::Sender;
 // git2 dependency removed - using gix and git command line instead
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{SearcherBuilder, sinks::UTF8};
+use grep_searcher::{SearcherBuilder, sinks, sinks::UTF8};
+use ignore;
 use indexmap::IndexMap;
 use lapce_rpc::{
     RequestId, RpcError,
@@ -40,6 +41,7 @@ use lsp_types::{
     notification::{Cancel, Notification},
 };
 use parking_lot::Mutex;
+use regex;
 use toml;
 
 use crate::{
@@ -576,13 +578,18 @@ impl ProxyHandler for Dispatcher {
                             &WORKER_ID,
                             workspace
                                 .iter()
-                                .flat_map(|w| ignore::Walk::new(w).flatten())
+                                .flat_map(|w| {
+                                    ignore::Walk::new(w)
+                                        .filter_map(Result::ok)
+                                        .map(|entry| entry.into_path())
+                                })
                                 .chain(
                                     buffers.iter().flat_map(|p| {
-                                        ignore::Walk::new(p).flatten()
+                                        ignore::Walk::new(p)
+                                            .filter_map(Result::ok)
+                                            .map(|entry| entry.into_path())
                                     }),
-                                )
-                                .map(|p| p.into_path()),
+                                ),
                             &pattern,
                             case_sensitive,
                             whole_word,
@@ -4954,17 +4961,26 @@ fn search_in_path(
     whole_word: bool,
     is_regex: bool,
 ) -> Result<ProxyResponse, RpcError> {
+    // Early return for empty pattern to avoid issues with zero-width matches
+    if pattern.is_empty() {
+        return Ok(ProxyResponse::GlobalSearchResponse { matches: IndexMap::new() });
+    }
+    
     let mut matches = IndexMap::new();
     let mut matcher = RegexMatcherBuilder::new();
     let matcher = matcher.case_insensitive(!case_sensitive).word(whole_word);
     let matcher = if is_regex {
         matcher.build(pattern)
     } else {
-        matcher.build_literals(&[&regex::escape(pattern)])
+        let escaped = regex::escape(pattern);
+        matcher.build_literals(&[&escaped])
     };
-    let matcher = matcher.map_err(|_| RpcError {
-        code: 0,
-        message: "can't build matcher".to_string(),
+    let matcher = matcher.map_err(|e| {
+        tracing::error!("Failed to build matcher for pattern '{}': {}", pattern, e);
+        RpcError {
+            code: 0,
+            message: "can't build matcher".to_string(),
+        }
     })?;
     let mut searcher = SearcherBuilder::new().build();
 
@@ -4986,35 +5002,124 @@ fn search_in_path(
                         return Ok(false);
                     }
 
-                    let mymatch = matcher.find(line.as_bytes())?.unwrap();
-                    let line = if line.len() > 200 {
+                    let mymatch = match matcher.find(line.as_bytes())? {
+                        Some(m) => m,
+                        None => {
+                            // This shouldn't happen since the callback should only be called for matching lines
+                            // But let's handle it gracefully
+                            tracing::warn!("matcher.find returned None in UTF8 callback");
+                            return Ok(true);
+                        }
+                    };
+                    
+                    // Handle zero-width matches (can happen with empty pattern or regex anchors)
+                    if mymatch.start() == mymatch.end() {
+                        // Skip zero-width matches to avoid issues with display_range calculation
+                        return Ok(true);
+                    }
+                    
+                    // Sanity check: start should be <= end
+                    if mymatch.start() > mymatch.end() {
+                        tracing::error!("Invalid match: start > end ({} > {})", mymatch.start(), mymatch.end());
+                        return Ok(true);
+                    }
+                    
+                    // Sanity check: match should be within line bounds
+                    if mymatch.end() > line.len() {
+                        tracing::error!("Match end exceeds line length ({} > {})", mymatch.end(), line.len());
+                        return Ok(true);
+                    }
+                    
+                    let (line_content, start, end) = if line.len() > 200 {
                         // Shorten the line to avoid sending over absurdly long-lines
                         // (such as in minified javascript)
                         // Note that the start/end are column based, not absolute from the
                         // start of the file.
-                        let left_keep = line[..mymatch.start()]
+                        
+                        // Ensure match positions are valid UTF-8 boundaries
+                        let match_start = std::cmp::min(mymatch.start(), line.len());
+                        let match_end = std::cmp::min(mymatch.end(), line.len());
+                        
+                        // Find the nearest valid UTF-8 boundary for start
+                        let mut valid_start = match_start;
+                        while valid_start > 0 && !line.is_char_boundary(valid_start) {
+                            valid_start -= 1;
+                        }
+                        
+                        // Find the nearest valid UTF-8 boundary for end  
+                        let mut valid_end = match_end;
+                        while valid_end < line.len() && !line.is_char_boundary(valid_end) {
+                            valid_end += 1;
+                        }
+                        
+                        let left_keep = line[..valid_start]
                             .chars()
                             .rev()
                             .take(100)
                             .map(|c| c.len_utf8())
                             .sum::<usize>();
-                        let right_keep = line[mymatch.end()..]
+                        let right_keep = line[valid_end..]
                             .chars()
                             .take(100)
                             .map(|c| c.len_utf8())
                             .sum::<usize>();
-                        let display_range =
-                            mymatch.start() - left_keep..mymatch.end() + right_keep;
-                        line[display_range].to_string()
+                        
+                        // Calculate display range safely
+                        let display_start = valid_start.saturating_sub(left_keep);
+                        let display_end = std::cmp::min(valid_end + right_keep, line.len());
+                        
+                        // Ensure display_start <= display_end and are valid UTF-8 boundaries
+                        let mut final_start = display_start;
+                        while final_start < line.len() && !line.is_char_boundary(final_start) {
+                            final_start += 1;
+                        }
+                        
+                        let mut final_end = display_end;
+                        while final_end > final_start && !line.is_char_boundary(final_end) {
+                            final_end -= 1;
+                        }
+                        
+                        if final_start >= final_end || final_start >= line.len() {
+                            // Fall back to full line if display range is invalid
+                            (line.to_string(), mymatch.start(), mymatch.end())
+                        } else {
+                            let shortened = line[final_start..final_end].to_string();
+                            
+                            // Check if the match is completely outside the shortened range
+                            if mymatch.end() <= final_start || mymatch.start() >= final_end {
+                                // Match is outside the shortened range, skip it
+                                // Return empty string and zero positions as sentinel values
+                                // The caller should check for this case
+                                ("".to_string(), 0, 0)
+                            } else {
+                                // Adjust match positions to be relative to the shortened line
+                                // Use the original match positions, adjusted for the substring
+                                let adjusted_start = mymatch.start().saturating_sub(final_start);
+                                let adjusted_end = mymatch.end().saturating_sub(final_start);
+                                
+                                // Ensure adjusted positions are within bounds of shortened line
+                                let adjusted_start = std::cmp::min(adjusted_start, shortened.len());
+                                let adjusted_end = std::cmp::min(adjusted_end, shortened.len());
+                                
+                                // Ensure start <= end
+                                let adjusted_end = std::cmp::max(adjusted_start, adjusted_end);
+                                
+                                (shortened, adjusted_start, adjusted_end)
+                            }
+                        }
                     } else {
-                        line.to_string()
+                        (line.to_string(), mymatch.start(), mymatch.end())
                     };
-                    line_matches.push(SearchMatch {
-                        line: lnum as usize,
-                        start: mymatch.start(),
-                        end: mymatch.end(),
-                        line_content: line,
-                    });
+                    
+                    // Skip if the match is outside the shortened range (indicated by empty line_content)
+                    if !line_content.is_empty() && start < end {
+                        line_matches.push(SearchMatch {
+                            line: lnum as usize,
+                            start,
+                            end,
+                            line_content,
+                        });
+                    }
                     Ok(true)
                 }),
             ) {
