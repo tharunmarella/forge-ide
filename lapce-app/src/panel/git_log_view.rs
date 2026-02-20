@@ -42,6 +42,8 @@ pub fn git_log_panel(
     let selected_commit_index: RwSignal<Option<usize>> = create_rw_signal(None);
     let selected_commit_files: RwSignal<Vec<GitFileDiff>> = create_rw_signal(Vec::new());
     let files_loading: RwSignal<bool> = create_rw_signal(false);
+    // Which file in the commit is expanded to show its diff hunks inline
+    let selected_diff_file: RwSignal<Option<usize>> = create_rw_signal(None);
     
     // Split ratio (0.0 to 1.0) - start at 30%
     let split_ratio: RwSignal<f64> = create_rw_signal(0.30);
@@ -450,59 +452,141 @@ pub fn git_log_panel(
                             dyn_stack(
                                 move || selected_commit_files.get().into_iter().enumerate().collect::<Vec<_>>(),
                                 |(idx, file)| (*idx, file.new_path.clone()),
-                                move |(_, file)| {
+                                move |(file_idx, file)| {
                                     let file_path = file.new_path.clone()
                                         .or(file.old_path.clone())
                                         .map(|p| p.to_string_lossy().to_string())
                                         .unwrap_or_else(|| "Unknown file".to_string());
                                     let status = file.status;
-                                    
-                                    container(
-                                        stack((
-                                            // Status indicator
-                                            label(move || {
-                                                match status {
-                                                    lapce_rpc::source_control::FileDiffKind::Modified => "M",
-                                                    lapce_rpc::source_control::FileDiffKind::Added => "A",
-                                                    lapce_rpc::source_control::FileDiffKind::Deleted => "D",
-                                                    lapce_rpc::source_control::FileDiffKind::Renamed => "R",
-                                                }.to_string()
-                                            })
-                                            .style(move |s| {
-                                                let config = config.get();
-                                                let color = match status {
-                                                    lapce_rpc::source_control::FileDiffKind::Modified => config.color(LapceColor::SOURCE_CONTROL_MODIFIED),
-                                                    lapce_rpc::source_control::FileDiffKind::Added => config.color(LapceColor::SOURCE_CONTROL_ADDED),
-                                                    lapce_rpc::source_control::FileDiffKind::Deleted => config.color(LapceColor::SOURCE_CONTROL_REMOVED),
-                                                    lapce_rpc::source_control::FileDiffKind::Renamed => config.color(LapceColor::SOURCE_CONTROL_MODIFIED),
-                                                };
-                                                s.font_size(bottom_font_size() - 1.0)
-                                                    .font_bold()
-                                                    .width(14.0)
-                                                    .color(color)
-                                            }),
-                                            // File path
-                                            label(move || file_path.clone())
+                                    let hunks = file.hunks.clone();
+                                    let is_binary = file.is_binary;
+
+                                    stack((
+                                        // File header row — click to toggle hunk view
+                                        container(
+                                            stack((
+                                                // Expand/collapse chevron
+                                                label(move || {
+                                                    if selected_diff_file.get() == Some(file_idx) { "▾" } else { "▸" }.to_string()
+                                                })
                                                 .style(move |s| {
                                                     let config = config.get();
-                                                    s.font_size(bottom_font_size() - 1.0)
-                                                        .color(config.color(LapceColor::PANEL_FOREGROUND))
-                                                        .text_ellipsis()
+                                                    s.font_size(bottom_font_size() - 2.0)
+                                                        .width(12.0)
+                                                        .color(config.color(LapceColor::EDITOR_DIM))
                                                 }),
-                                        ))
-                                        .style(|s| s.items_center().gap(4.0)),
-                                    )
-                                    .style(move |s| {
-                                        let config = config.get();
-                                        s.padding_vert(2.0)
-                                            .padding_horiz(4.0)
-                                            .width_pct(100.0)
-                                            .border_radius(2.0)
-                                            .hover(|s| {
-                                                s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
-                                                    .cursor(CursorStyle::Pointer)
+                                                // Status badge
+                                                label(move || {
+                                                    match status {
+                                                        lapce_rpc::source_control::FileDiffKind::Modified => "M",
+                                                        lapce_rpc::source_control::FileDiffKind::Added => "A",
+                                                        lapce_rpc::source_control::FileDiffKind::Deleted => "D",
+                                                        lapce_rpc::source_control::FileDiffKind::Renamed => "R",
+                                                    }.to_string()
+                                                })
+                                                .style(move |s| {
+                                                    let config = config.get();
+                                                    let color = match status {
+                                                        lapce_rpc::source_control::FileDiffKind::Modified => config.color(LapceColor::SOURCE_CONTROL_MODIFIED),
+                                                        lapce_rpc::source_control::FileDiffKind::Added => config.color(LapceColor::SOURCE_CONTROL_ADDED),
+                                                        lapce_rpc::source_control::FileDiffKind::Deleted => config.color(LapceColor::SOURCE_CONTROL_REMOVED),
+                                                        lapce_rpc::source_control::FileDiffKind::Renamed => config.color(LapceColor::SOURCE_CONTROL_MODIFIED),
+                                                    };
+                                                    s.font_size(bottom_font_size() - 1.0)
+                                                        .font_bold()
+                                                        .width(14.0)
+                                                        .color(color)
+                                                }),
+                                                // File path
+                                                label(move || file_path.clone())
+                                                    .style(move |s| {
+                                                        let config = config.get();
+                                                        s.font_size(bottom_font_size() - 1.0)
+                                                            .flex_grow(1.0)
+                                                            .color(config.color(LapceColor::PANEL_FOREGROUND))
+                                                            .text_ellipsis()
+                                                    }),
+                                            ))
+                                            .style(|s| s.items_center().gap(4.0).width_pct(100.0)),
+                                        )
+                                        .on_click_stop(move |_| {
+                                            if selected_diff_file.get_untracked() == Some(file_idx) {
+                                                selected_diff_file.set(None);
+                                            } else {
+                                                selected_diff_file.set(Some(file_idx));
+                                            }
+                                        })
+                                        .style(move |s| {
+                                            let config = config.get();
+                                            let is_selected = selected_diff_file.get() == Some(file_idx);
+                                            s.padding_vert(2.0)
+                                                .padding_horiz(4.0)
+                                                .width_pct(100.0)
+                                                .border_radius(2.0)
+                                                .cursor(CursorStyle::Pointer)
+                                                .apply_if(is_selected, |s| {
+                                                    s.background(config.color(LapceColor::PANEL_CURRENT_BACKGROUND))
+                                                })
+                                                .hover(|s| s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND)))
+                                        }),
+                                        // Inline diff hunks (shown when file is expanded)
+                                        {
+                                            let hunks_clone = hunks.clone();
+                                            container(
+                                                scroll(
+                                                    stack((
+                                                        // Binary file notice
+                                                        label(|| "Binary file — no diff available".to_string())
+                                                            .style(move |s| {
+                                                                let config = config.get();
+                                                                s.display(if is_binary { floem::style::Display::Flex } else { floem::style::Display::None })
+                                                                    .padding(6.0)
+                                                                    .font_size(bottom_font_size() - 1.0)
+                                                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                                            }),
+                                                        // Hunk lines
+                                                        dyn_stack(
+                                                            move || hunks_clone.clone().into_iter().flat_map(|h| h.lines).collect::<Vec<_>>(),
+                                                            |line| (line.old_line_no, line.new_line_no, line.origin, line.content.clone()),
+                                                            move |line| {
+                                                                let origin = line.origin;
+                                                                let content = format!("{}{}", origin, line.content);
+                                                                label(move || content.clone())
+                                                                    .style(move |s| {
+                                                                        let config = config.get();
+                                                                        let color = match origin {
+                                                                            '+' => config.color(LapceColor::TERMINAL_GREEN),
+                                                                            '-' => config.color(LapceColor::TERMINAL_RED),
+                                                                            _ => config.color(LapceColor::EDITOR_DIM),
+                                                                        };
+                                                                        s.font_size(bottom_font_size() - 2.0)
+                                                                            .font_family("monospace".to_string())
+                                                                            .width_pct(100.0)
+                                                                            .color(color)
+                                                                    })
+                                                            },
+                                                        )
+                                                        .style(|s| s.flex_col().width_pct(100.0)),
+                                                    ))
+                                                    .style(|s| s.flex_col().width_pct(100.0)),
+                                                )
+                                                .style(|s| s.width_pct(100.0).max_height(300.0)),
+                                            )
+                                            .style(move |s| {
+                                                let config = config.get();
+                                                let is_expanded = selected_diff_file.get() == Some(file_idx);
+                                                s.apply_if(!is_expanded, |s| s.hide())
+                                                    .width_pct(100.0)
+                                                    .padding(4.0)
+                                                    .margin_bottom(4.0)
+                                                    .border_radius(4.0)
+                                                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                                                    .border(1.0)
+                                                    .border_color(config.color(LapceColor::LAPCE_BORDER))
                                             })
-                                    })
+                                        },
+                                    ))
+                                    .style(|s| s.flex_col().width_pct(100.0))
                                 },
                             )
                             .style(|s| s.flex_col().width_pct(100.0)),

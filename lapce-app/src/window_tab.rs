@@ -1091,8 +1091,10 @@ impl WindowTabData {
                     .tab_info
                     .with_untracked(|info| info.tabs.is_empty())
                 {
-                    if self.panel.is_panel_visible(&PanelKind::Terminal) {
-                        self.panel.hide_panel(&PanelKind::Terminal);
+                    // Collapse the bottom panel container when last terminal closes
+                    use crate::panel::position::PanelContainerPosition;
+                    if self.panel.is_container_shown(&PanelContainerPosition::Bottom, false) {
+                        self.panel.toggle_container_visual(&PanelContainerPosition::Bottom);
                     }
                     self.common.focus.set(Focus::Workbench);
                 } else {
@@ -2599,8 +2601,10 @@ impl WindowTabData {
                     .tab_info
                     .with_untracked(|info| info.tabs.is_empty())
                 {
-                    if self.panel.is_panel_visible(&PanelKind::Terminal) {
-                        self.panel.hide_panel(&PanelKind::Terminal);
+                    // Collapse the bottom panel container when last terminal exits
+                    use crate::panel::position::PanelContainerPosition;
+                    if self.panel.is_container_shown(&PanelContainerPosition::Bottom, false) {
+                        self.panel.toggle_container_visual(&PanelContainerPosition::Bottom);
                     }
                     self.common.focus.set(Focus::Workbench);
                 }
@@ -3105,9 +3109,28 @@ impl WindowTabData {
                 // Execute through the IDE's run system
                 self.run_and_debug(cx, &run_mode, &config);
                 
-                // Ensure Terminal panel is visible at bottom
-                if !self.panel.is_panel_visible(&PanelKind::Terminal) {
-                    self.toggle_panel_visual_at_position(PanelKind::Terminal, PanelPosition::BottomLeft);
+                // Always ensure Terminal is visible at the bottom panel
+                use crate::panel::position::PanelContainerPosition;
+                // Show the terminal at BottomLeft regardless of current position
+                self.panel.styles.update(|styles| {
+                    if let Some(style) = styles.get_mut(&PanelPosition::BottomLeft) {
+                        style.shown = true;
+                    }
+                });
+                // Make sure the bottom container itself is expanded
+                if !self.panel.is_container_shown(&PanelContainerPosition::Bottom, false) {
+                    self.panel.toggle_container_visual(&PanelContainerPosition::Bottom);
+                }
+                // Set Terminal as the active tab in the bottom panel
+                if let Some(index) = self.panel.panels.with_untracked(|panels| {
+                    panels.get(&PanelPosition::BottomLeft)
+                        .and_then(|kinds| kinds.iter().position(|k| *k == PanelKind::Terminal))
+                }) {
+                    self.panel.styles.update(|styles| {
+                        if let Some(style) = styles.get_mut(&PanelPosition::BottomLeft) {
+                            style.active = index;
+                        }
+                    });
                 }
             }
             CoreNotification::AgentStopProject { config_name } => {

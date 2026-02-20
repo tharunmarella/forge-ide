@@ -37,7 +37,13 @@ pub fn global_search_panel(
     let is_regex = global_search.common.find.is_regex;
 
     let focus = global_search.common.focus;
-    let is_focused = move || focus.get() == Focus::Panel(PanelKind::Search);
+    // Active when opened as a side panel OR as the popup
+    let is_focused = move || {
+        matches!(
+            focus.get(),
+            Focus::Panel(PanelKind::Search) | Focus::SearchPopup
+        )
+    };
 
     stack((
         container(
@@ -89,7 +95,10 @@ pub fn global_search_panel(
                 .style(|s| s.padding_left(6.0)),
             ))
             .on_event_cont(EventListener::PointerDown, move |_| {
-                focus.set(Focus::Panel(PanelKind::Search));
+                // Keep SearchPopup focus if already in popup mode, else use panel focus
+                if focus.get_untracked() != Focus::SearchPopup {
+                    focus.set(Focus::Panel(PanelKind::Search));
+                }
             })
             .style(move |s| {
                 s.width_pct(100.0)

@@ -145,22 +145,8 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                     .text_ellipsis()
                                     .selectable(false)
                             }),
-                            clickable_icon(
-                                || LapceIcons::CLOSE,
-                                move || {
-                                    terminal_for_close.close_tab(Some(terminal_tab_id));
-                                    // Auto-hide panel if no tabs left
-                                    if terminal_for_close.tab_info.with_untracked(|info| info.tabs.is_empty()) {
-                                        panel_for_close.hide_panel(&PanelKind::Terminal);
-                                        common_focus.set(crate::window_tab::Focus::Workbench);
-                                    }
-                                },
-                                || false,
-                                || false,
-                                || "Close",
-                                config,
-                            )
-                            .style(|s| s.margin_horiz(6.0)),
+                            // No per-tab close button — tabs close when process exits.
+                            // Last-tab-close auto-hides the bottom container (see on_click below).
                             empty().style(move |s| {
                                 s.absolute()
                                     .width_full()
@@ -254,19 +240,6 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                     || "New Terminal",
                     config,
                 ),
-                // Close button to close entire terminal panel
-                clickable_icon(
-                    || LapceIcons::CLOSE,
-                    move || {
-                        panel_for_header_close.hide_panel(&PanelKind::Terminal);
-                        common_focus.set(Focus::Workbench);
-                    },
-                    || false,
-                    || false,
-                    || "Close Terminal Panel",
-                    config,
-                )
-                .style(|s| s.margin_left(4.0)),
             ))
             .style(|s| s.items_center()),
         )

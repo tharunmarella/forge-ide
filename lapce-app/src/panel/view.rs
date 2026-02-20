@@ -402,8 +402,11 @@ pub fn panel_container_view(
     // For bottom panel: original stacked layout
     if !is_bottom {
         // Left/Right panels: horizontal layout [icons | content]
+        // Only show the activity bar (icon picker) for the left panel, not the right (AI chat)
+        let is_left = position == PanelContainerPosition::Left;
         stack((
-            // panel_picker(window_tab_data.clone(), position.first()), // Removed sidebar as requested
+            panel_picker(window_tab_data.clone(), position.first())
+                .style(move |s| s.apply_if(!is_left, |s| s.hide())),
             stack((
                 panel_view(window_tab_data.clone(), position.first()),
                 panel_view(window_tab_data.clone(), position.second()),
@@ -855,6 +858,16 @@ fn panel_picker(
             panel
                 .panels
                 .with(|panels| panels.get(&position).cloned().unwrap_or_default())
+                // Hide icons not yet ready for use
+                .into_iter()
+                .filter(|p| !matches!(
+                    p,
+                    crate::panel::kind::PanelKind::Search
+                        | crate::panel::kind::PanelKind::Plugin
+                        | crate::panel::kind::PanelKind::DatabaseManager
+                        | crate::panel::kind::PanelKind::ProjectMapPage
+                ))
+                .collect::<Vec<_>>()
         },
         |p| *p,
         move |p| {

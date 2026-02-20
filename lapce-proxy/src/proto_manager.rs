@@ -9,6 +9,27 @@ use std::{
     process::Command,
 };
 
+/// Resolve the proto binary path.
+/// Checks common install locations so it works even when launched as a .app bundle
+/// (which doesn't inherit the user's shell PATH).
+fn proto_bin() -> PathBuf {
+    // 1. Respect explicit override
+    if let Ok(p) = std::env::var("PROTO_BIN") {
+        return PathBuf::from(p);
+    }
+
+    // 2. Check ~/.proto/bin/proto (default install location)
+    if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+        let default = home.join(".proto").join("bin").join("proto");
+        if default.exists() {
+            return default;
+        }
+    }
+
+    // 3. Fallback — rely on whatever PATH is available
+    PathBuf::from("proto")
+}
+
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +68,7 @@ impl ProtoManager {
 
     /// Check if proto is installed on the system
     pub fn is_proto_installed() -> bool {
-        Command::new("proto")
+        Command::new(proto_bin())
             .arg("--version")
             .output()
             .map(|o| o.status.success())
@@ -56,7 +77,7 @@ impl ProtoManager {
 
     /// Get proto version
     pub fn get_proto_version() -> Result<String> {
-        let output = Command::new("proto")
+        let output = Command::new(proto_bin())
             .arg("--version")
             .output()
             .context("Failed to run proto --version")?;
@@ -147,7 +168,7 @@ impl ProtoManager {
 
     /// Install a tool with a specific version
     pub fn install_tool(&self, tool: &str, version: &str) -> Result<String> {
-        let mut cmd = Command::new("proto");
+        let mut cmd = Command::new(proto_bin());
         cmd.arg("install").arg(tool);
         
         if !version.is_empty() && version != "latest" {
@@ -174,7 +195,7 @@ impl ProtoManager {
 
     /// Uninstall a tool version
     pub fn uninstall_tool(&self, tool: &str, version: &str) -> Result<String> {
-        let output = Command::new("proto")
+        let output = Command::new(proto_bin())
             .arg("uninstall")
             .arg(tool)
             .arg(version)
@@ -191,7 +212,7 @@ impl ProtoManager {
 
     /// Get the binary path for a tool
     pub fn get_tool_bin_path(&self, tool: &str) -> Result<PathBuf> {
-        let output = Command::new("proto")
+        let output = Command::new(proto_bin())
             .arg("bin")
             .arg(tool)
             .output()
@@ -276,7 +297,7 @@ impl ProtoManager {
 
     /// Setup project tools (install all tools from .prototools)
     pub fn setup_project(&self) -> Result<String> {
-        let mut cmd = Command::new("proto");
+        let mut cmd = Command::new(proto_bin());
         cmd.arg("use");
 
         if let Some(ref ws) = self.workspace {
@@ -338,7 +359,7 @@ impl ProtoManager {
 
     /// Search for available tool versions
     pub fn search_tool_versions(&self, tool: &str) -> Result<Vec<String>> {
-        let output = Command::new("proto")
+        let output = Command::new(proto_bin())
             .arg("list-remote")
             .arg(tool)
             .output()

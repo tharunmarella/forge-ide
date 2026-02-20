@@ -147,37 +147,6 @@ fn setup_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                         )
                     })
             }),
-            // ── Sign in with Google ──
-            stack((
-                svg(move || {
-                    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81"/></svg>"#;
-                    svg_str.to_string()
-                }).style(|s| s.width(20.0).height(20.0).margin_right(8.0)),
-                label(|| "Sign in with Google".to_string()),
-            ))
-            .style(|s| s.flex_row().items_center().justify_center())
-            .on_click_stop(move |_| {
-                start_oauth_flow(scope, "google", auth_status, keys_config);
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding_horiz(24.0)
-                    .padding_vert(12.0)
-                    .width_pct(100.0)
-                    .justify_center()
-                    .margin_top(8.0)
-                    .font_size(config.ui.font_size() as f32)
-                    .cursor(CursorStyle::Pointer)
-                    .color(config.color(LapceColor::EDITOR_DIM))
-                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
-                    .border(1.0)
-                        .border_color(config.color(LapceColor::LAPCE_BORDER))
-                        .hover(|s| {
-                            s.background(
-                                config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.3),
-                            )
-                        })
-                }),
             // ── Auth status message ──
             label(move || auth_status.get())
                 .style(move |s| {
@@ -387,7 +356,7 @@ fn chat_view(window_tab_data: Rc<WindowTabData>) -> impl View {
 
     stack((
         // ── Header ──────────────────────────────────────────
-        chat_header(config, chat_data_clear),
+        chat_header(config, chat_data_clear, window_tab_data.panel.clone()),
         // ── Message list (scrollable) with auto-scroll ──────
         chat_message_list(config, chat_data.clone(), internal_command, proxy),
         // ── AI Diff toolbar (only shown when pending diffs exist) ──
@@ -490,10 +459,11 @@ fn ai_diff_toolbar(window_tab_data: Rc<WindowTabData>) -> impl View {
     })
 }
 
-/// Header with title, index status badge, and clear button.
+/// Header with title, index status badge, clear button, and close button.
 fn chat_header(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     chat_data: AiChatData,
+    panel: crate::panel::data::PanelData,
 ) -> impl View {
     let chat_data_clear = chat_data.clone();
     let chat_data_badge = chat_data.clone();
@@ -543,6 +513,24 @@ fn chat_header(
                 .on_click_stop(move |_| {
                     chat_data_clear.clear_chat();
                 }),
+            // Close button — collapses the right panel
+            {
+                use crate::panel::position::PanelContainerPosition;
+                use crate::panel::kind::PanelKind;
+                crate::app::clickable_icon(
+                    || LapceIcons::CLOSE,
+                    move || {
+                        panel.hide_panel(&PanelKind::AiChat);
+                        if panel.is_container_shown(&PanelContainerPosition::Right, false) {
+                            panel.toggle_container_visual(&PanelContainerPosition::Right);
+                        }
+                    },
+                    || false,
+                    || false,
+                    || "Close AI Chat",
+                    config,
+                )
+            },
         ))
         .style(|s| s.items_center().gap(8.0).width_pct(100.0)),
     )

@@ -20,7 +20,9 @@ use lapce_rpc::{
 
 use crate::{
     app::clickable_icon,
+    command::InternalCommand,
     config::{LapceConfig, color::LapceColor, icon::LapceIcons},
+    debug::RunDebugMode,
     main_split::Editors,
     window_tab::CommonData,
 };
@@ -397,6 +399,75 @@ fn right_panel(
             container(
                 scroll(
                     stack((
+                        // Run button — always visible when a config is selected
+                        {
+                            let internal_command = common.internal_command;
+                            container(
+                                stack((
+                                    svg(move || config.get().ui_svg(LapceIcons::START))
+                                        .style(move |s| {
+                                            let cfg = config.get();
+                                            s.size(14.0, 14.0)
+                                                .margin_right(6.0)
+                                                .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                                        }),
+                                    label(|| "Run".to_string())
+                                        .style(move |s| {
+                                            let cfg = config.get();
+                                            s.font_size(cfg.ui.font_size() as f32)
+                                                .font_bold()
+                                                .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                                        }),
+                                ))
+                                .style(|s| s.items_center()),
+                            )
+                            .on_click_stop(move |_| {
+                                let name = edit_name.get();
+                                let program = edit_command.get();
+                                if program.is_empty() { return; }
+                                let args: Vec<String> = edit_args.get()
+                                    .split_whitespace()
+                                    .map(String::from)
+                                    .collect();
+                                let cwd = edit_cwd.get();
+                                let config = lapce_rpc::dap_types::RunDebugConfig {
+                                    ty: None,
+                                    name: name.clone(),
+                                    program: "sh".to_string(),
+                                    args: Some(vec![
+                                        "-c".to_string(),
+                                        if args.is_empty() {
+                                            program.clone()
+                                        } else {
+                                            format!("{} {}", program, args.join(" "))
+                                        },
+                                    ]),
+                                    cwd: if cwd.is_empty() { None } else { Some(cwd) },
+                                    env: None,
+                                    prelaunch: None,
+                                    debug_command: None,
+                                    dap_id: lapce_rpc::dap_types::DapId::next(),
+                                    tracing_output: false,
+                                    config_source: lapce_rpc::dap_types::ConfigSource::Palette,
+                                };
+                                internal_command.send(InternalCommand::RunAndDebug {
+                                    mode: RunDebugMode::Run,
+                                    config,
+                                });
+                            })
+                            .style(move |s| {
+                                let cfg = config.get();
+                                s.margin_bottom(24.0)
+                                    .padding_horiz(20.0)
+                                    .padding_vert(8.0)
+                                    .border_radius(4.0)
+                                    .cursor(CursorStyle::Pointer)
+                                    .background(cfg.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
+                                    .hover(|s| s.background(
+                                        cfg.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND).multiply_alpha(0.85)
+                                    ))
+                            })
+                        },
                         // Name field
                         form_field(config, "Name", edit_name, !is_user_config.get()),
                         

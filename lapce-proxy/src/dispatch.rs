@@ -649,30 +649,19 @@ impl ProxyHandler for Dispatcher {
                 }
             }
             GitLog { limit, skip, branch, author, search } => {
-                eprintln!("[GIT_LOG] Request received: limit={}, skip={}", limit, skip);
-                let result = if let Some(workspace) = self.workspace.as_ref() {
-                    eprintln!("[GIT_LOG] Workspace: {:?}", workspace);
-                    match git_log(workspace, limit, skip, branch, author, search) {
-                        Ok(result) => {
-                            eprintln!("[GIT_LOG] Success: {} commits found, total: {}", result.commits.len(), result.total_count);
-                            Ok(ProxyResponse::GitLogResponse { result })
-                        },
-                        Err(e) => {
-                            eprintln!("[GIT_LOG] Error: {}", e);
-                            Err(RpcError {
-                                code: 0,
-                                message: format!("git log error: {}", e),
-                            })
-                        },
-                    }
-                } else {
-                    eprintln!("[GIT_LOG] No workspace set!");
-                    Err(RpcError {
-                        code: 0,
-                        message: "no workspace set".to_string(),
-                    })
-                };
-                self.respond_rpc(id, result);
+                let workspace = self.workspace.clone();
+                let proxy_rpc = self.proxy_rpc.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = if let Some(ws) = workspace.as_ref() {
+                        match git_log(ws, limit, skip, branch, author, search) {
+                            Ok(result) => Ok(ProxyResponse::GitLogResponse { result }),
+                            Err(e) => Err(RpcError { code: 0, message: format!("git log error: {}", e) }),
+                        }
+                    } else {
+                        Err(RpcError { code: 0, message: "no workspace set".to_string() })
+                    };
+                    proxy_rpc.handle_response(id, result);
+                });
             }
             // Git Branch Operations
             GitListBranches { include_remote } => {
@@ -997,17 +986,25 @@ impl ProxyHandler for Dispatcher {
                 };
                 self.respond_rpc(id, result);
             }
-            // Git Diff - Placeholder
-            GitGetCommitDiff { commit: _ } => {
-                self.respond_rpc(id, Err(RpcError { 
-                    code: 0, 
-                    message: "Commit diff not yet implemented".to_string() 
-                }));
+            GitGetCommitDiff { commit } => {
+                let workspace = self.workspace.clone();
+                let proxy_rpc = self.proxy_rpc.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = if let Some(ws) = workspace.as_ref() {
+                        match git_get_commit_diff(ws, &commit) {
+                            Ok(diff) => Ok(ProxyResponse::GitCommitDiffResponse { result: diff }),
+                            Err(e) => Err(RpcError { code: 0, message: format!("git diff error: {}", e) }),
+                        }
+                    } else {
+                        Err(RpcError { code: 0, message: "no workspace set".to_string() })
+                    };
+                    proxy_rpc.handle_response(id, result);
+                });
             }
             GitGetFileDiff { path: _, staged: _ } => {
-                self.respond_rpc(id, Err(RpcError { 
-                    code: 0, 
-                    message: "File diff not yet implemented".to_string() 
+                self.respond_rpc(id, Err(RpcError {
+                    code: 0,
+                    message: "File diff not yet implemented".to_string()
                 }));
             }
             // Git Stage
@@ -1823,15 +1820,19 @@ impl ProxyHandler for Dispatcher {
             }
             ProtoInstallTool { tool, version } => {
                 use crate::proto_manager::ProtoManager;
-                let manager = ProtoManager::new(self.workspace.clone());
-                let result = match manager.install_tool(&tool, &version) {
-                    Ok(message) => Ok(ProxyResponse::ProtoInstallResponse { success: true, message }),
-                    Err(e) => Ok(ProxyResponse::ProtoInstallResponse { 
-                        success: false, 
-                        message: format!("Failed to install {} {}: {}", tool, version, e) 
-                    }),
-                };
-                self.respond_rpc(id, result);
+                let workspace = self.workspace.clone();
+                let proxy_rpc = self.proxy_rpc.clone();
+                tokio::task::spawn_blocking(move || {
+                    let manager = ProtoManager::new(workspace);
+                    let result = match manager.install_tool(&tool, &version) {
+                        Ok(message) => Ok(ProxyResponse::ProtoInstallResponse { success: true, message }),
+                        Err(e) => Ok(ProxyResponse::ProtoInstallResponse {
+                            success: false,
+                            message: format!("Failed to install {} {}: {}", tool, version, e),
+                        }),
+                    };
+                    proxy_rpc.handle_response(id, result);
+                });
             }
             ProtoUninstallTool { tool, version } => {
                 use crate::proto_manager::ProtoManager;
@@ -5028,4 +5029,176 @@ fn search_in_path(
     }
 
     Ok(ProxyResponse::GlobalSearchResponse { matches })
+}
+
+// ============================================================================
+// Git Commit Diff
+// ============================================================================
+
+/// Fetch the full diff for a single commit using `git show`.
+/// Parses unified diff output into structured `GitCommitDiff`.
+fn git_get_commit_diff(
+    workspace_path: &std::path::Path,
+    commit: &str,
+) -> Result<lapce_rpc::source_control::GitCommitDiff> {
+    use lapce_rpc::source_control::{FileDiffKind, GitCommitDiff, GitDiffHunk, GitDiffLine, GitFileDiff};
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    // git show --format="" -p --no-color <commit>
+    // --format="" suppresses the commit header so we only get the diff
+    let output = Command::new("git")
+        .args(["show", "--format=", "-p", "--no-color", commit])
+        .current_dir(workspace_path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run git show: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git show failed: {}", stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    let mut files: Vec<GitFileDiff> = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Find "diff --git" header
+        if !lines[i].starts_with("diff --git ") {
+            i += 1;
+            continue;
+        }
+
+        // Parse a/path and b/path from the header
+        let (mut old_path, mut new_path) = parse_diff_git_paths(lines[i]);
+        let mut status = FileDiffKind::Modified;
+        let mut is_binary = false;
+        i += 1;
+
+        // Read extended headers (new file, deleted file, rename, index)
+        while i < lines.len()
+            && !lines[i].starts_with("diff --git ")
+            && !lines[i].starts_with("--- ")
+            && !lines[i].starts_with("Binary files")
+        {
+            let h = lines[i];
+            if h.starts_with("new file mode") {
+                status = FileDiffKind::Added;
+            } else if h.starts_with("deleted file mode") {
+                status = FileDiffKind::Deleted;
+            } else if h.starts_with("rename from ") {
+                old_path = Some(PathBuf::from(&h["rename from ".len()..]));
+                status = FileDiffKind::Renamed;
+            } else if h.starts_with("rename to ") {
+                new_path = Some(PathBuf::from(&h["rename to ".len()..]));
+            }
+            i += 1;
+        }
+
+        // Binary file?
+        if i < lines.len() && lines[i].starts_with("Binary files") {
+            is_binary = true;
+            i += 1;
+            files.push(GitFileDiff { old_path, new_path, status, hunks: Vec::new(), is_binary: true });
+            continue;
+        }
+
+        // Skip "--- " and "+++ " lines
+        if i < lines.len() && lines[i].starts_with("--- ") {
+            let p = &lines[i][4..];
+            if p != "/dev/null" && p.starts_with("a/") && old_path.is_none() {
+                old_path = Some(PathBuf::from(&p[2..]));
+            }
+            i += 1;
+        }
+        if i < lines.len() && lines[i].starts_with("+++ ") {
+            let p = &lines[i][4..];
+            if p != "/dev/null" && p.starts_with("b/") && new_path.is_none() {
+                new_path = Some(PathBuf::from(&p[2..]));
+            }
+            i += 1;
+        }
+
+        // Parse hunks
+        let mut hunks: Vec<GitDiffHunk> = Vec::new();
+        while i < lines.len() && !lines[i].starts_with("diff --git ") {
+            if !lines[i].starts_with("@@ ") {
+                i += 1;
+                continue;
+            }
+
+            let (old_start, old_count, new_start, new_count) = parse_hunk_header(lines[i]);
+            let header = lines[i].to_string();
+            i += 1;
+
+            let mut hunk_lines: Vec<GitDiffLine> = Vec::new();
+            let mut old_ln = old_start;
+            let mut new_ln = new_start;
+
+            while i < lines.len()
+                && !lines[i].starts_with("@@ ")
+                && !lines[i].starts_with("diff --git ")
+            {
+                let dl = lines[i];
+                if dl.starts_with('\\') {
+                    // "\ No newline at end of file"
+                    i += 1;
+                    continue;
+                }
+                let (origin, content) = if dl.starts_with('+') {
+                    ('+', &dl[1..])
+                } else if dl.starts_with('-') {
+                    ('-', &dl[1..])
+                } else {
+                    (' ', if dl.starts_with(' ') { &dl[1..] } else { dl })
+                };
+                let (old_line_no, new_line_no) = match origin {
+                    '+' => { let n = new_ln; new_ln += 1; (None, Some(n)) }
+                    '-' => { let n = old_ln; old_ln += 1; (Some(n), None) }
+                    _  => { let o = old_ln; let n = new_ln; old_ln += 1; new_ln += 1; (Some(o), Some(n)) }
+                };
+                hunk_lines.push(GitDiffLine { origin, old_line_no, new_line_no, content: content.to_string() });
+                i += 1;
+            }
+
+            hunks.push(GitDiffHunk { old_start, old_lines: old_count, new_start, new_lines: new_count, header, lines: hunk_lines });
+        }
+
+        files.push(GitFileDiff { old_path, new_path, status, hunks, is_binary });
+    }
+
+    Ok(GitCommitDiff { commit_id: commit.to_string(), files })
+}
+
+/// Parse "diff --git a/path b/path" into (old_path, new_path).
+/// Handles paths with spaces by finding the last " b/" that splits it correctly.
+fn parse_diff_git_paths(line: &str) -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>) {
+    let rest = &line["diff --git ".len()..];
+    // Try to split at " b/" — the a-path must start with "a/"
+    if rest.starts_with("a/") {
+        if let Some(pos) = rest.rfind(" b/") {
+            let a = &rest[2..pos];
+            let b = &rest[pos + 3..];
+            return (Some(std::path::PathBuf::from(a)), Some(std::path::PathBuf::from(b)));
+        }
+    }
+    (None, None)
+}
+
+/// Parse "@@ -old_start[,count] +new_start[,count] @@" header.
+fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
+    let parts: Vec<&str> = header.splitn(5, ' ').collect();
+    if parts.len() < 4 { return (1, 0, 1, 0); }
+    let (os, oc) = parse_line_range(parts[1].trim_start_matches('-'));
+    let (ns, nc) = parse_line_range(parts[2].trim_start_matches('+'));
+    (os, oc, ns, nc)
+}
+
+fn parse_line_range(s: &str) -> (usize, usize) {
+    if let Some(c) = s.find(',') {
+        (s[..c].parse().unwrap_or(1), s[c + 1..].parse().unwrap_or(0))
+    } else {
+        (s.parse().unwrap_or(1), 1)
+    }
 }

@@ -809,150 +809,25 @@ fn right(
             || "SDK Manager",
             config,
         ),
-        // ── Panel toggle icons ──
+        // ── AI chat toggle ──
         {
-            use crate::panel::position::PanelContainerPosition;
-            let panel_left = panel.clone();
-            let panel_bottom = panel.clone();
-            let panel_right = panel.clone();
-            let panel_left_icon = panel.clone();
-            let panel_bottom_icon = panel.clone();
-            let panel_right_icon = panel.clone();
-            stack((
-                clickable_icon(
-                    move || {
-                        if panel_left_icon
-                            .is_container_shown(&PanelContainerPosition::Left, true)
-                        {
-                            LapceIcons::SIDEBAR_LEFT
-                        } else {
-                            LapceIcons::SIDEBAR_LEFT_OFF
-                        }
-                    },
-                    move || {
-                        panel_left.toggle_container_visual(&PanelContainerPosition::Left)
-                    },
-                    || false,
-                    || false,
-                    || "Toggle Left Panel",
-                    config,
-                ),
-                clickable_icon(
-                    move || {
-                        if panel_bottom_icon.is_container_shown(
-                            &PanelContainerPosition::Bottom,
-                            true,
-                        ) {
-                            LapceIcons::LAYOUT_PANEL
-                        } else {
-                            LapceIcons::LAYOUT_PANEL_OFF
-                        }
-                    },
-                    move || {
-                        panel_bottom
-                            .toggle_container_visual(&PanelContainerPosition::Bottom)
-                    },
-                    || false,
-                    || false,
-                    || "Toggle Bottom Panel",
-                    config,
-                ),
-                clickable_icon(
-                    move || {
-                        if panel_right_icon
-                            .is_container_shown(&PanelContainerPosition::Right, true)
-                        {
-                            LapceIcons::SIDEBAR_RIGHT
-                        } else {
-                            LapceIcons::SIDEBAR_RIGHT_OFF
-                        }
-                    },
-                    move || {
-                        panel_right.toggle_container_visual(&PanelContainerPosition::Right)
-                    },
-                    || false,
-                    || false,
-                    || "Toggle Right Panel",
-                    config,
-                ),
-            ))
+            let panel_ai_open = panel.clone();
+            let panel_ai_open2 = panel_ai_open.clone();
+            clickable_icon(
+                || LapceIcons::AI_CHAT,
+                move || {
+                    panel_ai_open.show_panel(&PanelKind::AiChat);
+                },
+                move || panel_ai_open2.is_panel_visible(&PanelKind::AiChat),
+                || false,
+                || "Open AI Assistant",
+                config,
+            )
             .style(move |s| {
-                s.items_center()
-                    .gap(2.0)
-                    .margin_right(6.0)
+                s.margin_horiz(6.0)
                     .color(config.get().color(LapceColor::STATUS_FOREGROUND))
             })
         },
-        stack((
-            not_clickable_icon(
-                || LapceIcons::SETTINGS,
-                || false,
-                || false,
-                || "Settings",
-                config,
-            )
-            .popout_menu(move || {
-                Menu::new("")
-                    .entry(MenuItem::new("Command Palette").action(move || {
-                        workbench_command.send(LapceWorkbenchCommand::PaletteCommand)
-                    }))
-                    .separator()
-                    .entry(MenuItem::new("Open Settings").action(move || {
-                        workbench_command.send(LapceWorkbenchCommand::OpenSettings)
-                    }))
-                    .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                        move || {
-                            workbench_command
-                                .send(LapceWorkbenchCommand::OpenKeyboardShortcuts)
-                        },
-                    ))
-                    .entry(MenuItem::new("Open Theme Color Settings").action(
-                        move || {
-                            workbench_command
-                                .send(LapceWorkbenchCommand::OpenThemeColorSettings)
-                        },
-                    ))
-                    .separator()
-                    .entry(if let Some(v) = latest_version.get_untracked() {
-                        if update_in_progress.get_untracked() {
-                            MenuItem::new(format!("Update in progress ({v})"))
-                                .enabled(false)
-                        } else {
-                            MenuItem::new(format!("Restart to update ({v})")).action(
-                                move || {
-                                    workbench_command
-                                        .send(LapceWorkbenchCommand::RestartToUpdate)
-                                },
-                            )
-                        }
-                    } else {
-                        MenuItem::new("No update available").enabled(false)
-                    })
-                    .separator()
-                    .entry(MenuItem::new("About Lapce").action(move || {
-                        workbench_command.send(LapceWorkbenchCommand::ShowAbout)
-                    }))
-            }),
-            container(label(|| "1".to_string()).style(move |s| {
-                let config = config.get();
-                s.font_size(10.0)
-                    .color(config.color(LapceColor::EDITOR_BACKGROUND))
-                    .border_radius(100.0)
-                    .margin_left(5.0)
-                    .margin_top(10.0)
-                    .background(config.color(LapceColor::EDITOR_CARET))
-            }))
-            .style(move |s| {
-                let has_update = has_update();
-                s.absolute()
-                    .size_pct(100.0, 100.0)
-                    .justify_end()
-                    .items_end()
-                    .pointer_events_none()
-                    .apply_if(!has_update, |s| s.hide())
-            }),
-        ))
-        .style(move |s| s.margin_horiz(6.0)),
         window_controls_view(
             window_command,
             true,
