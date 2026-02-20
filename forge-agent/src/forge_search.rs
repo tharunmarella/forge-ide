@@ -178,7 +178,8 @@ impl ForgeSearchClient {
 
         Self {
             http: Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .no_gzip()
                 .build()
                 .unwrap_or_default(),
             base_url,
@@ -374,7 +375,8 @@ impl ForgeSearchClient {
 
         let mut req = self.http.post(&url)
             .json(body)
-            .header("Accept", "text/event-stream");
+            .header("Accept", "text/event-stream")
+            .header("Accept-Encoding", "identity"); // Disable compression — SSE must not be gzip'd
         
         if !token.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", token));

@@ -4975,12 +4975,9 @@ fn search_in_path(
         let escaped = regex::escape(pattern);
         matcher.build_literals(&[&escaped])
     };
-    let matcher = matcher.map_err(|e| {
-        tracing::error!("Failed to build matcher for pattern '{}': {}", pattern, e);
-        RpcError {
-            code: 0,
-            message: "can't build matcher".to_string(),
-        }
+    let matcher = matcher.map_err(|_| RpcError {
+        code: 0,
+        message: "can't build matcher".to_string(),
     })?;
     let mut searcher = SearcherBuilder::new().build();
 
@@ -5004,29 +5001,11 @@ fn search_in_path(
 
                     let mymatch = match matcher.find(line.as_bytes())? {
                         Some(m) => m,
-                        None => {
-                            // This shouldn't happen since the callback should only be called for matching lines
-                            // But let's handle it gracefully
-                            tracing::warn!("matcher.find returned None in UTF8 callback");
-                            return Ok(true);
-                        }
+                        None => return Ok(true),
                     };
-                    
-                    // Handle zero-width matches (can happen with empty pattern or regex anchors)
-                    if mymatch.start() == mymatch.end() {
-                        // Skip zero-width matches to avoid issues with display_range calculation
-                        return Ok(true);
-                    }
-                    
-                    // Sanity check: start should be <= end
-                    if mymatch.start() > mymatch.end() {
-                        tracing::error!("Invalid match: start > end ({} > {})", mymatch.start(), mymatch.end());
-                        return Ok(true);
-                    }
-                    
-                    // Sanity check: match should be within line bounds
-                    if mymatch.end() > line.len() {
-                        tracing::error!("Match end exceeds line length ({} > {})", mymatch.end(), line.len());
+
+                    // Skip zero-width, invalid, or out-of-bounds matches
+                    if mymatch.start() >= mymatch.end() || mymatch.end() > line.len() {
                         return Ok(true);
                     }
                     
@@ -5123,9 +5102,7 @@ fn search_in_path(
                     Ok(true)
                 }),
             ) {
-                {
-                    tracing::error!("{:?}", err);
-                }
+                let _ = err; // ignore per-file search errors
             }
             if !line_matches.is_empty() {
                 matches.insert(path.clone(), line_matches);
