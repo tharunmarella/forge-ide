@@ -213,6 +213,61 @@ if [ "$CREATE_DMG" = true ]; then
 
     DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
     echo "==> DMG created at: $DMG_PATH ($DMG_SIZE)"
+
+    # ── Upload to Cloudflare R2 ──────────────────────────────────
+    R2_ENDPOINT_URL="${R2_ENDPOINT_URL:-https://aa8e7d51d43e49d8e522754d61b59709.r2.cloudflarestorage.com}"
+    R2_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:-ce795a710a6c2ac30ca57e66d3d37432}"
+    R2_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:-1cfbb76a1099c3af779c4e6598ae567e6dd6250cbf3c578eb3c036cbf7e6b0ab}"
+    R2_BUCKET_NAME="${R2_BUCKET_NAME:-prism-images}"
+    R2_PUBLIC_URL="${R2_PUBLIC_URL:-https://pub-63b4afd13ea24e6f94f86d0b7f3a802c.r2.dev}"
+
+    echo "==> Uploading $DMG_NAME to R2 bucket '$R2_BUCKET_NAME'..."
+    python3 - <<PYEOF
+import sys, os, boto3
+from botocore.exceptions import ClientError
+
+endpoint  = os.environ.get("R2_ENDPOINT_URL",    "$R2_ENDPOINT_URL")
+key_id    = os.environ.get("R2_ACCESS_KEY_ID",   "$R2_ACCESS_KEY_ID")
+secret    = os.environ.get("R2_SECRET_ACCESS_KEY","$R2_SECRET_ACCESS_KEY")
+bucket    = os.environ.get("R2_BUCKET_NAME",      "$R2_BUCKET_NAME")
+dmg_path  = "$DMG_PATH"
+dmg_name  = "$DMG_NAME"
+public_url= os.environ.get("R2_PUBLIC_URL",       "$R2_PUBLIC_URL")
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url=endpoint,
+    aws_access_key_id=key_id,
+    aws_secret_access_key=secret,
+    region_name="auto",
+)
+
+file_size = os.path.getsize(dmg_path)
+uploaded  = 0
+
+def progress(chunk):
+    global uploaded
+    uploaded += chunk
+    pct = uploaded / file_size * 100
+    bar = "#" * int(pct / 2)
+    sys.stdout.write(f"\r    [{bar:<50}] {pct:5.1f}%  ({uploaded//1024//1024}MB / {file_size//1024//1024}MB)")
+    sys.stdout.flush()
+
+try:
+    s3.upload_file(
+        dmg_path, bucket, dmg_name,
+        ExtraArgs={"ContentType": "application/x-apple-diskimage"},
+        Callback=progress,
+    )
+    print(f"\n==> Uploaded: {public_url}/{dmg_name}")
+except ClientError as e:
+    print(f"\nERROR: R2 upload failed: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+
+    if [ $? -ne 0 ]; then
+        echo "WARNING: R2 upload failed — DMG is still available locally at $DMG_PATH"
+    fi
 fi
 
 echo ""
