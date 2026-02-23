@@ -100,11 +100,11 @@ pub fn start_remote(
     // ! returned by Config::proxy_directory()
     let remote_proxy_path = match platform {
         Windows => format!(
-            "%HOMEDRIVE%%HOMEPATH%\\AppData\\Local\\lapce\\{}\\data\\proxy",
+            "%HOMEDRIVE%%HOMEPATH%\\AppData\\Local\\forge-ide\\{}\\data\\proxy",
             meta::NAME
         ),
         Darwin => format!(
-            "~/Library/Application\\ Support/dev.lapce.{}/proxy",
+            "~/Library/Application\\ Support/dev.forge-ide.{}/proxy",
             meta::NAME
         ),
         _ => {

@@ -28,7 +28,6 @@ pub fn default_panel_order() -> PanelOrder {
         im::vector![
             PanelKind::FileExplorer,
             PanelKind::SourceControl,  // Commit / Git
-            PanelKind::Terminal,       // Icon in left, but opens at bottom
             PanelKind::Search,
             PanelKind::Plugin,         // Extensions/Plugins
             PanelKind::DatabaseManager, // Opens as editor tab
@@ -40,6 +39,7 @@ pub fn default_panel_order() -> PanelOrder {
     order.insert(
         PanelPosition::BottomLeft,
         im::vector![
+            PanelKind::Terminal,
             PanelKind::Problem,
             PanelKind::CallHierarchy,
             PanelKind::References,

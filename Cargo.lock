@@ -4815,6 +4815,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing 0.2.0",
+ "ts-rs",
  "url",
 ]
 
@@ -8784,6 +8785,29 @@ name = "try-lock"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59547bce71d9c38b83d9c0e92b6066c4253371f15005def0c30d9657f50c7642"
+
+[[package]]
+name = "ts-rs"
+version = "7.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc2cae1fc5d05d47aa24b64f9a4f7cba24cdc9187a2084dd97ac57bef5eccae6"
+dependencies = [
+ "thiserror 1.0.69",
+ "ts-rs-macros",
+]
+
+[[package]]
+name = "ts-rs-macros"
+version = "7.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f7f9b821696963053a89a7bd8b292dc34420aea8294d7b225274d488f3ec92"
+dependencies = [
+ "Inflector",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+ "termcolor",
+]
 
 [[package]]
 name = "ttf-parser"

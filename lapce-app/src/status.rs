@@ -122,6 +122,33 @@ pub fn status(
                     .selectable(false)
             }),
             stack((
+                svg(move || config.get().ui_svg(LapceIcons::TERMINAL)).style(move |s| {
+                    let config = config.get();
+                    let icon_size = config.ui.icon_size() as f32;
+                    s.size(icon_size, icon_size)
+                        .color(config.color(LapceColor::LAPCE_ICON_ACTIVE))
+                }),
+            ))
+            .style(move |s| {
+                s.height_pct(100.0)
+                .padding_horiz(10.0)
+                .align_items(Some(AlignItems::Center))
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.get().color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+            })
+            .on_click_stop({
+                let window_tab_data = window_tab_data_for_click.clone();
+                move |_| {
+                    window_tab_data.toggle_panel_visual_at_position(
+                        PanelKind::Terminal,
+                        crate::panel::position::PanelPosition::BottomLeft,
+                    );
+                }
+            }),
+            stack((
                 svg(move || config.get().ui_svg(LapceIcons::GIT_LOG)).style(move |s| {
                     let config = config.get();
                     let icon_size = config.ui.icon_size() as f32;

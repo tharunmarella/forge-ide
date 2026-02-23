@@ -13,7 +13,7 @@ impl Directory {
 
     #[cfg(not(feature = "portable"))]
     fn project_dirs() -> Option<ProjectDirs> {
-        ProjectDirs::from("dev", "lapce", NAME)
+        ProjectDirs::from("dev", "forge-ide", NAME)
     }
 
     /// Return path adjacent to lapce executable when built as portable

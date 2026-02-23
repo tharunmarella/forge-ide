@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::counter::Counter;
 
-#[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct TermId(pub u64);
 
 impl TermId {

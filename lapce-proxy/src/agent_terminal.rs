@@ -27,7 +27,7 @@ use alacritty_terminal::{
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use lapce_rpc::{
-    core::CoreRpcHandler,
+    core::{CoreNotification, CoreRpcHandler},
     terminal::{TermId, TerminalProfile},
 };
 use polling::PollMode;
@@ -146,6 +146,8 @@ impl AgentTerminalManager {
         timeout_secs: u64,
         core_rpc: &CoreRpcHandler,
         ide_terminals: &Arc<std::sync::Mutex<HashMap<TermId, TerminalSender>>>,
+        tool_call_id: &str,
+        tool_name: &str,
     ) -> forge_agent::tools::ToolResult {
         let (handle, sender) = match self.spawn_terminal(command, workdir, core_rpc) {
             Ok(h) => h,
@@ -165,10 +167,13 @@ impl AgentTerminalManager {
         let exit_flag = handle.exit_flag.clone();
         self.terminals.lock().unwrap().insert(pid, handle);
 
-        // Wait for the process to complete (with timeout) — lock is NOT held
+        // Wait for the process to complete (with timeout) — lock is NOT held.
+        // Sends periodic AgentToolCallUpdate notifications so the chat panel
+        // streams output live instead of showing it all at the end.
         let timeout = Duration::from_secs(timeout_secs);
         let (output, exit_code) = Self::wait_with_refs(
             &capture, &exit_code_ref, &exit_notify, &exit_flag, timeout,
+            core_rpc, tool_call_id, tool_name,
         );
 
         // Strip ANSI escape sequences for clean agent output
@@ -286,32 +291,69 @@ impl AgentTerminalManager {
     }
 
     /// Wait for a terminal to exit using pre-extracted Arc references.
-    /// This avoids holding the terminals lock during the wait.
+    /// Waits in 500ms chunks and sends AgentToolCallUpdate notifications each
+    /// time new output arrives so the chat panel streams live output.
     fn wait_with_refs(
         capture: &Arc<Mutex<Vec<u8>>>,
         exit_code: &Arc<Mutex<Option<Option<i32>>>>,
         exit_notify: &Arc<Condvar>,
         exit_flag: &Arc<Mutex<bool>>,
         timeout: Duration,
+        core_rpc: &CoreRpcHandler,
+        tool_call_id: &str,
+        tool_name: &str,
     ) -> (String, Option<i32>) {
+        const CHUNK: Duration = Duration::from_millis(500);
         let start = std::time::Instant::now();
-        let mut done = exit_flag.lock().unwrap();
-        while !*done {
+        let mut last_output_len = 0;
+
+        loop {
             let elapsed = start.elapsed();
             if elapsed >= timeout {
                 break;
             }
+
+            // Wait for exit signal or up to CHUNK duration
             let remaining = timeout - elapsed;
-            let (guard, result) = exit_notify.wait_timeout(done, remaining).unwrap();
-            done = guard;
-            if result.timed_out() {
+            let wait_for = CHUNK.min(remaining);
+            let done = {
+                let flag = exit_flag.lock().unwrap();
+                if *flag {
+                    true
+                } else {
+                    let (guard, _) = exit_notify.wait_timeout(flag, wait_for).unwrap();
+                    *guard
+                }
+            };
+
+            // Send partial output to the chat panel if anything new arrived
+            let current_raw = capture.lock().unwrap().clone();
+            let clean = strip_ansi_escapes(&String::from_utf8_lossy(&current_raw));
+            if clean.len() != last_output_len {
+                last_output_len = clean.len();
+                let display = if clean.len() > 30_000 {
+                    format!("{}...(truncated)", &clean[..30_000])
+                } else {
+                    clean
+                };
+                core_rpc.notification(CoreNotification::AgentToolCallUpdate {
+                    tool_call_id: tool_call_id.to_string(),
+                    tool_name: tool_name.to_string(),
+                    arguments: String::new(),
+                    status: "running".to_string(),
+                    output: Some(display),
+                });
+            }
+
+            if done {
                 break;
             }
         }
 
         let output = String::from_utf8_lossy(&capture.lock().unwrap()).to_string();
+        let done = *exit_flag.lock().unwrap();
         let code = exit_code.lock().unwrap().flatten();
-        (output, if *done { code.or(Some(0)) } else { None })
+        (output, if done { code.or(Some(0)) } else { None })
     }
 
     /// Spawn a new PTY terminal for an agent command.

@@ -10,10 +10,12 @@ use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::counter::Counter;
 
-#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct DapId(pub u64);
 
 impl Default for DapId {
@@ -35,15 +37,17 @@ pub struct DapServer {
     pub cwd: Option<PathBuf>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct RunDebugProgram {
     pub program: String,
     pub args: Option<Vec<String>>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct RunDebugConfig {
     #[serde(rename = "type")]
     pub ty: Option<String>,
@@ -54,8 +58,10 @@ pub struct RunDebugConfig {
     pub env: Option<HashMap<String, String>>,
     pub prelaunch: Option<RunDebugProgram>,
     #[serde(skip)]
+    #[ts(skip)]
     pub debug_command: Option<Vec<String>>,
     #[serde(skip)]
+    #[ts(skip)]
     pub dap_id: DapId,
     #[serde(default)]
     pub tracing_output: bool,
@@ -63,7 +69,8 @@ pub struct RunDebugConfig {
     pub config_source: ConfigSource,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub enum ConfigSource {
     #[default]
     Palette,
@@ -340,7 +347,9 @@ pub struct Terminated {
     Hash,
     Deserialize,
     Serialize,
+    TS,
 )]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct ThreadId(isize);
 
 impl std::fmt::Display for ThreadId {
@@ -404,8 +413,9 @@ pub struct Output {
     pub data: Option<Value>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct SourceBreakpoint {
     pub line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]

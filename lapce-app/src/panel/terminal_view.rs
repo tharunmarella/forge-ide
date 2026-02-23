@@ -145,8 +145,32 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                     .text_ellipsis()
                                     .selectable(false)
                             }),
-                            // No per-tab close button — tabs close when process exits.
-                            // Last-tab-close auto-hides the bottom container (see on_click below).
+                            clickable_icon(
+                                || LapceIcons::CLOSE,
+                                move || {
+                                    terminal_for_close
+                                        .close_tab(Some(terminal_tab_id));
+                                    if terminal_for_close
+                                        .tab_info
+                                        .with_untracked(|info| info.tabs.is_empty())
+                                    {
+                                        use crate::panel::position::PanelContainerPosition;
+                                        if panel_for_close.is_container_shown(
+                                            &PanelContainerPosition::Bottom,
+                                            false,
+                                        ) {
+                                            panel_for_close.toggle_container_visual(
+                                                &PanelContainerPosition::Bottom,
+                                            );
+                                        }
+                                        common_focus.set(Focus::Workbench);
+                                    }
+                                },
+                                || false,
+                                || false,
+                                || "Close Terminal",
+                                config,
+                            ),
                             empty().style(move |s| {
                                 s.absolute()
                                     .width_full()

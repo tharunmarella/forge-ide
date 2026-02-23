@@ -3427,6 +3427,7 @@ async fn execute_ide_tool(
 
             agent_term_mgr.execute_command(
                 command, workspace_path, timeout_secs, core_rpc, ide_terminals,
+                &tc.id, &tc.name,
             )
         }
         "execute_background" => {

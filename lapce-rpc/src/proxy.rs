@@ -20,6 +20,7 @@ use lsp_types::{
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use super::plugin::VoltID;
 use crate::{
@@ -35,11 +36,20 @@ use crate::{
 };
 
 /// Image data attached to a chat message (pasted screenshot, etc.).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct AttachedImageData {
     pub filename: String,
     pub data: String,       // base64-encoded
     pub mime_type: String,  // "image/png", "image/jpeg"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
+pub enum ReasoningState {
+    Thinking,
+    Done,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -49,7 +59,8 @@ pub enum ProxyRpc {
     Shutdown,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub enum ProxyStatus {
     Connecting,
     Connected,
@@ -65,8 +76,6 @@ pub struct SearchMatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[serde(tag = "method", content = "params")]
 pub enum ProxyRequest {
     NewBuffer {
         buffer_id: BufferId,
@@ -966,6 +975,10 @@ pub enum ProxyResponse {
     },
 
     // ── AI Agent ─────────────────────────────────────────────────
+    /// Reasoning state from the agent.
+    AgentReasoning {
+        state: ReasoningState,
+    },
     /// Streamed text chunk from the agent.
     AgentTextChunk {
         text: String,

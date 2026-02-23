@@ -3,10 +3,12 @@ use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::counter::Counter;
 
-#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct PluginId(pub u64);
 
 impl PluginId {
@@ -92,7 +94,8 @@ impl VoltMetadata {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../webview-ui/src/types/proxy.ts")]
 pub struct VoltID {
     pub author: String,
     pub name: String,
