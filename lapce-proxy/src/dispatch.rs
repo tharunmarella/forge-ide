@@ -181,7 +181,10 @@ impl ProxyHandler for Dispatcher {
                 self.proxy_rpc.shutdown();
             }
             Update { path, delta, rev } => {
-                let buffer = self.buffers.get_mut(&path).unwrap();
+                let Some(buffer) = self.buffers.get_mut(&path) else {
+                    tracing::warn!("Update received for untracked buffer: {:?}", path);
+                    return;
+                };
                 let old_text = buffer.rope.clone();
                 buffer.update(&delta, rev);
                 self.catalog_rpc.did_change_text_document(
@@ -584,10 +587,13 @@ impl ProxyHandler for Dispatcher {
                                         .map(|entry| entry.into_path())
                                 })
                                 .chain(
-                                    buffers.iter().flat_map(|p| {
-                                        ignore::Walk::new(p)
-                                            .filter_map(Result::ok)
-                                            .map(|entry| entry.into_path())
+                                    buffers.iter().filter_map(|p| {
+                                        // Only include files that exist and are not in workspace paths
+                                        if p.is_file() && !workspace.iter().any(|w| p.starts_with(w)) {
+                                            Some(p.clone())
+                                        } else {
+                                            None
+                                        }
                                     }),
                                 ),
                             &pattern,
@@ -1405,7 +1411,10 @@ impl ProxyHandler for Dispatcher {
                 path,
                 create_parents,
             } => {
-                let buffer = self.buffers.get_mut(&path).unwrap();
+                let Some(buffer) = self.buffers.get_mut(&path) else {
+                    tracing::warn!("Save received for untracked buffer: {:?}", path);
+                    return;
+                };
                 let rope_clone = buffer.rope.clone();
                 let path_clone = path.clone();
                 let workspace = self.workspace.clone();
@@ -3469,15 +3478,22 @@ async fn execute_ide_tool(
             };
             forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
         }
-        // ── LSP tools: not yet available ─────────────────────────
-        "lsp_go_to_definition" | "lsp_find_references" | "lsp_hover" | "lsp_rename" => {
-            forge_agent::tools::ToolResult::err(format!(
-                "LSP tool '{}' is not yet available in cloud mode. \
-                Use 'codebase_search' for semantic search or \
-                'trace_call_chain' to find callers/callees. \
-                These use the pre-indexed code graph and are often faster.",
-                tc.name
-            ))
+        // ── LSP tools: wire to bridge ─────────────────────────
+        "lsp_go_to_definition" => {
+            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
+            forge_agent::tools::lsp::lsp_go_to_definition(&tc.args, workspace_path, &bridge).await
+        }
+        "lsp_find_references" => {
+            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
+            forge_agent::tools::lsp::lsp_find_references(&tc.args, workspace_path, &bridge).await
+        }
+        "lsp_hover" => {
+            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
+            forge_agent::tools::lsp::lsp_hover(&tc.args, workspace_path, &bridge).await
+        }
+        "lsp_rename" => {
+            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
+            forge_agent::tools::lsp::lsp_rename(&tc.args, workspace_path, &bridge).await
         }
         // ── Run Configuration tools: forward to IDE ──────────
         "list_run_configs" => {
@@ -3790,7 +3806,10 @@ impl FileWatchNotifier {
 
         let local_handler = self.workspace_fs_change_handler.clone();
         let core_rpc = self.core_rpc.clone();
-        let workspace = self.workspace.clone().unwrap();
+        let Some(workspace) = self.workspace.clone() else {
+            tracing::warn!("Filesystem change handler skipped: workspace is None");
+            return;
+        };
         let last_diff = self.last_diff.clone();
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(500));
@@ -4976,9 +4995,12 @@ fn search_in_path(
         let escaped = regex::escape(pattern);
         matcher.build_literals(&[&escaped])
     };
-    let matcher = matcher.map_err(|_| RpcError {
-        code: 0,
-        message: "can't build matcher".to_string(),
+    let matcher = matcher.map_err(|e| {
+        eprintln!("Failed to build search matcher for pattern '{}': {:?}", pattern, e);
+        RpcError {
+            code: 0,
+            message: format!("can't build matcher: {}", e),
+        }
     })?;
     let mut searcher = SearcherBuilder::new().build();
 
@@ -4990,12 +5012,22 @@ fn search_in_path(
             });
         }
 
-        if path.is_file() {
-            let mut line_matches = Vec::new();
-            if let Err(err) = searcher.search_path(
-                &matcher,
-                path.clone(),
-                UTF8(|lnum, line| {
+        if !path.is_file() {
+            continue;
+        }
+
+        // Skip files that are too large (>10MB) to avoid hanging
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if metadata.len() > 10_000_000 {
+                continue;
+            }
+        }
+
+        let mut line_matches = Vec::new();
+        if let Err(err) = searcher.search_path(
+            &matcher,
+            path.clone(),
+            UTF8(|lnum, line| {
                     if current_id.load(Ordering::SeqCst) != id {
                         return Ok(false);
                     }
@@ -5102,12 +5134,12 @@ fn search_in_path(
                     }
                     Ok(true)
                 }),
-            ) {
-                let _ = err; // ignore per-file search errors
-            }
-            if !line_matches.is_empty() {
-                matches.insert(path.clone(), line_matches);
-            }
+        ) {
+            eprintln!("Search error in file {:?}: {:?}", path, err);
+            // Ignore per-file search errors
+        }
+        if !line_matches.is_empty() {
+            matches.insert(path.clone(), line_matches);
         }
     }
 

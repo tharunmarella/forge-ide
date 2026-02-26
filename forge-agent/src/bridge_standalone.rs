@@ -173,6 +173,17 @@ impl ProxyBridge for StandaloneBridge {
         Ok(Vec::new())
     }
 
+    async fn rename_symbol(
+        &self,
+        _path: &Path,
+        _line: u32,
+        _column: u32,
+        _new_name: &str,
+    ) -> Result<()> {
+        // TODO: Wire to proxy LSP
+        Ok(())
+    }
+
     // ── Terminal / Command execution ─────────────────────────────
 
     async fn execute_command(

@@ -9,6 +9,26 @@
 use serde_json::Value;
 use crate::tools::ToolResult;
 use tokio::process::Command;
+use std::path::{Path, PathBuf};
+
+/// Resolve the proto binary path.
+fn proto_bin() -> PathBuf {
+    // 1. Respect explicit override
+    if let Ok(p) = std::env::var("PROTO_BIN") {
+        return PathBuf::from(p);
+    }
+
+    // 2. Check ~/.proto/bin/proto (default install location)
+    if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+        let default = home.join(".proto").join("bin").join("proto");
+        if default.exists() {
+            return default;
+        }
+    }
+
+    // 3. Fallback — rely on whatever PATH is available
+    PathBuf::from("proto")
+}
 
 /// SDK Manager tool for development tool management.
 ///
@@ -74,7 +94,7 @@ pub async fn sdk_manager(args: &Value, workdir: &std::path::Path) -> ToolResult 
 }
 
 async fn install_tool(tool: &str, version: &str, pin: bool, workdir: &std::path::Path) -> ToolResult {
-    let mut cmd = Command::new("proto");
+    let mut cmd = Command::new(proto_bin());
     cmd.arg("install").arg(tool);
     cmd.current_dir(workdir);
     
@@ -102,7 +122,7 @@ async fn install_tool(tool: &str, version: &str, pin: bool, workdir: &std::path:
 }
 
 async fn list_installed_tools() -> ToolResult {
-    match Command::new("proto").arg("plugin").arg("list").arg("--versions").output().await {
+    match Command::new(proto_bin()).arg("plugin").arg("list").arg("--versions").output().await {
         Ok(output) => {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -117,7 +137,7 @@ async fn list_installed_tools() -> ToolResult {
 }
 
 async fn list_available_tools(tool: Option<&str>) -> ToolResult {
-    let mut cmd = Command::new("proto");
+    let mut cmd = Command::new(proto_bin());
     cmd.arg("plugin").arg("list");
     
     if let Some(t) = tool {
@@ -139,7 +159,7 @@ async fn list_available_tools(tool: Option<&str>) -> ToolResult {
 }
 
 async fn get_tool_versions(tool: &str) -> ToolResult {
-    match Command::new("proto").arg("versions").arg(tool).output().await {
+    match Command::new(proto_bin()).arg("versions").arg(tool).output().await {
         Ok(output) => {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -154,7 +174,7 @@ async fn get_tool_versions(tool: &str) -> ToolResult {
 }
 
 async fn uninstall_tool(tool: &str, version: &str) -> ToolResult {
-    match Command::new("proto").arg("uninstall").arg(tool).arg(version).output().await {
+    match Command::new(proto_bin()).arg("uninstall").arg(tool).arg(version).output().await {
         Ok(output) => {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);

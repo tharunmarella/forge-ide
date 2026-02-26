@@ -9,6 +9,7 @@ mod display;
 mod run_config;
 mod git;
 mod sdk_manager;
+pub mod lsp;
 
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
@@ -76,6 +77,12 @@ pub enum Tool {
     // SDK Management
     SdkManager,
     
+    // LSP Tools
+    LspGoToDefinition,
+    LspFindReferences,
+    LspHover,
+    LspRename,
+    
     // Interaction
     AttemptCompletion,
     AskFollowupQuestion,
@@ -120,6 +127,10 @@ impl Tool {
             Self::StopProject => "stop_project",
             Self::Git => "git",
             Self::SdkManager => "sdk_manager",
+            Self::LspGoToDefinition => "lsp_go_to_definition",
+            Self::LspFindReferences => "lsp_find_references",
+            Self::LspHover => "lsp_hover",
+            Self::LspRename => "lsp_rename",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -161,6 +172,10 @@ impl Tool {
             "stop_project" => Some(Self::StopProject),
             "git" => Some(Self::Git),
             "sdk_manager" => Some(Self::SdkManager),
+            "lsp_go_to_definition" => Some(Self::LspGoToDefinition),
+            "lsp_find_references" => Some(Self::LspFindReferences),
+            "lsp_hover" => Some(Self::LspHover),
+            "lsp_rename" => Some(Self::LspRename),
             "attempt_completion" => Some(Self::AttemptCompletion),
             "ask_followup_question" => Some(Self::AskFollowupQuestion),
             "think" => Some(Self::Think),
@@ -183,6 +198,7 @@ impl Tool {
                 | Self::ExecuteBackground
                 | Self::KillProcess
                 | Self::KillPort
+                | Self::LspRename
         )
     }
 }
@@ -384,6 +400,12 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
         Tool::Git => git::git(&tool.arguments, workdir).await,
         Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
+        
+        // LSP tools (stubs for direct execution - preferred via bridge in dispatch.rs)
+        Tool::LspGoToDefinition 
+        | Tool::LspFindReferences 
+        | Tool::LspHover 
+        | Tool::LspRename => ToolResult::err("LSP tools must be executed via ProxyBridge"),
         
         // These are handled specially by the agent
         Tool::AttemptCompletion 

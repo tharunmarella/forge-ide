@@ -177,6 +177,15 @@ pub trait ProxyBridge: Send + Sync {
     /// Get diagnostics for a file.
     async fn get_diagnostics(&self, path: &Path) -> Result<Vec<LspDiagnostic>>;
 
+    /// Rename a symbol.
+    async fn rename_symbol(
+        &self,
+        path: &Path,
+        line: u32,
+        column: u32,
+        new_name: &str,
+    ) -> Result<()>;
+
     // ── Terminal / Command execution ─────────────────────────────
 
     /// Execute a shell command and return the output.
