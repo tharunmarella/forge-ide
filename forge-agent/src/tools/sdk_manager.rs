@@ -95,16 +95,26 @@ pub async fn sdk_manager(args: &Value, workdir: &std::path::Path) -> ToolResult 
 
 async fn install_tool(tool: &str, version: &str, pin: bool, workdir: &std::path::Path) -> ToolResult {
     let mut cmd = Command::new(proto_bin());
-    cmd.arg("install").arg(tool);
+    cmd.arg("install");
     cmd.current_dir(workdir);
     
-    if version != "latest" && !version.is_empty() {
+    // Add tool name first
+    cmd.arg(tool);
+    
+    // Add version as separate argument if specified
+    // proto install <tool> <version> [--pin]
+    let version_display = if version != "latest" && !version.is_empty() {
         cmd.arg(version);
-    }
+        format!(" {}", version)
+    } else {
+        String::new()
+    };
     
     if pin {
         cmd.arg("--pin");
     }
+    
+    let tool_display = format!("{}{}", tool, version_display);
     
     match cmd.output().await {
         Ok(output) => {
@@ -112,9 +122,9 @@ async fn install_tool(tool: &str, version: &str, pin: bool, workdir: &std::path:
             let stderr = String::from_utf8_lossy(&output.stderr);
             
             if output.status.success() {
-                ToolResult::ok(&format!("✅ Successfully installed {} {}\n{}", tool, version, stdout))
+                ToolResult::ok(&format!("✅ Successfully installed {}\n{}", tool_display, stdout))
             } else {
-                ToolResult::err(&format!("❌ Failed to install {} {}: {}", tool, version, stderr))
+                ToolResult::err(&format!("❌ Failed to install {}: {}\n{}", tool_display, stderr, stdout))
             }
         }
         Err(e) => ToolResult::err(&format!("❌ Failed to execute proto install: {}", e)),
