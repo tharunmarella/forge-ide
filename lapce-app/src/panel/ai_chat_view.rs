@@ -1565,7 +1565,7 @@ fn approval_card(
                     // except dangerous ops (delete_file). Hidden once already active.
                     label(move || {
                         if auto_approve_session.get() {
-                            "✓ Auto-approving".to_string()
+                            "Auto-Approve: ON".to_string()
                         } else {
                             "Approve All Future".to_string()
                         }
