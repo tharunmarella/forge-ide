@@ -379,6 +379,28 @@ impl AgentTerminalManager {
             environment: None,
         };
 
+        let mut env = profile.environment.clone().unwrap_or_default();
+        
+        // Inject proto paths into PATH so agent commands can find installed SDKs
+        if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+            let proto_shims = home.join(".proto").join("shims");
+            let proto_bin = home.join(".proto").join("bin");
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            
+            let mut new_path = String::new();
+            if proto_shims.exists() {
+                new_path.push_str(&proto_shims.to_string_lossy());
+                new_path.push(':');
+            }
+            if proto_bin.exists() {
+                new_path.push_str(&proto_bin.to_string_lossy());
+                new_path.push(':');
+            }
+            new_path.push_str(&current_path);
+            
+            env.insert("PATH".to_string(), new_path);
+        }
+
         let options = Options {
             shell: Some(Shell::new(
                 shell,
@@ -386,7 +408,7 @@ impl AgentTerminalManager {
             )),
             working_directory: Some(workdir.to_path_buf()),
             hold: false,
-            env: profile.environment.clone().unwrap_or_default(),
+            env,
         };
 
         setup_env();
