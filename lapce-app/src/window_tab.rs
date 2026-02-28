@@ -2676,7 +2676,8 @@ impl WindowTabData {
                 });
             }
             CoreNotification::OpenFileChanged { path, content } => {
-                self.main_split.open_file_changed(path, content);
+                self.main_split.open_file_changed(&path, content);
+                self.ai_chat.notify_file_changed(path.to_path_buf());
             }
             CoreNotification::VoltInstalled { volt, icon } => {
                 self.plugin.volt_installed(volt, icon);
@@ -2762,18 +2763,39 @@ impl WindowTabData {
                 if *done {
                     // Streaming complete: finalize the assistant message entry
                     let final_text = self.ai_chat.streaming_text.get_untracked();
-                    if !final_text.is_empty() {
-                        self.ai_chat.entries.update(|entries| {
-                            entries.push_back(new_message(
-                                ChatRole::Assistant,
-                                final_text,
-                            ));
-                        });
-                    }
-                    // Clear streaming state
+                    
+                    // Clear streaming state FIRST to hide the raw text
                     self.ai_chat.streaming_text.set(String::new());
                     self.ai_chat.has_first_token.set(false);
                     self.ai_chat.is_loading.set(false);
+                    
+                    // Now add the finalized entry with rendered markdown
+                    // Check if the last entry is the same to prevent duplicates
+                    if !final_text.is_empty() {
+                        let should_add = self.ai_chat.entries.with_untracked(|entries| {
+                            if let Some(last_entry) = entries.back() {
+                                if let crate::ai_chat::ChatEntryKind::Message { role, content } = &last_entry.kind {
+                                    // Don't add if the last message is identical from the assistant
+                                    !(*role == crate::ai_chat::ChatRole::Assistant && content == &final_text)
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            }
+                        });
+                        
+                        if should_add {
+                            self.ai_chat.entries.update(|entries| {
+                                entries.push_back(new_message(
+                                    ChatRole::Assistant,
+                                    final_text,
+                                ));
+                            });
+                        } else {
+                            tracing::warn!("Skipping duplicate assistant message");
+                        }
+                    }
                     
                     // Collapse thinking section now that we have the answer
                     self.ai_chat.thinking_collapsed.set(true);

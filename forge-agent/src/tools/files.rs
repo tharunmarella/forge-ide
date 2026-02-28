@@ -399,6 +399,32 @@ pub async fn replace(args: &Value, workdir: &Path) -> ToolResult {
         };
     }
 
+
+    // ── Mode 1.5: Fuzzy Patch Fallback ──
+    // If exact, flexible, and regex fail, let's treat old_str -> new_str as a diff hunk
+    // and let mpatch do its context-aware fuzzy matching!
+    let fuzzy_patch = format!(
+        "```diff\n--- a/file\n+++ b/file\n@@ -1,1 +1,1 @@\n{}\n{}\n```",
+        old_str.lines().map(|l| format!("-{}", l)).collect::<Vec<_>>().join("\n"),
+        new_str.lines().map(|l| format!("+{}", l)).collect::<Vec<_>>().join("\n")
+    );
+    
+    let options = mpatch::ApplyOptions::new().with_fuzz_factor(0.6);
+    if let Ok(new_content) = mpatch::patch_content_str(&fuzzy_patch, Some(&content), &options) {
+        return match std::fs::write(&full_path, &new_content) {
+            Ok(_) => {
+                let meta = super::FileEditMeta {
+                    path: path.to_string(),
+                    old_content: content.clone(),
+                    new_content: new_content.clone(),
+                };
+                ToolResult::ok(format!("Updated {} (fuzzy match fallback)", path))
+                    .with_file_edit(meta)
+            }
+            Err(e) => ToolResult::err(format!("Failed to write: {e}")),
+        };
+    }
+
     // All strategies failed -- build a helpful error message
     // Check if exact match found multiple occurrences
     let exact_count = content.matches(old_str).count();
@@ -803,60 +829,26 @@ pub async fn read_many(args: &Value, workdir: &Path) -> ToolResult {
 
 /// Simple unified diff parser
 fn apply_unified_diff(original: &str, patch: &str) -> Result<String, String> {
-    let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
-    
-    let patch_lines: Vec<&str> = patch.lines().collect();
-    let mut i = 0;
-
-    while i < patch_lines.len() {
-        let line = patch_lines[i];
+    let options = mpatch::ApplyOptions::new()
+        .with_fuzz_factor(0.7) // Tolerant fuzzy matching
+        .with_dry_run(false);
         
-        // Parse hunk header: @@ -start,count +start,count @@
-        if line.starts_with("@@") {
-            // Extract the line numbers
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 3 {
-                i += 1;
-                continue;
+    match mpatch::patch_content_str(patch, Some(original), &options) {
+        Ok(new_content) => Ok(new_content),
+        Err(e) => {
+            // Fallback: the simple manual parser if mpatch fails to parse it
+            // (mpatch is strict about unified diff headers, so we wrap the raw input in a markdown diff block)
+            let formatted_patch = format!("```diff
+--- a/file
++++ b/file
+{}
+```", patch);
+            match mpatch::patch_content_str(&formatted_patch, Some(original), &options) {
+                Ok(new_content) => Ok(new_content),
+                Err(e2) => Err(format!("mpatch failed: {}. Fallback failed: {}", e, e2)),
             }
-            
-            let old_range = parts[1].trim_start_matches('-');
-            let old_start: usize = old_range
-                .split(',')
-                .next()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(1);
-            
-            let mut current_line = old_start.saturating_sub(1);
-            i += 1;
-
-            // Process hunk lines
-            while i < patch_lines.len() && !patch_lines[i].starts_with("@@") {
-                let hunk_line = patch_lines[i];
-                
-                if hunk_line.starts_with('-') {
-                    // Remove line
-                    if current_line < lines.len() {
-                        lines.remove(current_line);
-                    }
-                } else if hunk_line.starts_with('+') {
-                    // Add line
-                    let content = hunk_line.strip_prefix('+').unwrap_or("");
-                    lines.insert(current_line, content.to_string());
-                    current_line += 1;
-                } else if hunk_line.starts_with(' ') || hunk_line.is_empty() {
-                    // Context line
-                    current_line += 1;
-                }
-                
-                i += 1;
-            }
-        } else {
-            i += 1;
         }
     }
-
-    Ok(lines.join("\n"))
 }
 
 /// Apply a V4A format patch (used by apply_patch tool)

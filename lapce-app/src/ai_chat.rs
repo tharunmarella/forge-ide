@@ -730,6 +730,54 @@ impl AiChatData {
         false
     }
 
+
+    pub fn notify_file_changed(&self, path: std::path::PathBuf) {
+        if !self.is_forge_search_authenticated() {
+            return;
+        }
+
+        let token = Self::read_forge_token();
+        let base_url = std::env::var("FORGE_SEARCH_URL")
+            .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+            
+        let workspace_id = self
+            .common
+            .workspace
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "default".to_string());
+            
+        let conversation_id = self.conversation_id.get_untracked();
+        let path_str = path.to_string_lossy().to_string();
+
+        std::thread::spawn(move || {
+            let client = match reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+
+            let notify_url = format!("{}/chat/notify_file_change", base_url);
+            let req = client.post(&notify_url).json(&serde_json::json!({
+                "conversation_id": conversation_id,
+                "workspace_id": workspace_id,
+                "files_changed": [path_str]
+            }));
+            
+            let req = if !token.is_empty() {
+                req.header("Authorization", format!("Bearer {}", token))
+            } else {
+                req
+            };
+
+            let _ = req.send();
+        });
+    }
+
     pub fn clear_chat(&self) {
         self.entries.update(|entries| entries.clear());
         self.streaming_text.set(String::new());

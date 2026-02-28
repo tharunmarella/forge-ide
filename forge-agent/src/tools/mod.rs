@@ -1,5 +1,5 @@
 mod execute;
-mod files;
+pub mod files;
 pub(crate) mod search;
 mod code;
 mod process;
