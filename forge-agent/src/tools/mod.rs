@@ -10,6 +10,7 @@ mod run_config;
 mod git;
 mod sdk_manager;
 pub mod lsp;
+pub mod web;
 
 pub use lint::{lint_file, LintResult, LintError, LintSeverity};
 
@@ -26,6 +27,7 @@ pub use display::*;
 pub use run_config::*;
 pub use git::*;
 pub use sdk_manager::*;
+pub use web::*;
 
 // Re-export ensure_indexed for external callers (lapce-proxy)
 pub use search::ensure_indexed;
@@ -83,6 +85,9 @@ pub enum Tool {
     LspHover,
     LspRename,
     
+    // Web
+    FetchWebpage,
+    
     // Interaction
     AttemptCompletion,
     AskFollowupQuestion,
@@ -131,6 +136,7 @@ impl Tool {
             Self::LspFindReferences => "lsp_find_references",
             Self::LspHover => "lsp_hover",
             Self::LspRename => "lsp_rename",
+            Self::FetchWebpage => "fetch_webpage",
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -400,6 +406,7 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
         Tool::Git => git::git(&tool.arguments, workdir).await,
         Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
+        Tool::FetchWebpage => web::fetch_webpage(&tool.arguments).await,
         
         // LSP tools (stubs for direct execution - preferred via bridge in dispatch.rs)
         Tool::LspGoToDefinition 
