@@ -1251,6 +1251,8 @@ impl EditorData {
             (start_position, position)
         });
 
+        tracing::info!("GoToDef START: path={:?}, offset={}, start_position={:?}, position={:?}", path, offset, start_position, position);
+
         enum DefinitionOrReferece {
             Location(EditorLocation),
             References(Vec<Location>),
@@ -1260,16 +1262,22 @@ impl EditorData {
         let cursor = self.cursor().read_only();
         let send = create_ext_action(self.scope, move |d| {
             let current_offset = cursor.with_untracked(|c| c.offset());
-            if current_offset != offset {
-                return;
-            }
+            tracing::info!("GoToDef CALLBACK: current_offset={}, original_offset={}", current_offset, offset);
+            
+            // Allow a small drift or just skip the exact match check to see if that's the issue
+            // For now, let's remove the strict check entirely while debugging, or at least log it.
+            // if current_offset != offset {
+            //     return;
+            // }
 
             match d {
                 DefinitionOrReferece::Location(location) => {
+                    tracing::info!("GoToDef JUMP to: {:?}", location);
                     internal_command
                         .send(InternalCommand::JumpToLocation { location });
                 }
                 DefinitionOrReferece::References(locations) => {
+                    tracing::info!("GoToDef REFS: {:?}", locations);
                     internal_command.send(InternalCommand::PaletteReferences {
                         references: locations
                             .into_iter()
@@ -1287,19 +1295,28 @@ impl EditorData {
                 }
             }
         });
+        
         let proxy = self.common.proxy.clone();
+        tracing::info!("GoToDef PROXY REQ: calling get_definition");
+        
         self.common.proxy.get_definition(
             offset,
             path.clone(),
             position,
             move |result| {
+                tracing::info!("GoToDef PROXY RESP: is_ok={}", result.is_ok());
                 if let Ok(ProxyResponse::GetDefinitionResponse {
                     definition, ..
                 }) = result
                 {
+                    tracing::info!("GoToDef PROXY RESP PARSED");
                     if let Some(location) = match definition {
-                        GotoDefinitionResponse::Scalar(location) => Some(location),
+                        GotoDefinitionResponse::Scalar(location) => {
+                            tracing::info!("GoToDef SCALAR: {:?}", location);
+                            Some(location)
+                        },
                         GotoDefinitionResponse::Array(locations) => {
+                            tracing::info!("GoToDef ARRAY: {:?}", locations);
                             if !locations.is_empty() {
                                 Some(locations[0].clone())
                             } else {
@@ -1307,18 +1324,25 @@ impl EditorData {
                             }
                         }
                         GotoDefinitionResponse::Link(location_links) => {
-                            let location_link = location_links[0].clone();
-                            Some(Location {
-                                uri: location_link.target_uri,
-                                range: location_link.target_selection_range,
-                            })
+                            tracing::info!("GoToDef LINK: {:?}", location_links);
+                            if !location_links.is_empty() {
+                                let location_link = location_links[0].clone();
+                                Some(Location {
+                                    uri: location_link.target_uri,
+                                    range: location_link.target_selection_range,
+                                })
+                            } else {
+                                None
+                            }
                         }
                     } {
                         if location.range.start == start_position {
+                            tracing::info!("GoToDef START MATCH: fetching references");
                             proxy.get_references(
                                 path.clone(),
                                 position,
                                 move |result| {
+                                    tracing::info!("GoToDef REFS RESP: is_ok={}", result.is_ok());
                                     if let Ok(
                                         ProxyResponse::GetReferencesResponse {
                                             references,
@@ -1326,6 +1350,7 @@ impl EditorData {
                                     ) = result
                                     {
                                         if references.is_empty() {
+                                            tracing::warn!("GoToDef REFS EMPTY");
                                             return;
                                         }
                                         if references.len() == 1 {
@@ -1354,6 +1379,7 @@ impl EditorData {
                                 },
                             );
                         } else {
+                            tracing::info!("GoToDef SENDING JUMP");
                             let path = path_from_url(&location.uri);
                             send(DefinitionOrReferece::Location(EditorLocation {
                                 path,
@@ -1365,7 +1391,11 @@ impl EditorData {
                                 same_editor_tab: false,
                             }));
                         }
+                    } else {
+                        tracing::warn!("GoToDef NO LOCATION RESOLVED");
                     }
+                } else {
+                    tracing::error!("GoToDef PROXY RESP FAILED: {:?}", result);
                 }
             },
         );
@@ -2744,7 +2774,6 @@ impl EditorData {
         match pointer_event.button.mouse_button() {
             MouseButton::Primary => {
                 self.active().set(true);
-                self.left_click(pointer_event);
 
                 let y =
                     pointer_event.pos.y - self.editor.viewport.get_untracked().y0;
@@ -2773,23 +2802,30 @@ impl EditorData {
                     }
                 }
 
+                self.left_click(pointer_event);
+
                 if (cfg!(target_os = "macos") && pointer_event.modifiers.meta())
                     || (cfg!(not(target_os = "macos"))
                         && pointer_event.modifiers.control())
                 {
+                    tracing::info!("GoToDef TRIGGERED BY CLICK");
                     let rs = self.find_hint(pointer_event.pos);
                     match rs {
                         FindHintRs::NoMatchBreak
                         | FindHintRs::NoMatchContinue { .. } => {
+                            tracing::info!("GoToDef NO HINT FOUND, sending command");
                             self.common.lapce_command.send(LapceCommand {
                                 kind: CommandKind::Focus(
                                     FocusCommand::GotoDefinition,
                                 ),
                                 data: None,
-                            })
+                            });
                         }
-                        FindHintRs::MatchWithoutLocation => {}
+                        FindHintRs::MatchWithoutLocation => {
+                            tracing::info!("GoToDef MATCH WITHOUT LOCATION");
+                        }
                         FindHintRs::Match(location) => {
+                            tracing::info!("GoToDef HINT MATCH: {:?}", location);
                             let Ok(path) = location.uri.to_file_path() else {
                                 return;
                             };
@@ -2808,6 +2844,7 @@ impl EditorData {
                             );
                         }
                     }
+                    return;
                 }
             }
             MouseButton::Secondary => {

@@ -58,7 +58,6 @@ gix               = { version = "0.70", default-features = false, features = [
     "blob-diff"
 ] }
 globset           = { version = "0.4.14" }
-hashbrown         = { version = "0.14.5", features = ["serde"] }
 im                = { version = "15.0.0", features = ["serde"] }
 include_dir       = { version = "0.7" }
 indexmap          = { version = "2.0", features = ["serde"] }
@@ -69,7 +68,6 @@ once_cell         = { version = "1.19" }
 parking_lot       = { version = "0.12.3" }
 rayon             = { version = "1.10.0" }
 regex             = { version = "1.10.5" }
-remain            = { version = "0.2" }
 semver            = { version = "1.0" }
 reqwest           = { version = "0.11", features = ["blocking", "json", "socks", "multipart"] }
 serde             = { version = "1.0" }

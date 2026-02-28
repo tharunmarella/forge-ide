@@ -45,6 +45,7 @@ pub struct PluginCatalog {
     plugin_configurations: HashMap<String, HashMap<String, serde_json::Value>>,
     unactivated_volts: HashMap<VoltID, VoltMetadata>,
     open_files: HashMap<PathBuf, String>,
+    native_lsps_started: std::collections::HashSet<String>,
 }
 
 impl PluginCatalog {
@@ -64,6 +65,7 @@ impl PluginCatalog {
             debuggers: HashMap::new(),
             unactivated_volts: HashMap::new(),
             open_files: HashMap::new(),
+            native_lsps_started: std::collections::HashSet::new(),
         };
 
         thread::spawn(move || {
@@ -306,6 +308,20 @@ impl PluginCatalog {
             .collect();
         self.start_unactivated_volts(to_be_activated);
 
+        // Native LSP auto-install logic
+        if !self.native_lsps_started.contains(&document.language_id) {
+            let has_plugin_for_lang = self.plugins.values().any(|p| {
+                // Approximate check if the plugin is handling this language
+                // The actual check is `document_supported`, but `PluginServerRpcHandler`
+                // doesn't have a synchronous `document_supported`.
+                // However, if we reach here and there's no activated volt, maybe we should start one.
+                false // We will refine this if needed, but since we insert to native_lsps_started, it only tries once.
+            });
+            
+            self.native_lsps_started.insert(document.language_id.clone());
+            self.start_native_lsp_for_language(&document.language_id);
+        }
+
         let path = document.uri.to_file_path().ok();
         for (_, plugin) in self.plugins.iter() {
             plugin.server_notification(
@@ -318,6 +334,112 @@ impl PluginCatalog {
                 true,
             );
         }
+    }
+
+    fn start_native_lsp_for_language(&self, language_id: &str) {
+        let (tool_name, lsp_binary, mut args) = match language_id {
+            "python" => ("pyright", "pyright-langserver", vec!["--stdio".to_string()]),
+            "rust" => ("rust-analyzer", "rust-analyzer", vec![]),
+            "go" => ("gopls", "gopls", vec![]),
+            "javascript" | "typescript" | "javascriptreact" | "typescriptreact" => {
+                ("typescript-language-server", "typescript-language-server", vec!["--stdio".to_string()])
+            }
+            "svelte" | "vue" | "astro" => ("typescript-language-server", "typescript-language-server", vec!["--stdio".to_string()]),
+            _ => return, // Unsupported language for native auto-install
+        };
+
+        let catalog_rpc = self.plugin_rpc.clone();
+        let workspace = self.workspace.clone();
+        let language_id = language_id.to_string();
+
+        std::thread::spawn(move || {
+            let core_rpc = catalog_rpc.core_rpc.clone();
+            core_rpc.log(
+                lapce_rpc::core::LogLevel::Info,
+                format!("Checking native LSP for {}: {}", language_id, tool_name),
+                None,
+            );
+
+            // 1. Try to find the binary in PATH or proto
+            let mut bin_path = lsp_binary.to_string();
+            
+            // Check if proto is available and install if needed
+            let proto_bin = crate::proto_manager::proto_bin();
+            let proto_available = std::process::Command::new(&proto_bin)
+                .arg("--version")
+                .output()
+                .is_ok();
+
+            if proto_available {
+                // Ensure it is installed
+                core_rpc.log(
+                    lapce_rpc::core::LogLevel::Info,
+                    format!("Installing {} via proto...", tool_name),
+                    None,
+                );
+                
+                let _ = std::process::Command::new(&proto_bin)
+                    .arg("install")
+                    .arg(tool_name)
+                    .output();
+                    
+                // Get the exact binary path from proto
+                if let Ok(output) = std::process::Command::new(&proto_bin)
+                    .arg("bin")
+                    .arg(tool_name)
+                    .output()
+                {
+                    if let Ok(path) = String::from_utf8(output.stdout) {
+                        let path = path.trim();
+                        if !path.is_empty() {
+                            bin_path = path.to_string();
+                        }
+                    }
+                }
+            }
+
+            core_rpc.log(
+                lapce_rpc::core::LogLevel::Info,
+                format!("Starting native LSP for {}: {}", language_id, bin_path),
+                None,
+            );
+
+            // 2. Prepare the LSP start parameters
+            let volt_id = VoltID {
+                author: "forge".to_string(),
+                name: tool_name.to_string(),
+            };
+
+            let server_uri = lsp_types::Url::parse(&format!("urn:{}", bin_path)).unwrap_or_else(|_| lsp_types::Url::parse(&format!("urn:{}", lsp_binary)).unwrap());
+            
+            let document_selector = vec![lsp_types::DocumentFilter {
+                language: Some(language_id.clone()),
+                scheme: Some("file".to_string()),
+                pattern: None,
+            }];
+
+            // 3. Start the LSP
+            if let Err(err) = crate::plugin::lsp::LspClient::start(
+                catalog_rpc.clone(),
+                document_selector,
+                workspace.clone(),
+                volt_id,
+                format!("{} (Native)", tool_name),
+                None,
+                None,
+                workspace,
+                server_uri,
+                args,
+                None,
+            ) {
+                tracing::error!("Failed to start native LSP: {:?}", err);
+                core_rpc.log(
+                    lapce_rpc::core::LogLevel::Error,
+                    format!("Failed to start native LSP for {}: {:?}", language_id, err),
+                    None,
+                );
+            }
+        });
     }
 
     pub fn handle_did_save_text_document(

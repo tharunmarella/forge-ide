@@ -979,7 +979,7 @@ fn message_bubble(
                                     }
                                     layout
                                 })
-                                .style(|s| s.width_pct(100.0).min_width(0.0)),
+                                .style(|s| s.width_pct(100.0).min_width(0.0).selectable(true)),
                             )
                             .style(|s| s.width_pct(100.0).min_width(0.0))
                             .into_any(),
@@ -1061,7 +1061,7 @@ fn message_bubble(
                         }
                         text_layout
                     })
-                    .style(|s| s.width_pct(100.0).min_width(0.0))
+                    .style(|s| s.width_pct(100.0).min_width(0.0).selectable(true))
                 )
                 .style(|s| s.width_pct(100.0).min_width(0.0))
                 .into_any()
@@ -1443,7 +1443,7 @@ fn approval_card(
                             let config = config.get();
                             create_terminal_text_layout(&summary, &config)
                         })
-                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                        .style(|s| s.width_pct(100.0).min_width(0.0).selectable(true))
                     }
                 )
                 .style(|s| {
@@ -1478,7 +1478,7 @@ fn approval_card(
                             &config,
                         )
                     })
-                    .style(|s| s.width_pct(100.0).min_width(0.0)),
+                    .style(|s| s.width_pct(100.0).min_width(0.0).selectable(true)),
                 )
                 .style(|s| s.width_pct(100.0).max_height(500.0)),
             )
@@ -1859,7 +1859,7 @@ fn tool_call_card(
                                             }
                                             text_layout
                                         })
-                                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                                        .style(|s| s.width_pct(100.0).min_width(0.0).selectable(true))
                                     )
                                     .style(|s| s.width_pct(100.0).min_width(0.0))
                                     .into_any(),
@@ -2010,7 +2010,7 @@ fn tool_call_card(
                                             let config = config.get();
                                             create_terminal_text_layout(&out.clone().unwrap_or_default(), &config)
                                         })
-                                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                                        .style(|s| s.width_pct(100.0).min_width(0.0).selectable(true))
                                     }
                                 )
                                 .style(|s| {

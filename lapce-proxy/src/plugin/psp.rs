@@ -564,7 +564,13 @@ pub fn handle_plugin_server_message(
                 resp: ResponseSender::new(tx),
             };
             server_rpc.handle_rpc(rpc);
-            let result = rx.recv().unwrap();
+            let result = match rx.recv() {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Plugin RPC response channel closed: {e}");
+                    return None;
+                }
+            };
             let resp = match result {
                 Ok(v) => JsonRpc::success(id, &v),
                 Err(e) => JsonRpc::error(

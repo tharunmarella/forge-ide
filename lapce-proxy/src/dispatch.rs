@@ -2830,7 +2830,7 @@ impl ProxyHandler for Dispatcher {
                                                             tool_name: tc_name.clone(),
                                                             arguments: args_json.clone(),
                                                             status: "running".to_string(),
-                                                            output: None,
+                                                            output: Some("Executing command...".to_string()),
                                                         });
                                                         true
                                                     } else {
@@ -2869,7 +2869,7 @@ impl ProxyHandler for Dispatcher {
                                                         tool_name: tc_name.clone(),
                                                         arguments: args_json,
                                                         status: "running".to_string(),
-                                                        output: None,
+                                                        output: Some("Executing command...".to_string()),
                                                     });
                                                     
                                                     let tc_info = forge_agent::ToolCallInfo {

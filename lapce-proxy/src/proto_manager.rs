@@ -12,7 +12,7 @@ use std::{
 /// Resolve the proto binary path.
 /// Checks common install locations so it works even when launched as a .app bundle
 /// (which doesn't inherit the user's shell PATH).
-fn proto_bin() -> PathBuf {
+pub fn proto_bin() -> PathBuf {
     // 1. Respect explicit override
     if let Ok(p) = std::env::var("PROTO_BIN") {
         return PathBuf::from(p);

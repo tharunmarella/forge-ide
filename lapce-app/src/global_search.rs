@@ -172,6 +172,8 @@ impl GlobalSearchData {
     }
 
     fn update_matches(&self, matches: IndexMap<PathBuf, Vec<SearchMatch>>) {
+        let mut to_update = Vec::new();
+
         self.search_result.update(|current| {
             let mut to_remove = Vec::new();
             for path in current.keys() {
@@ -180,12 +182,12 @@ impl GlobalSearchData {
                 }
             }
             for path in to_remove {
-                current.remove(&path);
+                current.shift_remove(&path);
             }
 
             for (path, match_list) in matches {
                 if let Some(match_data) = current.get(&path) {
-                    match_data.matches.set(match_list.into());
+                    to_update.push((match_data.matches, match_list.into()));
                 } else {
                     let match_data = SearchMatchData {
                         expanded: self.common.scope.create_rw_signal(true),
@@ -199,6 +201,13 @@ impl GlobalSearchData {
                 }
             }
         });
+
+        // Update nested signals outside the `update` closure to prevent
+        // "RefCell already mutably borrowed" panics when reactive UI updates 
+        // try to read `search_result` synchronously.
+        for (signal, match_list) in to_update {
+            signal.set(match_list);
+        }
     }
 
     pub fn set_pattern(&self, pattern: String) {
