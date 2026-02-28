@@ -497,7 +497,7 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
         // Essential tools
         serde_json::json!({
             "name": "execute_command",
-            "description": "Execute a shell command. Use for running builds, tests, git, etc. Commands time out after 120 seconds by default.",
+            "description": "Execute a shell command. Use for running builds, tests, git, etc. Commands time out after 120 seconds by default. CRITICAL: Do not use for interactive commands that prompt for user input (e.g., npx prisma migrate dev without --name). It will hang until the timeout because you cannot provide input.",
             "parameters": {
                 "type": "object",
                 "properties": {

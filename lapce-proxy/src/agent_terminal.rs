@@ -381,6 +381,11 @@ impl AgentTerminalManager {
 
         let mut env = profile.environment.clone().unwrap_or_default();
         
+        // Prevent commands from hanging on interactive prompts
+        env.insert("CI".to_string(), "1".to_string());
+        env.insert("NONINTERACTIVE".to_string(), "1".to_string());
+        env.insert("FORCE_COLOR".to_string(), "1".to_string());
+        
         // Inject proto paths into PATH so agent commands can find installed SDKs
         if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
             let proto_shims = home.join(".proto").join("shims");
