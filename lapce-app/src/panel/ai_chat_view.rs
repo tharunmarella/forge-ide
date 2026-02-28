@@ -1018,7 +1018,7 @@ fn message_bubble(
                                                 .style(move |s| {
                                                     let config = config.get();
                                                     // IMPORTANT: Images must constrain to 100% of panel width so they don't overflow
-                                                    s.max_width_pct(100.0)
+                                                    s.width_pct(100.0)
                                                         .min_height(80.0)
                                                         .padding(8.0)
                                                         .border_radius(6.0)
@@ -1923,7 +1923,7 @@ fn tool_call_card(
                                                 move |img_opt| {
                                                     if let Some(bytes) = img_opt {
                                                         img(move || bytes.clone())
-                                                            .style(|s| s.max_width_pct(100.0).border_radius(4.0))
+                                                            .style(|s| s.width_pct(100.0).border_radius(4.0))
                                                             .into_any()
                                                     } else {
                                                         label(|| "⏳ Rendering diagram...".to_string())
