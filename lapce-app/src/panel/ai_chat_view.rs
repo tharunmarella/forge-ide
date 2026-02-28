@@ -890,7 +890,7 @@ fn chat_entry_view(
         ChatEntryKind::ToolCall(tc) => {
             // Approval-pending tools get Accept/Reject/Approve-All buttons
             if tc.status == ToolCallStatus::WaitingApproval || tc.status == ToolCallStatus::AwaitingReview {
-                return approval_card(config, tc, proxy, internal_command, auto_approve_session).into_any();
+                return approval_card(config, tc, proxy, internal_command, auto_approve_session, panel_width).into_any();
             }
             // File-related tools get a special clickable file block
             let is_file_tool = matches!(
@@ -898,9 +898,9 @@ fn chat_entry_view(
                 "read_file" | "write_to_file" | "replace_in_file" | "apply_patch" | "delete_file"
             );
             if is_file_tool {
-                file_tool_card(config, tc, internal_command).into_any()
+                file_tool_card(config, tc, internal_command, panel_width).into_any()
             } else {
-                tool_call_card(config, tc).into_any()
+                tool_call_card(config, tc, panel_width).into_any()
             }
         }
         ChatEntryKind::ThinkingStep(_) | ChatEntryKind::Plan(_) | ChatEntryKind::ServerToolCall(_) => {
@@ -1046,17 +1046,25 @@ fn message_bubble(
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0))
                 .into_any()
             } else {
-                label(move || content.clone())
-                    .style(move |s| {
+                container(
+                    rich_text(move || {
+                        let mut text_layout = TextLayout::new();
                         let config = config.get();
-                        s.font_size((config.ui.font_size() as f32).max(13.0))
-                            .width_pct(100.0)
-                            .min_width(0.0)
-                            .max_width_pct(100.0)
-                            .line_height(1.5)
-                            .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                        let attrs = Attrs::new()
+                            .font_size((config.ui.font_size() as f32).max(13.0))
+                            .line_height(LineHeightValue::Normal(1.5))
+                            .color(config.color(LapceColor::EDITOR_FOREGROUND));
+                        text_layout.set_text(&content, AttrsList::new(attrs), None);
+                        let w = panel_width.get() as f32;
+                        if w > 60.0 {
+                            text_layout.set_size(w - 60.0, f32::MAX);
+                        }
+                        text_layout
                     })
-                    .into_any()
+                    .style(|s| s.width_pct(100.0).min_width(0.0))
+                )
+                .style(|s| s.width_pct(100.0).min_width(0.0))
+                .into_any()
             },
         ))
         .style(|s| s.flex_col().width_pct(100.0).min_width(0.0).max_width_pct(100.0)),
@@ -1090,6 +1098,7 @@ fn file_tool_card(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     tc: ChatToolCall,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
+    panel_width: floem::reactive::RwSignal<f64>,
 ) -> impl View {
     let is_success = tc.status == ToolCallStatus::Success;
     let is_error = tc.status == ToolCallStatus::Error;
@@ -1173,6 +1182,7 @@ fn file_tool_card(
                     .font_bold()
                     .flex_grow(1.0)
                     .min_width(0.0)
+                    .text_ellipsis()
                     .color(config.color(LapceColor::EDITOR_FOREGROUND))
             }),
             // Action label
@@ -1312,6 +1322,7 @@ fn approval_card(
     proxy: lapce_rpc::proxy::ProxyRpcHandler,
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
     auto_approve_session: floem::reactive::RwSignal<bool>,
+    panel_width: floem::reactive::RwSignal<f64>,
 ) -> impl View {
     let tool_name = tc.name.clone();
     let summary = tc.output.clone().unwrap_or_else(|| format!("Execute: {}", tool_name));
@@ -1640,6 +1651,7 @@ fn approval_card(
 fn tool_call_card(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     tc: ChatToolCall,
+    panel_width: floem::reactive::RwSignal<f64>,
 ) -> impl View {
     let is_running = tc.status == ToolCallStatus::Running;
     let is_success = tc.status == ToolCallStatus::Success;
@@ -1771,8 +1783,10 @@ fn tool_call_card(
                             s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
                                 .font_family("monospace".to_string())
                                 .width_pct(100.0)
+                                .max_width_pct(100.0)
                                 .min_width(0.0)
                                 .margin_top(4.0)
+                                .text_ellipsis()
                                 .color(config.color(LapceColor::EDITOR_DIM))
                                 .apply_if(args_preview.is_empty(), |s| s.hide())
                         }),
@@ -1826,17 +1840,29 @@ fn tool_call_card(
                                         })
                                     },
                                     // Code content
-                                    label(move || code.clone().unwrap_or_default()).style(move |s| {
-                                        let config = config.get();
-                                        s.font_size(
-                                            (config.ui.font_size() as f32 - 1.0).max(11.0),
-                                        )
-                                        .font_family("monospace".to_string())
-                                        .width_pct(100.0)
-                                        .min_width(0.0)
-                                        .line_height(1.5)
-                                        .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                                    }),
+                                    container(
+                                        rich_text(move || {
+                                            let mut text_layout = TextLayout::new();
+                                            let config = config.get();
+                                            let code_font_family: Vec<floem::text::FamilyOwned> = floem::text::FamilyOwned::parse_list(&config.editor.font_family).collect();
+                                            let attrs = Attrs::new()
+                                                .font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                                                .family(&code_font_family)
+                                                .line_height(LineHeightValue::Normal(1.5))
+                                                .color(config.color(LapceColor::EDITOR_FOREGROUND));
+                                            
+                                            text_layout.set_text(&code.clone().unwrap_or_default(), AttrsList::new(attrs), None);
+                                            
+                                            let w = panel_width.get() as f32;
+                                            if w > 80.0 {
+                                                text_layout.set_size(w - 80.0, f32::MAX);
+                                            }
+                                            text_layout
+                                        })
+                                        .style(|s| s.width_pct(100.0).min_width(0.0))
+                                    )
+                                    .style(|s| s.width_pct(100.0).min_width(0.0))
+                                    .into_any(),
                                 ))
                                 .style(|s| s.flex_col().width_pct(100.0))
                             )
