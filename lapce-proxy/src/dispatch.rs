@@ -17,7 +17,7 @@ use crossbeam_channel::Sender;
 // git2 dependency removed - using gix and git command line instead
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{SearcherBuilder, sinks, sinks::UTF8};
+use grep_searcher::{SearcherBuilder, sinks::UTF8};
 use ignore;
 use indexmap::IndexMap;
 use lapce_rpc::{
@@ -54,6 +54,46 @@ use crate::{
 
 const OPEN_FILE_EVENT_TOKEN: WatchToken = WatchToken(1);
 const WORKSPACE_EVENT_TOKEN: WatchToken = WatchToken(2);
+
+// Helper to save run config from proxy
+fn save_run_config_to_disk(workspace: &Path, config: lapce_rpc::dap_types::RunDebugConfig) -> Result<(), String> {
+    let lapce_dir = workspace.join(".lapce");
+    if !lapce_dir.exists() {
+        let _ = std::fs::create_dir_all(&lapce_dir);
+    }
+    let run_toml = lapce_dir.join("run.toml");
+    
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct RunConfigs {
+        configs: Vec<lapce_rpc::dap_types::RunDebugConfig>,
+    }
+    
+    let mut configs = if run_toml.exists() {
+        std::fs::read_to_string(&run_toml)
+            .ok()
+            .and_then(|c| toml::from_str::<RunConfigs>(&c).ok())
+            .map(|c| c.configs)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    
+    if let Some(pos) = configs.iter().position(|c| c.name == config.name) {
+        configs[pos] = config;
+    } else {
+        configs.push(config);
+    }
+    
+    match toml::to_string_pretty(&RunConfigs { configs }) {
+        Ok(content) => {
+            match std::fs::write(&run_toml, content) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(format!("Failed to save: {}", e)),
+            }
+        }
+        Err(e) => Err(format!("Failed to serialize: {}", e)),
+    }
+}
 
 pub struct Dispatcher {
     workspace: Option<PathBuf>,
@@ -1964,44 +2004,9 @@ impl ProxyHandler for Dispatcher {
             
             SaveRunConfig { config } => {
                 let result = if let Some(workspace) = self.workspace.as_ref() {
-                    let lapce_dir = workspace.join(".lapce");
-                    if !lapce_dir.exists() {
-                        let _ = std::fs::create_dir_all(&lapce_dir);
-                    }
-                    let run_toml = lapce_dir.join("run.toml");
-                    
-                    // Load existing configs
-                    #[derive(serde::Deserialize, serde::Serialize)]
-                    struct RunConfigs {
-                        configs: Vec<lapce_rpc::dap_types::RunDebugConfig>,
-                    }
-                    
-                    let mut configs = if run_toml.exists() {
-                        std::fs::read_to_string(&run_toml)
-                            .ok()
-                            .and_then(|c| toml::from_str::<RunConfigs>(&c).ok())
-                            .map(|c| c.configs)
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    };
-                    
-                    // Update or add config
-                    if let Some(pos) = configs.iter().position(|c| c.name == config.name) {
-                        configs[pos] = config;
-                    } else {
-                        configs.push(config);
-                    }
-                    
-                    // Save
-                    match toml::to_string_pretty(&RunConfigs { configs }) {
-                        Ok(content) => {
-                            match std::fs::write(&run_toml, content) {
-                                Ok(_) => (true, "Configuration saved".to_string()),
-                                Err(e) => (false, format!("Failed to save: {}", e)),
-                            }
-                        }
-                        Err(e) => (false, format!("Failed to serialize: {}", e)),
+                    match save_run_config_to_disk(workspace, config) {
+                        Ok(_) => (true, "Configuration saved".to_string()),
+                        Err(e) => (false, e),
                     }
                 } else {
                     (false, "No workspace open".to_string())
@@ -3539,8 +3544,46 @@ async fn execute_ide_tool(
                 .and_then(|v| v.as_str())
                 .unwrap_or("run")
                 .to_string();
+            let background = tc.args.get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             
-            // Send notification to IDE to run the project
+            // If the user wants to run in the background (to monitor it)
+            if background {
+                let cmd_to_run = if let Some(cmd) = &command {
+                    cmd.clone()
+                } else if let Some(name) = &config_name {
+                    name.clone() // fallback if they used config_name
+                } else {
+                    return forge_agent::tools::ToolResult::err("No config or command specified");
+                };
+
+                // Save it to run.toml so the user can easily run it later
+                if let Some(cmd) = &command {
+                    let new_config = lapce_rpc::dap_types::RunDebugConfig {
+                        ty: Some("shell".to_string()),
+                        name: format!("Agent: {}", cmd),
+                        program: "sh".to_string(),
+                        args: Some(vec!["-c".to_string(), cmd.clone()]),
+                        cwd: None,
+                        env: None,
+                        prelaunch: None,
+                        debug_command: None,
+                        dap_id: lapce_rpc::dap_types::DapId::next(),
+                        tracing_output: false,
+                        config_source: lapce_rpc::dap_types::ConfigSource::Palette,
+                    };
+                    let _ = save_run_config_to_disk(workspace_path, new_config);
+                }
+
+                // Run it via agent terminal manager so we can capture the output
+                let wait_seconds = tc.args.get("wait_seconds").and_then(|v| v.as_u64()).unwrap_or(3);
+                return agent_term_mgr.execute_background(
+                    &cmd_to_run, workspace_path, wait_seconds, core_rpc, ide_terminals,
+                );
+            }
+            
+            // Otherwise, send notification to IDE to run the project normally (returns immediately)
             core_rpc.notification(CoreNotification::AgentRunProject {
                 config_name: config_name.clone(),
                 command: command.clone(),
