@@ -1667,14 +1667,19 @@ fn tool_call_card(
     // Details (shown when expanded)
     let args_preview: String = tc.arguments.chars().take(200).collect();
     
-    // Parse code blocks or mermaid diagrams from output
+    // Parse code blocks or mermaid diagrams from arguments instead of output to prevent context bloat
     let (code_block, code_language, code_title, mermaid_diagram, mermaid_title, regular_output) = 
         if is_show_code {
-            let (code, lang, title, remaining) = parse_code_block(&tc.output.clone().unwrap_or_default());
-            (code, lang, title, None, None, remaining)
+            let args_val: Option<serde_json::Value> = serde_json::from_str(&tc.arguments).ok();
+            let code = args_val.as_ref().and_then(|v| v.get("code").and_then(|s| s.as_str()).map(|s| s.to_string()));
+            let lang = args_val.as_ref().and_then(|v| v.get("language").and_then(|s| s.as_str()).map(|s| s.to_string()));
+            let title = args_val.as_ref().and_then(|v| v.get("title").and_then(|s| s.as_str()).map(|s| s.to_string()));
+            (code, lang, title, None, None, tc.output.clone())
         } else if is_show_diagram {
-            let (diagram, title, remaining) = parse_mermaid_block(&tc.output.clone().unwrap_or_default());
-            (None, None, None, diagram, title, remaining)
+            let args_val: Option<serde_json::Value> = serde_json::from_str(&tc.arguments).ok();
+            let diagram = args_val.as_ref().and_then(|v| v.get("diagram_code").and_then(|s| s.as_str()).map(|s| s.to_string()));
+            let title = args_val.as_ref().and_then(|v| v.get("title").and_then(|s| s.as_str()).map(|s| s.to_string()));
+            (None, None, None, diagram, title, tc.output.clone())
         } else {
             (None, None, None, None, None, tc.output.clone())
         };
