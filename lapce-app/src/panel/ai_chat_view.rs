@@ -1861,6 +1861,9 @@ fn tool_call_card(
                             let diagram = mermaid_diagram.clone();
                             let diagram_title = mermaid_title.clone();
                             
+                            let image_data = floem::reactive::create_rw_signal(None::<Vec<u8>>);
+                            let fetch_started = floem::reactive::create_rw_signal(false);
+                            
                             container(
                                 stack((
                                     // Title (if present)
@@ -1875,51 +1878,78 @@ fn tool_call_card(
                                                 .apply_if(diagram_title.is_none(), |s| s.hide())
                                         })
                                     },
-                                    // Diagram preview and link
+                                    // Diagram preview (fetches from mermaid.ink natively)
                                     {
-                                        let diagram_for_label = diagram.clone();
-                                        let diagram_for_click = diagram.clone();
+                                        let diag = diagram.clone();
+                                        let diag_click = diagram.clone();
+                                        
+                                        // Start fetch on first render
+                                        if let Some(d) = diag {
+                                            if !fetch_started.get_untracked() {
+                                                fetch_started.set(true);
+                                                
+                                                let ext_action = floem::ext_event::create_ext_action(floem::reactive::Scope::new(), move |bytes: Vec<u8>| {
+                                                    image_data.set(Some(bytes));
+                                                });
+                                                
+                                                std::thread::spawn(move || {
+                                                    use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+                                                    let json = serde_json::json!({
+                                                        "code": d,
+                                                        "mermaid": {"theme": "dark"}
+                                                    });
+                                                    let encoded = URL_SAFE.encode(json.to_string());
+                                                    let url = format!("https://mermaid.ink/img/{}", encoded);
+                                                    
+                                                    let client = reqwest::blocking::Client::builder()
+                                                        .user_agent("Mozilla/5.0")
+                                                        .build()
+                                                        .unwrap_or_default();
+                                                        
+                                                    if let Ok(resp) = client.get(&url).send() {
+                                                        if let Ok(bytes) = resp.bytes() {
+                                                            ext_action(bytes.to_vec());
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
                                         
                                         stack((
-                                            label(|| "🎨 Diagram ready".to_string()).style(move |s| {
-                                                let config = config.get();
-                                                s.font_size((config.ui.font_size() as f32).max(13.0))
-                                                    .color(config.color(LapceColor::PANEL_FOREGROUND))
-                                                    .margin_bottom(8.0)
-                                            }),
-                                            label(move || {
-                                                if let Some(ref diag) = diagram_for_label {
-                                                    format!("Click to open interactive diagram in browser\n\n{}", 
-                                                        if diag.len() > 100 { 
-                                                            format!("{}...", &diag[..100])
-                                                        } else {
-                                                            diag.clone()
-                                                        }
-                                                    )
-                                                } else {
-                                                    String::new()
+                                            dyn_stack(
+                                                move || vec![image_data.get()],
+                                                |_| 0,
+                                                move |img_opt| {
+                                                    if let Some(bytes) = img_opt {
+                                                        img(move || bytes.clone())
+                                                            .style(|s| s.width_pct(100.0).border_radius(4.0))
+                                                            .into_any()
+                                                    } else {
+                                                        label(|| "⏳ Rendering diagram...".to_string())
+                                                            .style(move |s| {
+                                                                let config = config.get();
+                                                                s.font_size((config.ui.font_size() as f32).max(12.0))
+                                                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                                            })
+                                                            .into_any()
+                                                    }
                                                 }
-                                            }).style(move |s| {
+                                            ),
+                                            label(|| "Click to open interactive diagram in browser").style(move |s| {
                                                 let config = config.get();
                                                 s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
-                                                    .font_family("monospace".to_string())
-                                                    .width_pct(100.0)
-                                                    .min_width(0.0)
-                                                    .line_height(1.5)
+                                                    .margin_top(8.0)
                                                     .color(config.color(LapceColor::EDITOR_DIM))
                                                     .cursor(CursorStyle::Pointer)
-                                            }),
-                                        ))
-                                        .on_click_stop({
-                                            let diag = diagram_for_click;
-                                            move |_| {
-                                                if let Some(ref d) = diag {
+                                            })
+                                            .on_click_stop(move |_| {
+                                                if let Some(ref d) = diag_click {
                                                     if let Err(e) = open_mermaid_in_browser(d) {
                                                         tracing::error!("Failed to open diagram: {}", e);
                                                     }
                                                 }
-                                            }
-                                        })
+                                            }),
+                                        ))
                                         .style(|s| s.flex_col())
                                     },
                                 ))
