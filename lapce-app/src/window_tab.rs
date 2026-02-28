@@ -3110,9 +3110,9 @@ impl WindowTabData {
                     }
                 } else if let Some(cmd) = command {
                     // Create a config from the command
-                    RunDebugConfig {
-                        ty: None,
-                        name: cmd.clone(),
+                    let new_config = RunDebugConfig {
+                        ty: Some("shell".to_string()),
+                        name: format!("Agent: {}", cmd),
                         program: "sh".to_string(),
                         args: Some(vec!["-c".to_string(), cmd.clone()]),
                         cwd: None,
@@ -3122,7 +3122,12 @@ impl WindowTabData {
                         dap_id: DapId::next(),
                         tracing_output: false,
                         config_source: lapce_rpc::dap_types::ConfigSource::Palette,
-                    }
+                    };
+                    
+                    // Save it to run.toml for future use
+                    self.common.proxy.save_run_config(new_config.clone(), |_| {});
+                    
+                    new_config
                 } else {
                     // No config or command provided
                     return;
