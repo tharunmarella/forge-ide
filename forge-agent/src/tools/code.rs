@@ -117,6 +117,7 @@ pub async fn get_definition(args: &Value, workdir: &Path) -> ToolResult {
             for entry in walkdir::WalkDir::new(&search_path)
                 .max_depth(10)
                 .into_iter()
+                .filter_entry(|e| !is_hidden_or_ignored(e))
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
             {
