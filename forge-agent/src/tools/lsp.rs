@@ -26,7 +26,11 @@ pub async fn lsp_go_to_definition(
                 ToolResult::ok("No definition found")
             } else {
                 let mut output = String::from("Found definitions:\n");
-                for loc in locations {
+                for (i, loc) in locations.iter().enumerate() {
+                    if i >= 10 {
+                        output.push_str(&format!("... and {} more\n", locations.len() - 10));
+                        break;
+                    }
                     let rel_path = loc.path.strip_prefix(workdir).unwrap_or(&loc.path);
                     output.push_str(&format!(
                         "- {}:{}:{}\n",
@@ -65,7 +69,11 @@ pub async fn lsp_find_references(
                 ToolResult::ok("No references found")
             } else {
                 let mut output = String::from("Found references:\n");
-                for loc in locations {
+                for (i, loc) in locations.iter().enumerate() {
+                    if i >= 15 {
+                        output.push_str(&format!("... and {} more\n", locations.len() - 15));
+                        break;
+                    }
                     let rel_path = loc.path.strip_prefix(workdir).unwrap_or(&loc.path);
                     output.push_str(&format!(
                         "- {}:{}:{}\n",
@@ -99,7 +107,14 @@ pub async fn lsp_hover(
 
     let path = workdir.join(path_str);
     match bridge.get_hover(&path, line as u32, column as u32).await {
-        Ok(Some(hover)) => ToolResult::ok(hover.contents),
+        Ok(Some(hover)) => {
+            let mut contents = hover.contents;
+            if contents.len() > 1500 {
+                contents.truncate(1500);
+                contents.push_str("\n... (truncated)");
+            }
+            ToolResult::ok(contents)
+        }
         Ok(None) => ToolResult::ok("No hover information available"),
         Err(e) => ToolResult::err(format!("LSP hover failed: {e}")),
     }

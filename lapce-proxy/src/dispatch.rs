@@ -3510,6 +3510,10 @@ async fn execute_ide_tool(
             } else {
                 output.push_str("Detected configurations:\n\n");
                 for (i, config) in detected.iter().enumerate() {
+                    if i >= 10 {
+                        output.push_str(&format!("... and {} more\n", detected.len() - 10));
+                        break;
+                    }
                     output.push_str(&format!("{}. {}\n", i + 1, config.name));
                     output.push_str(&format!("   Command: {}\n", config.command));
                     if !config.args.is_empty() {
