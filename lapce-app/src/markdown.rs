@@ -77,6 +77,14 @@ pub fn parse_markdown_sized(
 
         match event {
             Event::Start(tag) => {
+                match &tag {
+                    Tag::TableRow | Tag::TableHead => {
+                        current_text.push_str("| ");
+                        pos += 2;
+                        builder_dirty = true;
+                    }
+                    _ => {}
+                }
                 tag_stack.push((pos, tag));
             }
             Event::End(end_tag) => {
@@ -101,6 +109,11 @@ pub fn parse_markdown_sized(
                     }
 
                     match &tag {
+                        Tag::TableCell => {
+                            current_text.push_str(" | ");
+                            pos += 3;
+                            builder_dirty = true;
+                        }
                         Tag::CodeBlock(kind) => {
                             // Note: Mermaid diagrams are now rendered server-side.
                             // If we see a ```mermaid block here, it means the server
@@ -276,7 +289,12 @@ fn attribute_for_tag<'a>(
 fn should_add_newline_after_tag(tag: &Tag) -> bool {
     !matches!(
         tag,
-        Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. }
+        Tag::Emphasis
+            | Tag::Strong
+            | Tag::Strikethrough
+            | Tag::Link { .. }
+            | Tag::Image { .. }
+            | Tag::TableCell
     )
 }
 
