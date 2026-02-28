@@ -2580,6 +2580,7 @@ impl ProxyHandler for Dispatcher {
                                                         || cmd_lower.starts_with("git show")
                                                         || cmd_lower.starts_with("cat ")
                                                         || cmd_lower.starts_with("ls")
+                                                        || cmd_lower.starts_with("find ")
                                                         || cmd_lower.starts_with("pwd")
                                                         || cmd_lower.starts_with("echo ")
                                                         || cmd_lower.starts_with("which ")
