@@ -1017,7 +1017,8 @@ fn message_bubble(
                                             img(move || png_data.clone())
                                                 .style(move |s| {
                                                     let config = config.get();
-                                                    s.width_pct(100.0)
+                                                    // IMPORTANT: Images must constrain to 100% of panel width so they don't overflow
+                                                    s.max_width_pct(100.0)
                                                         .min_height(80.0)
                                                         .padding(8.0)
                                                         .border_radius(6.0)
@@ -1030,7 +1031,7 @@ fn message_bubble(
                                                         )
                                                 }),
                                         )
-                                        .style(|s| s.width_pct(100.0).margin_vert(6.0))
+                                        .style(|s| s.width_pct(100.0).max_width_pct(100.0).margin_vert(6.0))
                                         .into_any()
                                     }
                                 } else {
@@ -1922,7 +1923,7 @@ fn tool_call_card(
                                                 move |img_opt| {
                                                     if let Some(bytes) = img_opt {
                                                         img(move || bytes.clone())
-                                                            .style(|s| s.width_pct(100.0).border_radius(4.0))
+                                                            .style(|s| s.max_width_pct(100.0).border_radius(4.0))
                                                             .into_any()
                                                     } else {
                                                         label(|| "⏳ Rendering diagram...".to_string())
