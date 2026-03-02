@@ -1,0 +1,22 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>com.forge.plugin.intellij</id>
+    <name>Forge AI</name>
+    <vendor email="support@forge.ai" url="https://forge.ai">Forge</vendor>
+
+    <description><![CDATA[
+      Forge AI Coding Assistant. Connects your IDE to the forge-search Rust backend for autonomous tool execution.
+    ]]></description>
+
+    <!-- Product and plugin compatibility requirements. -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Forge AI"
+            anchor="right"
+            icon="AllIcons.Toolwindows.ToolWindowAnt"
+            factoryClass="com.forge.plugin.ui.ForgeToolWindowFactory"
+            secondary="false"/>
+    </extensions>
+</idea-plugin>
