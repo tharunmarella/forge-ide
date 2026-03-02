@@ -24,8 +24,8 @@ class ForgeApiService(private val project: Project) {
     
     private val gson = Gson()
     
-    // Default to the streaming endpoint
-    private var backendUrl = "https://forge-search-production.up.railway.app/chat/stream"
+    // Default to local Docker Compose backend
+    private var backendUrl = "http://localhost:8080/chat/stream"
     private var conversationId: String = java.util.UUID.randomUUID().toString()
     
     fun setBackendUrl(url: String) {
