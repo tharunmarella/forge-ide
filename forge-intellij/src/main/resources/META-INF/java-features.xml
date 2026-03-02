@@ -1,0 +1,5 @@
+<!-- Optional Java-specific features for IntelliJ IDEA Ultimate/Community -->
+<idea-plugin>
+    <!-- Additional Java-specific tool handlers can be registered here -->
+    <!-- Currently all Java features work through the base PSI API -->
+</idea-plugin>

@@ -1,0 +1,5 @@
+<!-- Optional Python-specific features for PyCharm -->
+<idea-plugin>
+    <!-- Additional Python-specific tool handlers can be registered here -->
+    <!-- Currently all Python features work through the base PSI API -->
+</idea-plugin>

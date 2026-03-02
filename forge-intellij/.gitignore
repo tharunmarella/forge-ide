@@ -1,0 +1,17 @@
+# IntelliJ IDEA
+.idea/
+.gradle/
+build/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Keep documentation and scripts
+!docs/
+!scripts/
+
+# Local development
+*.log
+*.tmp
+.DS_Store
