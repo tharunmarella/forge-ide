@@ -9,17 +9,17 @@ file-explorer-double-click = false
 auto-reload-plugin = false
 
 [editor]
-font-family = "monospace"
+font-family = "Menlo, Monaco, Consolas, 'Ubuntu Mono', 'Courier New', monospace"
 font-size = 14
 code-glance-font-size = 3
-line-height = 1.6
+line-height = 1.5
 smart-tab = true
 tab-width = 4
 show-tab = true
 show-bread-crumbs = true
 scroll-beyond-last-line = true
 cursor-surrounding-lines = 1
-wrap-style = "editor-width"
+wrap-style = "none"
 wrap-column = 80
 wrap-width = 600                                             # px
 sticky-header = true

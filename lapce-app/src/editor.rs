@@ -1030,6 +1030,9 @@ impl EditorData {
             FocusCommand::GotoDefinition => {
                 self.go_to_definition();
             }
+            FocusCommand::GotoTypeDefinition => {
+                self.go_to_type_definition();
+            }
             FocusCommand::ShowCodeActions => {
                 self.show_code_actions(false);
             }
@@ -1396,6 +1399,147 @@ impl EditorData {
                     }
                 } else {
                     tracing::error!("GoToDef PROXY RESP FAILED: {:?}", result);
+                }
+            },
+        );
+    }
+
+    pub fn go_to_type_definition(&self) {
+        let doc = self.doc();
+        let path = match if doc.loaded() {
+            doc.content.with_untracked(|c| c.path().cloned())
+        } else {
+            None
+        } {
+            Some(path) => path,
+            None => return,
+        };
+
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        let (start_position, position) = doc.buffer.with_untracked(|buffer| {
+            let start_offset = buffer.prev_code_boundary(offset);
+            let start_position = buffer.offset_to_position(start_offset);
+            let position = buffer.offset_to_position(offset);
+            (start_position, position)
+        });
+
+        enum DefinitionOrReferece {
+            Location(EditorLocation),
+            References(Vec<Location>),
+        }
+
+        let internal_command = self.common.internal_command;
+        let send = create_ext_action(self.scope, move |d| {
+            match d {
+                DefinitionOrReferece::Location(location) => {
+                    internal_command
+                        .send(InternalCommand::JumpToLocation { location });
+                }
+                DefinitionOrReferece::References(locations) => {
+                    internal_command.send(InternalCommand::PaletteReferences {
+                        references: locations
+                            .into_iter()
+                            .map(|l| EditorLocation {
+                                path: path_from_url(&l.uri),
+                                position: Some(EditorPosition::Position(
+                                    l.range.start,
+                                )),
+                                scroll_offset: None,
+                                ignore_unconfirmed: false,
+                                same_editor_tab: false,
+                            })
+                            .collect(),
+                    });
+                }
+            }
+        });
+        
+        let proxy = self.common.proxy.clone();
+        
+        self.common.proxy.get_type_definition(
+            offset,
+            path.clone(),
+            position,
+            move |result| {
+                if let Ok(ProxyResponse::GetTypeDefinition {
+                    definition, ..
+                }) = result
+                {
+                    if let Some(location) = match definition {
+                        GotoDefinitionResponse::Scalar(location) => {
+                            Some(location)
+                        },
+                        GotoDefinitionResponse::Array(locations) => {
+                            if !locations.is_empty() {
+                                Some(locations[0].clone())
+                            } else {
+                                None
+                            }
+                        }
+                        GotoDefinitionResponse::Link(location_links) => {
+                            if !location_links.is_empty() {
+                                let location_link = location_links[0].clone();
+                                Some(Location {
+                                    uri: location_link.target_uri,
+                                    range: location_link.target_selection_range,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                    } {
+                        if location.range.start == start_position {
+                            proxy.get_references(
+                                path.clone(),
+                                position,
+                                move |result| {
+                                    if let Ok(
+                                        ProxyResponse::GetReferencesResponse {
+                                            references,
+                                        },
+                                    ) = result
+                                    {
+                                        if references.is_empty() {
+                                            return;
+                                        }
+                                        if references.len() == 1 {
+                                            let location = &references[0];
+                                            send(DefinitionOrReferece::Location(
+                                                EditorLocation {
+                                                    path: path_from_url(
+                                                        &location.uri,
+                                                    ),
+                                                    position: Some(
+                                                        EditorPosition::Position(
+                                                            location.range.start,
+                                                        ),
+                                                    ),
+                                                    scroll_offset: None,
+                                                    ignore_unconfirmed: false,
+                                                    same_editor_tab: false,
+                                                },
+                                            ));
+                                        } else {
+                                            send(DefinitionOrReferece::References(
+                                                references,
+                                            ));
+                                        }
+                                    }
+                                },
+                            );
+                        } else {
+                            let path = path_from_url(&location.uri);
+                            send(DefinitionOrReferece::Location(EditorLocation {
+                                path,
+                                position: Some(EditorPosition::Position(
+                                    location.range.start,
+                                )),
+                                scroll_offset: None,
+                                ignore_unconfirmed: false,
+                                same_editor_tab: false,
+                            }));
+                        }
+                    }
                 }
             },
         );
@@ -2814,12 +2958,7 @@ impl EditorData {
                         FindHintRs::NoMatchBreak
                         | FindHintRs::NoMatchContinue { .. } => {
                             tracing::info!("GoToDef NO HINT FOUND, sending command");
-                            self.common.lapce_command.send(LapceCommand {
-                                kind: CommandKind::Focus(
-                                    FocusCommand::GotoDefinition,
-                                ),
-                                data: None,
-                            });
+                            self.go_to_definition();
                         }
                         FindHintRs::MatchWithoutLocation => {
                             tracing::info!("GoToDef MATCH WITHOUT LOCATION");

@@ -113,7 +113,7 @@ pub struct Dispatcher {
     /// The agent loop awaits on the receiver; the UI sends approve/reject via ProxyRequest.
     pending_approvals: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     /// When true, all future tool calls are auto-approved (except dangerous ones like delete_file).
-    /// Set by AgentApproveAllFuture and cleared when a new agent session starts.
+    /// Set by AgentApproveAllFuture. Now defaults to true and persists.
     auto_approve_session: Arc<std::sync::atomic::AtomicBool>,
     /// Manages terminals created by the AI agent (visible in terminal panel).
     agent_terminal_mgr: Arc<AgentTerminalManager>,
@@ -2307,8 +2307,6 @@ impl ProxyHandler for Dispatcher {
                 let diff_snapshots = self.pending_diff_snapshots.clone();
                 let pending_approvals = self.pending_approvals.clone();
                 let auto_approve_session = self.auto_approve_session.clone();
-                // Reset auto-approve at the start of each new agent session
-                auto_approve_session.store(false, std::sync::atomic::Ordering::Relaxed);
                 let agent_term_mgr = self.agent_terminal_mgr.clone();
                 let ide_terminals = self.terminals.clone();
                 let _ = (provider, model, api_key); // Unused — all LLM calls go through forge-search
@@ -3724,7 +3722,7 @@ impl Dispatcher {
             db_manager: crate::database::connection_manager::ConnectionManager::new(),
             pending_diff_snapshots: Arc::new(Mutex::new(HashMap::new())),
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
-            auto_approve_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            auto_approve_session: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             agent_terminal_mgr: Arc::new(AgentTerminalManager::new()),
         }
     }

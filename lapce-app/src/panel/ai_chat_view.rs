@@ -639,7 +639,7 @@ fn chat_message_list(
     let scroll_trigger = chat_data.scroll_trigger;
 
     // Session-level auto-approve flag — shared across all approval cards in this view.
-    let auto_approve_session = floem::reactive::create_rw_signal(false);
+    let auto_approve_session = floem::reactive::create_rw_signal(true);
 
     // Track the actual pixel width of the panel so text can be pre-wrapped.
     // Scroll containers give children unconstrained horizontal width in taffy,

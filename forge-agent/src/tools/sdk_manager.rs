@@ -93,7 +93,19 @@ pub async fn sdk_manager(args: &Value, workdir: &std::path::Path) -> ToolResult 
     }
 }
 
+fn is_proto_tool(tool: &str) -> bool {
+    matches!(tool, "node" | "npm" | "pnpm" | "yarn" | "bun" | "deno" | "python" | "poetry" | "uv" | "go" | "rust" | "ruby")
+}
+
 async fn install_tool(tool: &str, version: &str, pin: bool, workdir: &std::path::Path) -> ToolResult {
+    if is_proto_tool(tool) {
+        install_proto_tool(tool, version, pin, workdir).await
+    } else {
+        install_system_tool(tool).await
+    }
+}
+
+async fn install_proto_tool(tool: &str, version: &str, pin: bool, workdir: &std::path::Path) -> ToolResult {
     let mut cmd = Command::new(proto_bin());
     cmd.arg("install");
     cmd.current_dir(workdir);
@@ -128,6 +140,63 @@ async fn install_tool(tool: &str, version: &str, pin: bool, workdir: &std::path:
             }
         }
         Err(e) => ToolResult::err(&format!("❌ Failed to execute proto install: {}", e)),
+    }
+}
+
+async fn install_system_tool(tool: &str) -> ToolResult {
+    let os = std::env::consts::OS;
+    
+    let (cmd_name, args) = match os {
+        "macos" => {
+            let pkg = match tool {
+                "java" | "jdk" => "openjdk",
+                "c++" | "cpp" | "gcc" | "g++" => "gcc",
+                "cmake" => "cmake",
+                "php" => "php",
+                _ => tool,
+            };
+            ("brew", vec!["install", pkg])
+        }
+        "linux" => {
+            let pkg = match tool {
+                "java" | "jdk" => "default-jdk",
+                "c++" | "cpp" | "gcc" | "g++" => "build-essential",
+                "cmake" => "cmake",
+                "php" => "php",
+                _ => tool,
+            };
+            ("sudo", vec!["apt-get", "install", "-y", pkg])
+        }
+        "windows" => {
+            let pkg = match tool {
+                "java" | "jdk" => "Microsoft.OpenJDK",
+                "c++" | "cpp" | "gcc" | "g++" => "Microsoft.VisualStudio.Workloads.VCTools",
+                "cmake" => "Kitware.CMake",
+                "php" => "PHP.PHP",
+                _ => tool,
+            };
+            ("winget", vec!["install", "-e", "--id", pkg, "--accept-package-agreements", "--accept-source-agreements"])
+        }
+        _ => return ToolResult::err(&format!("❌ Unsupported OS for system package manager: {}", os)),
+    };
+
+    let mut cmd = Command::new(cmd_name);
+    cmd.args(&args);
+    
+    let cmd_display = format!("{} {}", cmd_name, args.join(" "));
+    
+    match cmd.output().await {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            
+            if output.status.success() {
+                ToolResult::ok(&format!("✅ Successfully installed via system package manager:\n$ {}\n{}", cmd_display, stdout))
+            } else {
+                ToolResult::err(&format!("❌ Failed to install via system package manager:\n$ {}\n{}\n{}", cmd_display, stderr, stdout))
+            }
+        }
+        Err(e) => ToolResult::err(&format!("❌ Failed to execute '{}': {}", cmd_display, e)),
     }
 }
 
@@ -225,6 +294,18 @@ async fn detect_project_tools(workdir: &std::path::Path) -> ToolResult {
     
     if workdir.join("bun.lockb").exists() {
         suggestions.push("🧄 Bun project detected - suggested tool: bun (latest)");
+    }
+    
+    if workdir.join("pom.xml").exists() || workdir.join("build.gradle").exists() {
+        suggestions.push("☕ Java project detected - suggested tool: java");
+    }
+    
+    if workdir.join("CMakeLists.txt").exists() || workdir.join("Makefile").exists() {
+        suggestions.push("⚙️ C/C++ project detected - suggested tool: cpp");
+    }
+    
+    if workdir.join("composer.json").exists() {
+        suggestions.push("🐘 PHP project detected - suggested tool: php");
     }
     
     if suggestions.is_empty() {
