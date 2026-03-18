@@ -38,7 +38,6 @@ object ToolExecutor {
             }
             "references" -> LspHandlers.handleLspFindReferences(project, args)
             "document_symbols" -> LspHandlers.handleGetDocumentSymbols(project, args)
-            "workspace_symbols" -> LspHandlers.handleGetWorkspaceSymbols(project, args)
             "diagnostics" -> ProjectHandlers.handleDiagnostics(project, args)
 
             // Project tools
@@ -81,26 +80,6 @@ object ToolExecutor {
             "stop_project" -> TerminalHandlers.handleStopProject(project, args)
             "list_run_configs" -> TerminalHandlers.handleListRunConfigs(project, args)
             "workspace_symbols" -> ProjectHandlers.handleWorkspaceSymbols(project, args)
-
-            // Legacy aliases
-            "execute_command" -> TerminalHandlers.handleExecuteCommand(project, args)
-            "execute_background" -> TerminalHandlers.handleExecuteBackground(project, args)
-            "read_process_output" -> TerminalHandlers.handleReadProcessOutput(project, args)
-            "kill_process" -> TerminalHandlers.handleKillProcess(project, args)
-            "check_process_status" -> TerminalHandlers.handleCheckProcessStatus(project, args)
-            "check_port" -> TerminalHandlers.handleCheckPort(project, args)
-            "wait_for_port" -> TerminalHandlers.handleWaitForPort(project, args)
-            "kill_port" -> TerminalHandlers.handleKillPort(project, args)
-            "fetch_webpage" -> TerminalHandlers.handleFetchWebpage(project, args)
-            "get_symbol_definition" -> LspHandlers.handleGetSymbolDefinition(project, args)
-            "find_symbol_references" -> LspHandlers.handleLspFindReferences(project, args)
-            "lsp_go_to_definition" -> LspHandlers.handleLspGoToDefinition(project, args)
-            "lsp_find_references" -> LspHandlers.handleLspFindReferences(project, args)
-            "lsp_hover" -> LspHandlers.handleLspHover(project, args)
-            "lsp_rename" -> LspHandlers.handleLspRename(project, args)
-            "list_code_definition_names" -> LspHandlers.handleGetDocumentSymbols(project, args)
-            "write_to_file" -> FileHandlers.handleWriteToFile(project, args)
-            "replace_in_file" -> FileHandlers.handleReplaceInFile(project, args)
 
             else -> ToolResult.error("Unknown tool: $toolName")
         }

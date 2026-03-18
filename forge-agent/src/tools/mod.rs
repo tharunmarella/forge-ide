@@ -65,6 +65,7 @@ pub enum Tool {
     // Run configuration
     RunProject,
     StopProject,
+    ListRunConfigs,
 
     // Git operations
     Git,
@@ -73,29 +74,8 @@ pub enum Tool {
     SdkManager,
 
     // Web
-    Fetch,          // fetch(url_or_query) — was fetch_webpage
-    WorkspaceSymbols, // workspace_symbols(query)
-
-    // ── Legacy aliases (kept for backward compatibility) ──────────
-    ExecuteCommand,
-    WriteToFile,
-    ReplaceInFile,
-    ExecuteBackground,
-    ReadProcessOutput,
-    CheckProcessStatus,
-    KillProcess,
-    WaitForPort,
-    CheckPort,
-    KillPort,
-    FindSymbolReferences,
-    LspGoToDefinition,
-    LspFindReferences,
-    LspHover,
-    LspRename,
-    FetchWebpage,
-    ListCodeDefinitions,
-    GetSymbolDefinition,
-    ListRunConfigs,
+    Fetch,
+    WorkspaceSymbols,
 
     // Interaction
     AttemptCompletion,
@@ -134,26 +114,6 @@ impl Tool {
             Self::SdkManager => "sdk_manager",
             Self::Fetch => "fetch",
             Self::WorkspaceSymbols => "workspace_symbols",
-
-            // Legacy aliases
-            Self::ExecuteCommand => "execute_command",
-            Self::WriteToFile => "write_to_file",
-            Self::ReplaceInFile => "replace_in_file",
-            Self::ExecuteBackground => "execute_background",
-            Self::ReadProcessOutput => "read_process_output",
-            Self::CheckProcessStatus => "check_process_status",
-            Self::KillProcess => "kill_process",
-            Self::WaitForPort => "wait_for_port",
-            Self::CheckPort => "check_port",
-            Self::KillPort => "kill_port",
-            Self::FindSymbolReferences => "find_symbol_references",
-            Self::LspGoToDefinition => "lsp_go_to_definition",
-            Self::LspFindReferences => "lsp_find_references",
-            Self::LspHover => "lsp_hover",
-            Self::LspRename => "lsp_rename",
-            Self::FetchWebpage => "fetch_webpage",
-            Self::ListCodeDefinitions => "list_code_definition_names",
-            Self::GetSymbolDefinition => "get_symbol_definition",
             Self::ListRunConfigs => "list_run_configs",
             // Interaction
             Self::AttemptCompletion => "attempt_completion",
@@ -190,26 +150,7 @@ impl Tool {
             "sdk_manager"  => Some(Self::SdkManager),
             "fetch"             => Some(Self::Fetch),
             "workspace_symbols" => Some(Self::WorkspaceSymbols),
-            // Legacy aliases
-            "execute_command"          => Some(Self::ExecuteCommand),
-            "write_to_file"            => Some(Self::WriteToFile),
-            "replace_in_file"          => Some(Self::ReplaceInFile),
-            "execute_background"       => Some(Self::ExecuteBackground),
-            "read_process_output"      => Some(Self::ReadProcessOutput),
-            "check_process_status"     => Some(Self::CheckProcessStatus),
-            "kill_process"             => Some(Self::KillProcess),
-            "wait_for_port"            => Some(Self::WaitForPort),
-            "check_port"               => Some(Self::CheckPort),
-            "kill_port"                => Some(Self::KillPort),
-            "find_symbol_references"   => Some(Self::FindSymbolReferences),
-            "lsp_go_to_definition"     => Some(Self::LspGoToDefinition),
-            "lsp_find_references"      => Some(Self::LspFindReferences),
-            "lsp_hover"                => Some(Self::LspHover),
-            "lsp_rename"               => Some(Self::LspRename),
-            "fetch_webpage"            => Some(Self::FetchWebpage),
-            "list_code_definition_names" => Some(Self::ListCodeDefinitions),
-            "get_symbol_definition"    => Some(Self::GetSymbolDefinition),
-            "list_run_configs"         => Some(Self::ListRunConfigs),
+            "list_run_configs"  => Some(Self::ListRunConfigs),
             "attempt_completion"       => Some(Self::AttemptCompletion),
             "ask_followup_question"    => Some(Self::AskFollowupQuestion),
             "think"                    => Some(Self::Think),
@@ -225,20 +166,13 @@ impl Tool {
         matches!(
             self,
             Self::WriteFile
-                | Self::WriteToFile
                 | Self::EditFile
-                | Self::ReplaceInFile
                 | Self::ApplyPatch
                 | Self::DeleteFile
                 | Self::Run
-                | Self::ExecuteCommand
-                | Self::ExecuteBackground
-                | Self::KillProcess
                 | Self::Process  // kill action
-                | Self::KillPort
                 | Self::Port     // kill action
                 | Self::Lsp      // rename action
-                | Self::LspRename
         )
     }
 }
@@ -433,29 +367,7 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
         Tool::Fetch => web::fetch_webpage(&tool.arguments).await,
         Tool::WorkspaceSymbols => search::workspace_symbols(&tool.arguments, workdir).await,
-
-        // ── Legacy aliases (map to same implementations) ──────────────────
-        Tool::ExecuteCommand => execute::run(&tool.arguments, workdir).await,
-        Tool::WriteToFile => files::write(&tool.arguments, workdir).await,
-        Tool::ReplaceInFile => files::replace(&tool.arguments, workdir).await,
-        Tool::ExecuteBackground => process::execute_background(&tool.arguments, workdir).await,
-        Tool::ReadProcessOutput => process::read_process_output(&tool.arguments, workdir).await,
-        Tool::CheckProcessStatus => process::check_process_status(&tool.arguments, workdir).await,
-        Tool::KillProcess => process::kill_process(&tool.arguments, workdir).await,
-        Tool::WaitForPort => process::wait_for_port(&tool.arguments, workdir).await,
-        Tool::CheckPort => process::check_port(&tool.arguments, workdir).await,
-        Tool::KillPort => process::kill_port(&tool.arguments, workdir).await,
-        Tool::FindSymbolReferences => code::find_references(&tool.arguments, workdir).await,
-        Tool::ListCodeDefinitions => code::list_definitions(&tool.arguments, workdir).await,
-        Tool::GetSymbolDefinition => code::get_definition(&tool.arguments, workdir).await,
         Tool::ListRunConfigs => run_config::list_run_configs(&tool.arguments, workdir).await,
-        Tool::FetchWebpage => web::fetch_webpage(&tool.arguments).await,
-
-        // LSP legacy stubs (preferred via bridge in dispatch.rs)
-        Tool::LspGoToDefinition
-        | Tool::LspFindReferences
-        | Tool::LspHover
-        | Tool::LspRename => ToolResult::err("LSP tools must be executed via ProxyBridge"),
 
         // Handled specially by the agent
         Tool::AttemptCompletion
@@ -479,13 +391,18 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
 /// Build a human-readable summary of what a tool call will do (for approval dialogs).
 fn make_approval_summary(tool: &ToolCall) -> String {
     match tool.name.as_str() {
-        "execute_command" => {
+        "run" => {
             let cmd = tool.arguments.get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
-            format!("Run command: {}", &cmd[..cmd.len().min(200)])
+            let bg = tool.arguments.get("background").and_then(|v| v.as_bool()).unwrap_or(false);
+            if bg {
+                format!("Run in background: {}", &cmd[..cmd.len().min(200)])
+            } else {
+                format!("Run command: {}", &cmd[..cmd.len().min(200)])
+            }
         }
-        "write_to_file" => {
+        "write_file" => {
             let path = tool.arguments.get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
@@ -495,40 +412,35 @@ fn make_approval_summary(tool: &ToolCall) -> String {
                 .unwrap_or(0);
             format!("Write {} ({} bytes)", path, size)
         }
-        "replace_in_file" => {
+        "edit_file" => {
             let path = tool.arguments.get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
             format!("Edit {}", path)
         }
-        "apply_patch" => {
-            "Apply multi-file patch".to_string()
-        }
+        "apply_patch" => "Apply multi-file patch".to_string(),
         "delete_file" => {
             let path = tool.arguments.get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
             format!("Delete {}", path)
         }
-        "execute_background" => {
-            let cmd = tool.arguments.get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("<unknown>");
-            format!("Run in background: {}", &cmd[..cmd.len().min(200)])
+        "process" => {
+            let action = tool.arguments.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            let pid = tool.arguments.get("pid").and_then(|v| v.as_u64())
+                .map(|p| p.to_string()).unwrap_or_else(|| "<unknown>".to_string());
+            format!("Process {} PID {}", action, pid)
         }
-        "kill_process" => {
-            let pid = tool.arguments.get("pid")
-                .and_then(|v| v.as_u64())
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "<unknown>".to_string());
-            format!("Kill process PID {}", pid)
+        "port" => {
+            let action = tool.arguments.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            let port = tool.arguments.get("port").and_then(|v| v.as_u64())
+                .map(|p| p.to_string()).unwrap_or_else(|| "<unknown>".to_string());
+            format!("Port {} :{}", action, port)
         }
-        "kill_port" => {
-            let port = tool.arguments.get("port")
-                .and_then(|v| v.as_u64())
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "<unknown>".to_string());
-            format!("Kill process on port {}", port)
+        "lsp" => {
+            let action = tool.arguments.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            let path = tool.arguments.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            format!("LSP {} in {}", action, path)
         }
         _ => format!("Execute tool '{}'", tool.name),
     }
@@ -537,15 +449,15 @@ fn make_approval_summary(tool: &ToolCall) -> String {
 /// Generate tool definitions for LLM
 pub fn definitions(plan_mode: bool) -> Vec<Value> {
     let mut tools = vec![
-        // Essential tools
         serde_json::json!({
-            "name": "execute_command",
-            "description": "Execute a shell command. Use for running builds, tests, git, etc. Commands time out after 120 seconds by default. CRITICAL: Do not use for interactive commands that prompt for user input (e.g., npx prisma migrate dev without --name). It will hang until the timeout because you cannot provide input.",
+            "name": "run",
+            "description": "Execute a shell command. Commands time out after 120 seconds by default. Set background=true for long-running processes (dev servers, watchers). CRITICAL: Do not use for interactive commands that require user input.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "The shell command to execute" },
-                    "timeout_secs": { "type": "integer", "description": "Optional timeout in seconds (default 120, max 600). Use for long-running builds." }
+                    "background": { "type": "boolean", "description": "Run in background and return immediately with PID (default: false)" },
+                    "timeout_secs": { "type": "integer", "description": "Optional timeout in seconds (default 120, max 600)" }
                 },
                 "required": ["command"]
             }
@@ -564,25 +476,25 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "write_to_file",
-            "description": "Create a new file with the given content",
+            "name": "write_file",
+            "description": "Create or overwrite a file with the given content.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path for the new file" },
+                    "path": { "type": "string", "description": "Path for the file" },
                     "content": { "type": "string", "description": "Content to write" }
                 },
                 "required": ["path", "content"]
             }
         }),
         serde_json::json!({
-            "name": "replace_in_file",
-            "description": "Replace text in a file. old_str must match exactly.",
+            "name": "edit_file",
+            "description": "Replace an exact string in a file. old_str must match exactly (including whitespace and indentation).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Path to the file" },
-                    "old_str": { "type": "string", "description": "Exact text to find" },
+                    "old_str": { "type": "string", "description": "Exact text to find and replace" },
                     "new_str": { "type": "string", "description": "Replacement text" }
                 },
                 "required": ["path", "old_str", "new_str"]
@@ -623,92 +535,34 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                 "required": ["path"]
             }
         }),
-        // BACKGROUND PROCESSES & PORTS - for dev servers, watchers, etc.
         serde_json::json!({
-            "name": "execute_background",
-            "description": "Start a long-running command in the background (dev server, watch, etc). Returns immediately with PID. Use read_process_output to check output, wait_for_port to wait for server startup.",
+            "name": "process",
+            "description": "Manage background processes. Actions: output (read stdout/stderr from PID), status (check if running), kill (terminate by PID).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "The shell command to execute in background" },
-                    "wait_seconds": { "type": "integer", "description": "Seconds to wait before returning initial output (default: 3)" }
+                    "action": { "type": "string", "enum": ["output", "status", "kill"], "description": "Process action to perform" },
+                    "pid": { "type": "integer", "description": "Process ID (required for output/kill; omit for status to list all)" },
+                    "tail_lines": { "type": "integer", "description": "Lines from end to return for output (default: 100)" },
+                    "force": { "type": "boolean", "description": "Use SIGKILL instead of SIGTERM for kill (default: false)" }
                 },
-                "required": ["command"]
+                "required": ["action"]
             }
         }),
         serde_json::json!({
-            "name": "read_process_output",
-            "description": "Read output from a background process by PID.",
+            "name": "port",
+            "description": "Manage ports. Actions: check (is port in use?), wait (block until port accepts connections), kill (terminate process using port).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Process ID to read output from" },
-                    "tail_lines": { "type": "integer", "description": "Lines from end to return (default: 100)" },
-                    "follow_seconds": { "type": "integer", "description": "Wait for new output before returning (default: 0)" }
-                },
-                "required": ["pid"]
-            }
-        }),
-        serde_json::json!({
-            "name": "check_process_status",
-            "description": "Check if background process(es) are still running.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pid": { "type": "integer", "description": "Specific PID to check (omit for all)" }
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "kill_process",
-            "description": "Terminate a process by PID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pid": { "type": "integer", "description": "Process ID to kill" },
-                    "force": { "type": "boolean", "description": "Use SIGKILL instead of SIGTERM (default: false)" }
-                },
-                "required": ["pid"]
-            }
-        }),
-        serde_json::json!({
-            "name": "wait_for_port",
-            "description": "Wait until a port accepts connections. Set http_check=true to also verify HTTP response is healthy (recommended for web servers).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "port": { "type": "integer", "description": "Port number to check" },
-                    "host": { "type": "string", "description": "Host (default: localhost)" },
-                    "timeout": { "type": "integer", "description": "Max seconds to wait (default: 30)" },
-                    "interval": { "type": "integer", "description": "Seconds between checks (default: 1)" },
-                    "http_check": { "type": "boolean", "description": "Also verify HTTP GET returns 2xx/3xx (default: false)" },
-                    "path": { "type": "string", "description": "HTTP path to check (default: '/')" }
-                },
-                "required": ["port"]
-            }
-        }),
-        serde_json::json!({
-            "name": "check_port",
-            "description": "Check if a port is currently in use.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "port": { "type": "integer", "description": "Port number to check" },
-                    "host": { "type": "string", "description": "Host (default: localhost)" }
-                },
-                "required": ["port"]
-            }
-        }),
-        serde_json::json!({
-            "name": "kill_port",
-            "description": "Kill the process using a specific port.",
-            "parameters": {
-                "type": "object",
-                "properties": {
+                    "action": { "type": "string", "enum": ["check", "wait", "kill"], "description": "Port action to perform" },
                     "port": { "type": "integer", "description": "Port number" },
-                    "force": { "type": "boolean", "description": "Use SIGKILL (default: false)" }
+                    "host": { "type": "string", "description": "Host (default: localhost)" },
+                    "timeout": { "type": "integer", "description": "Max seconds to wait (for wait action, default: 30)" },
+                    "http_check": { "type": "boolean", "description": "Also verify HTTP 2xx/3xx (for wait action)" },
+                    "force": { "type": "boolean", "description": "Use SIGKILL for kill action (default: false)" }
                 },
-                "required": ["port"]
+                "required": ["action", "port"]
             }
         }),
         // SEARCH TOOLS - order matters for model selection
@@ -749,45 +603,6 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
                     "path": { "type": "string", "description": "Base directory" }
                 },
                 "required": ["pattern"]
-            }
-        }),
-        serde_json::json!({
-            "name": "list_code_definition_names",
-            "description": "List function/class/type definitions in a file",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "File path" }
-                },
-                "required": ["path"]
-            }
-        }),
-        serde_json::json!({
-            "name": "get_symbol_definition",
-            "description": "Go to the definition of a symbol. Uses LSP when available for accurate results, falls back to tree-sitter/regex search.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": { "type": "string", "description": "The symbol name to find the definition of" },
-                    "path": { "type": "string", "description": "File path where the symbol is used (for LSP lookup)" },
-                    "line": { "type": "integer", "description": "Line number (0-indexed) where the symbol appears" },
-                    "character": { "type": "integer", "description": "Character position (0-indexed) in the line" }
-                },
-                "required": ["symbol"]
-            }
-        }),
-        serde_json::json!({
-            "name": "find_symbol_references",
-            "description": "Find all references to a symbol across the codebase. Uses LSP when available for accurate results, falls back to regex search.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": { "type": "string", "description": "The symbol name to find references of" },
-                    "path": { "type": "string", "description": "File path where the symbol is defined (for LSP lookup)" },
-                    "line": { "type": "integer", "description": "Line number (0-indexed) where the symbol is defined" },
-                    "character": { "type": "integer", "description": "Character position (0-indexed) in the line" }
-                },
-                "required": ["symbol"]
             }
         }),
         serde_json::json!({
@@ -993,7 +808,7 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
     if plan_mode {
         tools.retain(|t| {
             let name = t["name"].as_str().unwrap_or("");
-            !matches!(name, "execute_command" | "write_to_file" | "replace_in_file" | "apply_patch")
+            !matches!(name, "run" | "write_file" | "edit_file" | "apply_patch" | "delete_file")
         });
     }
 
