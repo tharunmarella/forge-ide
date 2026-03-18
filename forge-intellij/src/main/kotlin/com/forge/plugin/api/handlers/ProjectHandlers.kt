@@ -80,21 +80,54 @@ object ProjectHandlers {
         return ToolResult.success(skeleton.toString())
     }
 
+    private val SKIP_SKELETON_DIRS = setOf(
+        "node_modules", ".git", "target", "build", "dist", ".idea",
+        "__pycache__", ".gradle", ".next", "out", "coverage"
+    )
+
     private fun buildSkeleton(project: Project, dir: com.intellij.openapi.vfs.VirtualFile, sb: StringBuilder, indent: Int, showSignatures: Boolean) {
+        if (dir.name in SKIP_SKELETON_DIRS) return
         val prefix = "  ".repeat(indent)
         sb.append("$prefix${dir.name}/\n")
-        
-        dir.children.forEach { file ->
+        dir.children.sortedWith(compareBy({ !it.isDirectory }, { it.name })).forEach { file ->
             if (file.isDirectory) {
                 buildSkeleton(project, file, sb, indent + 1, showSignatures)
             } else {
                 sb.append("$prefix  ${file.name}\n")
-                if (showSignatures) {
-                    // In a real plugin, we would use PSI to extract signatures
-                    // For now, we'll just list the file
+                if (showSignatures && !file.fileType.isBinary) {
+                    extractFileSignatures(project, file).forEach { sig ->
+                        sb.append("$prefix    $sig\n")
+                    }
                 }
             }
         }
+    }
+
+    private fun extractFileSignatures(project: Project, vFile: com.intellij.openapi.vfs.VirtualFile): List<String> {
+        val sigs = mutableListOf<String>()
+        com.intellij.openapi.application.ApplicationManager.getApplication().runReadAction {
+            val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile) ?: return@runReadAction
+            psiFile.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
+                override fun visitElement(element: com.intellij.psi.PsiElement) {
+                    if (element is com.intellij.psi.PsiNamedElement) {
+                        val typeName = element.javaClass.simpleName
+                        val isTopLevel = typeName.contains("Function", true) ||
+                                typeName.contains("Method", true) ||
+                                typeName.contains("Class", true) ||
+                                typeName.contains("Interface", true) ||
+                                typeName.contains("Enum", true)
+                        if (isTopLevel) {
+                            val name = element.name ?: return
+                            // Extract first line (signature) of element text
+                            val sig = element.text.lineSequence().first().trim().take(120)
+                            sigs.add(sig)
+                        }
+                    }
+                    if (sigs.size < 50) super.visitElement(element)
+                }
+            })
+        }
+        return sigs
     }
 
     fun handleCodebaseSearch(project: Project, args: JsonObject): String {
@@ -237,48 +270,67 @@ object ProjectHandlers {
     }
 
     fun handleWorkspaceSymbols(project: Project, args: JsonObject): String {
-        val query = args.get("query")?.asString ?: ""
+        val query = args.get("query")?.asString?.takeIf { it.isNotBlank() }
+            ?: return ToolResult.error("Missing 'query' argument")
+        val limit = args.get("limit")?.asInt ?: 50
         val results = JsonArray()
-        
+        val basePath = project.basePath ?: ""
+
         ApplicationManager.getApplication().runReadAction {
             val scope = com.intellij.psi.search.GlobalSearchScope.projectScope(project)
             val cache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
-            
+
             try {
-                // Search for methods
-                cache.getMethodsByName(query, scope).forEach { method ->
-                    val obj = JsonObject()
-                    obj.addProperty("name", method.name)
-                    obj.addProperty("kind", "method")
-                    obj.addProperty("containerName", method.containingClass?.qualifiedName)
-                    obj.addProperty("path", method.containingFile.virtualFile.path.removePrefix("${project.basePath ?: ""}/"))
-                    results.add(obj)
+                // Partial/fuzzy match: filter all known names that contain the query substring
+                val matchingClassNames = cache.allClassNames.filter { it.contains(query, ignoreCase = true) }
+                for (name in matchingClassNames) {
+                    if (results.size() >= limit) break
+                    cache.getClassesByName(name, scope).forEach clazz@{ clazz ->
+                        if (results.size() >= limit) return@clazz
+                        val file = clazz.containingFile?.virtualFile ?: return@clazz
+                        val obj = JsonObject()
+                        obj.addProperty("name", clazz.name)
+                        obj.addProperty("kind", "class")
+                        obj.addProperty("qualified_name", clazz.qualifiedName)
+                        obj.addProperty("path", file.path.removePrefix("$basePath/"))
+                        results.add(obj)
+                    }
                 }
-                
-                // Search for classes
-                cache.getClassesByName(query, scope).forEach { clazz ->
-                    val obj = JsonObject()
-                    obj.addProperty("name", clazz.name)
-                    obj.addProperty("kind", "class")
-                    obj.addProperty("containerName", clazz.qualifiedName)
-                    obj.addProperty("path", clazz.containingFile.virtualFile.path.removePrefix("${project.basePath ?: ""}/"))
-                    results.add(obj)
+
+                val matchingMethodNames = cache.allMethodNames.filter { it.contains(query, ignoreCase = true) }
+                for (name in matchingMethodNames) {
+                    if (results.size() >= limit) break
+                    cache.getMethodsByName(name, scope).forEach method@{ method ->
+                        if (results.size() >= limit) return@method
+                        val file = method.containingFile?.virtualFile ?: return@method
+                        val obj = JsonObject()
+                        obj.addProperty("name", method.name)
+                        obj.addProperty("kind", "method")
+                        obj.addProperty("container", method.containingClass?.qualifiedName)
+                        obj.addProperty("path", file.path.removePrefix("$basePath/"))
+                        results.add(obj)
+                    }
                 }
-                
-                // Search for fields
-                cache.getFieldsByName(query, scope).forEach { field ->
-                    val obj = JsonObject()
-                    obj.addProperty("name", field.name)
-                    obj.addProperty("kind", "field")
-                    obj.addProperty("containerName", field.containingClass?.qualifiedName)
-                    obj.addProperty("path", field.containingFile.virtualFile.path.removePrefix("${project.basePath ?: ""}/"))
-                    results.add(obj)
+
+                val matchingFieldNames = cache.allFieldNames.filter { it.contains(query, ignoreCase = true) }
+                for (name in matchingFieldNames) {
+                    if (results.size() >= limit) break
+                    cache.getFieldsByName(name, scope).forEach field@{ field ->
+                        if (results.size() >= limit) return@field
+                        val file = field.containingFile?.virtualFile ?: return@field
+                        val obj = JsonObject()
+                        obj.addProperty("name", field.name)
+                        obj.addProperty("kind", "field")
+                        obj.addProperty("container", field.containingClass?.qualifiedName)
+                        obj.addProperty("path", file.path.removePrefix("$basePath/"))
+                        results.add(obj)
+                    }
                 }
             } catch (e: Exception) {
                 return@runReadAction
             }
         }
-        
+
         return ToolResult.success(results)
     }
 }

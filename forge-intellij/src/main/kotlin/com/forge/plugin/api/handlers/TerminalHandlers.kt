@@ -21,6 +21,7 @@ object TerminalHandlers {
     fun handleExecuteCommand(project: Project, args: JsonObject): String {
         val command = args.get("command")?.asString ?: return ToolResult.error("Missing 'command' argument")
         val workDir = args.get("work_dir")?.asString ?: project.basePath
+        val timeoutMs = (args.get("timeout_secs")?.asLong ?: 120L) * 1000L
 
         return try {
             val commandLine = GeneralCommandLine()
@@ -29,7 +30,6 @@ object TerminalHandlers {
             } else {
                 commandLine.withExePath("/bin/sh").addParameters("-c", command)
             }
-            
             commandLine.withWorkDirectory(workDir)
             commandLine.withCharset(StandardCharsets.UTF_8)
 
@@ -48,7 +48,7 @@ object TerminalHandlers {
             })
 
             handler.startNotify()
-            if (handler.waitFor(30000)) { // 30 second timeout for direct commands
+            if (handler.waitFor(timeoutMs)) {
                 val exitCode = handler.exitCode
                 val result = JsonObject()
                 result.addProperty("stdout", output.toString())
@@ -57,7 +57,7 @@ object TerminalHandlers {
                 ToolResult.success(result)
             } else {
                 handler.destroyProcess()
-                ToolResult.error("Command timed out after 30 seconds")
+                ToolResult.error("Command timed out after ${timeoutMs / 1000}s")
             }
         } catch (e: Exception) {
             ToolResult.error("Execution failed: ${e.message}")
@@ -115,7 +115,7 @@ object TerminalHandlers {
         val pid = args.get("pid")?.asLong ?: return ToolResult.error("Missing 'pid' argument")
         val output = processOutputs[pid] ?: return ToolResult.error("No output found for process $pid")
         
-        val tailLines = args.get("lines")?.asInt ?: 100
+        val tailLines = args.get("tail_lines")?.asInt ?: args.get("lines")?.asInt ?: 100
         val lines = output.toString().lines()
         val tail = if (lines.size > tailLines) lines.takeLast(tailLines).joinToString("\n") else output.toString()
         
@@ -227,15 +227,28 @@ object TerminalHandlers {
     }
 
     fun handleCheckProcessStatus(project: Project, args: JsonObject): String {
-        val pid = args.get("pid")?.asLong ?: return ToolResult.error("Missing 'pid' argument")
+        val pid = args.get("pid")?.asLong
+        val result = JsonObject()
+
+        if (pid == null) {
+            // List all background processes
+            val arr = com.google.gson.JsonArray()
+            backgroundProcesses.forEach { (p, h) ->
+                val obj = JsonObject()
+                obj.addProperty("pid", p)
+                obj.addProperty("is_running", !h.isProcessTerminated)
+                arr.add(obj)
+            }
+            result.add("processes", arr)
+            return ToolResult.success(result)
+        }
+
         val handler = backgroundProcesses[pid]
         val isRunning = handler != null && !handler.isProcessTerminated
-        
-        val result = JsonObject()
         result.addProperty("pid", pid)
         result.addProperty("is_running", isRunning)
-        if (handler != null) {
-            result.addProperty("exit_code", if (handler.isProcessTerminated) handler.exitCode else null)
+        if (handler != null && handler.isProcessTerminated) {
+            result.addProperty("exit_code", handler.exitCode)
         }
         return ToolResult.success(result)
     }
@@ -247,7 +260,8 @@ object TerminalHandlers {
     }
 
     fun handleCheckPort(project: Project, args: JsonObject): String {
-        val port = args.get("port_num")?.asInt ?: return ToolResult.error("Missing 'port_num' argument")
+        val port = args.get("port")?.asInt ?: args.get("port_num")?.asInt
+            ?: return ToolResult.error("Missing 'port' argument")
         return try {
             java.net.ServerSocket(port).use {
                 ToolResult.success(mapOf("port" to port, "status" to "available"))
@@ -258,22 +272,33 @@ object TerminalHandlers {
     }
 
     fun handleWaitForPort(project: Project, args: JsonObject): String {
-        val port = args.get("port_num")?.asInt ?: return ToolResult.error("Missing 'port_num' argument")
-        val timeout = args.get("timeout")?.asLong ?: 30
-        val start = System.currentTimeMillis()
-        
-        while (System.currentTimeMillis() - start < timeout * 1000) {
-            try {
-                java.net.Socket("localhost", port).use { return ToolResult.success("Port $port is ready") }
-            } catch (e: Exception) {
+        val port = args.get("port")?.asInt ?: args.get("port_num")?.asInt
+            ?: return ToolResult.error("Missing 'port' argument")
+        val host = args.get("host")?.asString ?: "localhost"
+        val timeoutSecs = args.get("timeout")?.asLong ?: 30L
+        val deadline = System.currentTimeMillis() + timeoutSecs * 1000
+
+        // Run on a background thread to avoid blocking the EDT
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var success = false
+        Thread {
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    java.net.Socket(host, port).use { success = true; latch.countDown(); return@Thread }
+                } catch (_: Exception) {}
                 Thread.sleep(500)
             }
-        }
-        return ToolResult.error("Timeout waiting for port $port")
+            latch.countDown()
+        }.also { it.isDaemon = true }.start()
+        latch.await(timeoutSecs + 2, java.util.concurrent.TimeUnit.SECONDS)
+
+        return if (success) ToolResult.success("Port $port is ready")
+        else ToolResult.error("Timeout waiting for port $port after ${timeoutSecs}s")
     }
 
     fun handleKillPort(project: Project, args: JsonObject): String {
-        val port = args.get("port_num")?.asInt ?: return ToolResult.error("Missing 'port_num' argument")
+        val port = args.get("port")?.asInt ?: args.get("port_num")?.asInt
+            ?: return ToolResult.error("Missing 'port' argument")
         val cmd = if (System.getProperty("os.name").lowercase().contains("win")) {
             "for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :$port') do taskkill /f /pid %a"
         } else {

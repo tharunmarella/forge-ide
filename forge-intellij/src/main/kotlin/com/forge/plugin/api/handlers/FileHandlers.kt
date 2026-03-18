@@ -75,22 +75,20 @@ object FileHandlers {
         val path = args.get("path").asString
         val content = args.get("content").asString
         val basePath = project.basePath ?: return ToolResult.error("Project base path not found")
-        val baseDir = LocalFileSystem.getInstance().findFileByPath(basePath) ?: return ToolResult.error("Project base directory not found")
-        
+
         var result: String? = null
         ApplicationManager.getApplication().invokeAndWait {
             WriteCommandAction.runWriteCommandAction(project) {
                 try {
                     val file = File(basePath, path)
-                    file.parentFile.mkdirs()
-                    file.writeText(content)
-                    val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file)
-                    if (virtualFile != null) {
-                        val document = FileDocumentManager.getInstance().getDocument(virtualFile)
-                        if (document != null) {
-                            FileDocumentManager.getInstance().reloadFromDisk(document)
-                        }
-                    }
+                    file.parentFile?.mkdirs()
+                    // Refresh parent via VFS so IntelliJ tracks the new file properly
+                    val parentVFile = LocalFileSystem.getInstance()
+                        .refreshAndFindFileByIoFile(file.parentFile)
+                        ?: return@runWriteCommandAction run { result = ToolResult.error("Parent directory not found") }
+                    val vFile = LocalFileSystem.getInstance().findFileByIoFile(file)
+                        ?: parentVFile.createChildData(this, file.name)
+                    VfsUtil.saveText(vFile, content)
                     result = ToolResult.success("Successfully wrote content to $path")
                 } catch (e: Exception) {
                     result = ToolResult.error("Failed to write file: ${e.message}")
@@ -260,9 +258,11 @@ object FileHandlers {
         val path = args.get("path")?.asString ?: "."
         val caseInsensitive = args.get("case_insensitive")?.asBoolean ?: false
         val glob = args.get("glob")?.asString
-        
+        val contextLines = (args.get("context")?.asInt ?: 0).coerceIn(0, 5)
+
         val basePath = project.basePath ?: return ToolResult.error("Project base path not found")
-        val baseDir = LocalFileSystem.getInstance().findFileByPath(basePath) ?: return ToolResult.error("Project base directory not found")
+        val baseDir = LocalFileSystem.getInstance().findFileByPath(basePath)
+            ?: return ToolResult.error("Project base directory not found")
         val rootDir = VfsUtil.findRelativeFile(path, baseDir)
             ?: return ToolResult.error("Directory not found: $path")
 
@@ -270,21 +270,43 @@ object FileHandlers {
         val regex = if (caseInsensitive) Regex(pattern, RegexOption.IGNORE_CASE) else Regex(pattern)
         val globMatcher = glob?.let { FileSystems.getDefault().getPathMatcher("glob:$it") }
 
-        VfsUtilCore.iterateChildrenRecursively(rootDir, null) { file ->
+        VfsUtilCore.iterateChildrenRecursively(rootDir, { dir ->
+            // Skip directories that are never useful to search
+            dir.name !in SKIP_DIRS
+        }) { file ->
             if (!file.isDirectory) {
                 val relativePath = VfsUtilCore.getRelativePath(file, rootDir) ?: file.name
-                if (globMatcher == null || globMatcher.matches(Paths.get(relativePath))) {
+                if ((globMatcher == null || globMatcher.matches(Paths.get(relativePath)))
+                    && !file.fileType.isBinary) {
                     val document = FileDocumentManager.getInstance().getDocument(file)
                     document?.text?.lines()?.forEachIndexed { index, line ->
                         if (regex.containsMatchIn(line)) {
-                            results.add("$relativePath:${index + 1}: $line")
+                            if (contextLines > 0) {
+                                val lines = document.text.lines()
+                                val start = (index - contextLines).coerceAtLeast(0)
+                                val end = (index + contextLines).coerceAtMost(lines.size - 1)
+                                for (i in start..end) {
+                                    val sep = if (i == index) ":" else "-"
+                                    results.add("$relativePath:${i + 1}$sep ${lines[i]}")
+                                }
+                                results.add("--")
+                            } else {
+                                results.add("$relativePath:${index + 1}: $line")
+                            }
                         }
                     }
                 }
             }
-            true
+            results.size < 500 // stop after 500 matches to avoid OOM
         }
         return ToolResult.success(results.joinToString("\n"))
+    }
+
+    companion object {
+        private val SKIP_DIRS = setOf(
+            "node_modules", ".git", "target", "build", "dist", ".idea",
+            "__pycache__", ".gradle", ".next", "out", "coverage", ".DS_Store"
+        )
     }
 
     fun handleSearchInFile(project: Project, args: JsonObject): String {
@@ -317,7 +339,118 @@ object FileHandlers {
     }
 
     fun handleApplyPatch(project: Project, args: JsonObject): String {
-        val patch = args.get("patch")?.asString ?: return ToolResult.error("Missing 'patch' argument")
-        return ToolResult.success("Patch received and processing initiated (simulated)")
+        val basePath = project.basePath ?: return ToolResult.error("Project base path not found")
+
+        // V4A multi-file format (*** Begin Patch / *** Update File: ...)
+        val v4aInput = args.get("input")?.asString
+        if (v4aInput != null) {
+            return applyV4APatch(project, basePath, v4aInput)
+        }
+
+        // Unified diff format (single file: path + patch)
+        val patchText = args.get("patch")?.asString ?: return ToolResult.error("Missing 'patch' or 'input' argument")
+        val filePath = args.get("path")?.asString ?: return ToolResult.error("Missing 'path' for unified diff patch")
+        return applyUnifiedDiff(project, basePath, filePath, patchText)
+    }
+
+    private fun applyV4APatch(project: Project, basePath: String, input: String): String {
+        val lines = input.lines()
+        val errors = mutableListOf<String>()
+        var currentFile: String? = null
+        val fileHunks = mutableMapOf<String, MutableList<String>>()
+
+        for (line in lines) {
+            when {
+                line.startsWith("*** Update File:") -> {
+                    currentFile = line.removePrefix("*** Update File:").trim()
+                    fileHunks.getOrPut(currentFile) { mutableListOf() }
+                }
+                line.startsWith("*** Begin Patch") || line.startsWith("*** End Patch") -> { /* skip markers */ }
+                currentFile != null -> fileHunks[currentFile]!!.add(line)
+            }
+        }
+
+        for ((filePath, hunkLines) in fileHunks) {
+            val err = applyUnifiedDiff(project, basePath, filePath, hunkLines.joinToString("\n"))
+            if (err.contains("\"success\":false")) errors.add("$filePath: $err")
+        }
+
+        return if (errors.isEmpty()) ToolResult.success("Applied patch to ${fileHunks.size} file(s)")
+        else ToolResult.error("Patch partially failed:\n${errors.joinToString("\n")}")
+    }
+
+    private fun applyUnifiedDiff(project: Project, basePath: String, filePath: String, patch: String): String {
+        var result: String? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            WriteCommandAction.runWriteCommandAction(project) {
+                try {
+                    val file = File(basePath, filePath)
+                    if (!file.exists()) {
+                        // New file — collect all added lines
+                        val newContent = patch.lines()
+                            .filter { it.startsWith("+") && !it.startsWith("+++") }
+                            .joinToString("\n") { it.removePrefix("+") }
+                        file.parentFile?.mkdirs()
+                        val parentVFile = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(file.parentFile)
+                        if (parentVFile != null) {
+                            val vFile = parentVFile.createChildData(this, file.name)
+                            VfsUtil.saveText(vFile, newContent)
+                        }
+                        result = ToolResult.success("Created $filePath")
+                        return@runWriteCommandAction
+                    }
+
+                    val vFile = LocalFileSystem.getInstance().findFileByIoFile(file)
+                        ?: return@runWriteCommandAction run { result = ToolResult.error("VirtualFile not found: $filePath") }
+                    val document = FileDocumentManager.getInstance().getDocument(vFile)
+                        ?: return@runWriteCommandAction run { result = ToolResult.error("Cannot get document: $filePath") }
+
+                    val originalLines = document.text.lines().toMutableList()
+                    val patchLines = patch.lines()
+                    var i = 0
+                    var lineOffset = 0 // tracks shifts from prior hunks
+
+                    while (i < patchLines.size) {
+                        val line = patchLines[i]
+                        if (line.startsWith("@@")) {
+                            // Parse @@ -start,count +start,count @@
+                            val match = Regex("""-(\d+)(?:,\d+)?\s+\+(\d+)""").find(line)
+                            var origLine = (match?.groupValues?.get(1)?.toIntOrNull() ?: 1) - 1 + lineOffset
+                            i++
+                            val hunkRemoves = mutableListOf<Int>()
+                            val hunkAdds = mutableListOf<String>()
+                            var hunkPos = origLine
+                            while (i < patchLines.size && !patchLines[i].startsWith("@@") &&
+                                !patchLines[i].startsWith("*** ")) {
+                                val hline = patchLines[i]
+                                when {
+                                    hline.startsWith("-") -> { hunkRemoves.add(hunkPos); hunkPos++ }
+                                    hline.startsWith("+") -> hunkAdds.add(hline.removePrefix("+"))
+                                    else -> hunkPos++ // context line
+                                }
+                                i++
+                            }
+                            // Apply: remove first, then insert
+                            val removeSet = hunkRemoves.toSortedSet(compareByDescending { it })
+                            for (idx in removeSet) {
+                                if (idx in originalLines.indices) originalLines.removeAt(idx)
+                            }
+                            val insertAt = (hunkRemoves.minOrNull() ?: hunkPos).coerceIn(0, originalLines.size)
+                            originalLines.addAll(insertAt, hunkAdds)
+                            lineOffset += hunkAdds.size - hunkRemoves.size
+                        } else {
+                            i++
+                        }
+                    }
+
+                    document.setText(originalLines.joinToString("\n"))
+                    FileDocumentManager.getInstance().saveDocument(document)
+                    result = ToolResult.success("Patched $filePath")
+                } catch (e: Exception) {
+                    result = ToolResult.error("Failed to apply patch to $filePath: ${e.message}")
+                }
+            }
+        }
+        return result ?: ToolResult.error("Unknown error applying patch")
     }
 }
