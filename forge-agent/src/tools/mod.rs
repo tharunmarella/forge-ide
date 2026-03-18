@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
-pub use execute::*;
 pub use files::*;
 pub use search::*;
 pub use code::*;
@@ -35,16 +34,51 @@ pub use search::ensure_indexed;
 /// All available tools
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
-    // Essential file operations
-    ExecuteCommand,
+    // File operations
     ReadFile,
-    WriteToFile,
-    ReplaceInFile,
+    WriteFile,      // write_file (was write_to_file)
+    EditFile,       // edit_file  (was replace_in_file)
     ApplyPatch,
     ListFiles,
     DeleteFile,
-    
-    // Background processes & ports
+
+    // Search
+    Grep,
+    Glob,
+
+    // Diagnostics
+    Diagnostics,
+
+    // Process management — consolidated
+    Run,            // run(command, background?, timeout_secs?)
+    Process,        // process(pid, action, lines?)
+    Port,           // port(port_num, action, ...)
+
+    // Code intelligence
+    References,     // references(symbol, path?) — was find_symbol_references
+    Lsp,            // lsp(action, path, line, column, new_name?)
+
+    // Display
+    ShowCode,
+    ShowDiagram,
+
+    // Run configuration
+    RunProject,
+    StopProject,
+
+    // Git operations
+    Git,
+
+    // SDK Management
+    SdkManager,
+
+    // Web
+    Fetch,          // fetch(url_or_query) — was fetch_webpage
+
+    // ── Legacy aliases (kept for backward compatibility) ──────────
+    ExecuteCommand,
+    WriteToFile,
+    ReplaceInFile,
     ExecuteBackground,
     ReadProcessOutput,
     CheckProcessStatus,
@@ -52,47 +86,21 @@ pub enum Tool {
     WaitForPort,
     CheckPort,
     KillPort,
-    
-    // Search
-    Grep,
-    Glob,
-    CodebaseSearch,
-    
-    // Code intelligence
-    ListCodeDefinitions,
-    GetSymbolDefinition,
     FindSymbolReferences,
-    Diagnostics,
-    
-    // Display
-    ShowCode,
-    ShowDiagram,
-    
-    // Run configuration
-    ListRunConfigs,
-    RunProject,
-    StopProject,
-    
-    // Git operations
-    Git,
-    
-    // SDK Management
-    SdkManager,
-    
-    // LSP Tools
     LspGoToDefinition,
     LspFindReferences,
     LspHover,
     LspRename,
-    
-    // Web
     FetchWebpage,
-    
+    ListCodeDefinitions,
+    GetSymbolDefinition,
+    ListRunConfigs,
+
     // Interaction
     AttemptCompletion,
     AskFollowupQuestion,
     Think,
-    
+
     // Mode control (internal)
     PlanModeRespond,
     ActModeRespond,
@@ -102,14 +110,32 @@ pub enum Tool {
 impl Tool {
     pub fn name(&self) -> &'static str {
         match self {
-            Self::ExecuteCommand => "execute_command",
+            // New canonical names
             Self::ReadFile => "read_file",
-            Self::WriteToFile => "write_to_file",
-            Self::ReplaceInFile => "replace_in_file",
+            Self::WriteFile => "write_file",
+            Self::EditFile => "edit_file",
             Self::ApplyPatch => "apply_patch",
             Self::ListFiles => "list_files",
             Self::DeleteFile => "delete_file",
-            // Background processes & ports
+            Self::Grep => "grep",
+            Self::Glob => "glob",
+            Self::Diagnostics => "diagnostics",
+            Self::Run => "run",
+            Self::Process => "process",
+            Self::Port => "port",
+            Self::References => "references",
+            Self::Lsp => "lsp",
+            Self::ShowCode => "show_code",
+            Self::ShowDiagram => "show_diagram",
+            Self::RunProject => "run_project",
+            Self::StopProject => "stop_project",
+            Self::Git => "git",
+            Self::SdkManager => "sdk_manager",
+            Self::Fetch => "fetch",
+            // Legacy aliases
+            Self::ExecuteCommand => "execute_command",
+            Self::WriteToFile => "write_to_file",
+            Self::ReplaceInFile => "replace_in_file",
             Self::ExecuteBackground => "execute_background",
             Self::ReadProcessOutput => "read_process_output",
             Self::CheckProcessStatus => "check_process_status",
@@ -117,26 +143,16 @@ impl Tool {
             Self::WaitForPort => "wait_for_port",
             Self::CheckPort => "check_port",
             Self::KillPort => "kill_port",
-            // Search
-            Self::Grep => "grep",
-            Self::Glob => "glob",
-            Self::CodebaseSearch => "codebase_search",
-            Self::ListCodeDefinitions => "list_code_definition_names",
-            Self::GetSymbolDefinition => "get_symbol_definition",
             Self::FindSymbolReferences => "find_symbol_references",
-            Self::Diagnostics => "diagnostics",
-            Self::ShowCode => "show_code",
-            Self::ShowDiagram => "show_diagram",
-            Self::ListRunConfigs => "list_run_configs",
-            Self::RunProject => "run_project",
-            Self::StopProject => "stop_project",
-            Self::Git => "git",
-            Self::SdkManager => "sdk_manager",
             Self::LspGoToDefinition => "lsp_go_to_definition",
             Self::LspFindReferences => "lsp_find_references",
             Self::LspHover => "lsp_hover",
             Self::LspRename => "lsp_rename",
             Self::FetchWebpage => "fetch_webpage",
+            Self::ListCodeDefinitions => "list_code_definition_names",
+            Self::GetSymbolDefinition => "get_symbol_definition",
+            Self::ListRunConfigs => "list_run_configs",
+            // Interaction
             Self::AttemptCompletion => "attempt_completion",
             Self::AskFollowupQuestion => "ask_followup_question",
             Self::Think => "think",
@@ -148,46 +164,54 @@ impl Tool {
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
-            "execute_command" => Some(Self::ExecuteCommand),
-            "read_file" => Some(Self::ReadFile),
-            "write_to_file" => Some(Self::WriteToFile),
-            "replace_in_file" => Some(Self::ReplaceInFile),
-            "apply_patch" => Some(Self::ApplyPatch),
-            "list_files" => Some(Self::ListFiles),
-            "delete_file" => Some(Self::DeleteFile),
-            // Background processes & ports
-            "execute_background" => Some(Self::ExecuteBackground),
-            "read_process_output" => Some(Self::ReadProcessOutput),
-            "check_process_status" => Some(Self::CheckProcessStatus),
-            "kill_process" => Some(Self::KillProcess),
-            "wait_for_port" => Some(Self::WaitForPort),
-            "check_port" => Some(Self::CheckPort),
-            "kill_port" => Some(Self::KillPort),
-            // Search
-            "grep" => Some(Self::Grep),
-            "glob" => Some(Self::Glob),
-            "codebase_search" => Some(Self::CodebaseSearch),
-            "list_code_definition_names" => Some(Self::ListCodeDefinitions),
-            "get_symbol_definition" => Some(Self::GetSymbolDefinition),
-            "find_symbol_references" => Some(Self::FindSymbolReferences),
-            "diagnostics" => Some(Self::Diagnostics),
-            "show_code" => Some(Self::ShowCode),
+            // New canonical names
+            "read_file"    => Some(Self::ReadFile),
+            "write_file"   => Some(Self::WriteFile),
+            "edit_file"    => Some(Self::EditFile),
+            "apply_patch"  => Some(Self::ApplyPatch),
+            "list_files"   => Some(Self::ListFiles),
+            "delete_file"  => Some(Self::DeleteFile),
+            "grep"         => Some(Self::Grep),
+            "glob"         => Some(Self::Glob),
+            "diagnostics"  => Some(Self::Diagnostics),
+            "run"          => Some(Self::Run),
+            "process"      => Some(Self::Process),
+            "port"         => Some(Self::Port),
+            "references"   => Some(Self::References),
+            "lsp"          => Some(Self::Lsp),
+            "show_code"    => Some(Self::ShowCode),
             "show_diagram" => Some(Self::ShowDiagram),
-            "list_run_configs" => Some(Self::ListRunConfigs),
-            "run_project" => Some(Self::RunProject),
+            "run_project"  => Some(Self::RunProject),
             "stop_project" => Some(Self::StopProject),
-            "git" => Some(Self::Git),
-            "sdk_manager" => Some(Self::SdkManager),
-            "lsp_go_to_definition" => Some(Self::LspGoToDefinition),
-            "lsp_find_references" => Some(Self::LspFindReferences),
-            "lsp_hover" => Some(Self::LspHover),
-            "lsp_rename" => Some(Self::LspRename),
-            "attempt_completion" => Some(Self::AttemptCompletion),
-            "ask_followup_question" => Some(Self::AskFollowupQuestion),
-            "think" => Some(Self::Think),
-            "plan_mode_respond" => Some(Self::PlanModeRespond),
-            "act_mode_respond" => Some(Self::ActModeRespond),
-            "focus_chain" => Some(Self::FocusChain),
+            "git"          => Some(Self::Git),
+            "sdk_manager"  => Some(Self::SdkManager),
+            "fetch"        => Some(Self::Fetch),
+            // Legacy aliases
+            "execute_command"          => Some(Self::ExecuteCommand),
+            "write_to_file"            => Some(Self::WriteToFile),
+            "replace_in_file"          => Some(Self::ReplaceInFile),
+            "execute_background"       => Some(Self::ExecuteBackground),
+            "read_process_output"      => Some(Self::ReadProcessOutput),
+            "check_process_status"     => Some(Self::CheckProcessStatus),
+            "kill_process"             => Some(Self::KillProcess),
+            "wait_for_port"            => Some(Self::WaitForPort),
+            "check_port"               => Some(Self::CheckPort),
+            "kill_port"                => Some(Self::KillPort),
+            "find_symbol_references"   => Some(Self::FindSymbolReferences),
+            "lsp_go_to_definition"     => Some(Self::LspGoToDefinition),
+            "lsp_find_references"      => Some(Self::LspFindReferences),
+            "lsp_hover"                => Some(Self::LspHover),
+            "lsp_rename"               => Some(Self::LspRename),
+            "fetch_webpage"            => Some(Self::FetchWebpage),
+            "list_code_definition_names" => Some(Self::ListCodeDefinitions),
+            "get_symbol_definition"    => Some(Self::GetSymbolDefinition),
+            "list_run_configs"         => Some(Self::ListRunConfigs),
+            "attempt_completion"       => Some(Self::AttemptCompletion),
+            "ask_followup_question"    => Some(Self::AskFollowupQuestion),
+            "think"                    => Some(Self::Think),
+            "plan_mode_respond"        => Some(Self::PlanModeRespond),
+            "act_mode_respond"         => Some(Self::ActModeRespond),
+            "focus_chain"              => Some(Self::FocusChain),
             _ => None,
         }
     }
@@ -196,14 +220,20 @@ impl Tool {
     pub fn is_mutating(&self) -> bool {
         matches!(
             self,
-            Self::ExecuteCommand
+            Self::WriteFile
                 | Self::WriteToFile
+                | Self::EditFile
                 | Self::ReplaceInFile
                 | Self::ApplyPatch
                 | Self::DeleteFile
+                | Self::Run
+                | Self::ExecuteCommand
                 | Self::ExecuteBackground
                 | Self::KillProcess
+                | Self::Process  // kill action
                 | Self::KillPort
+                | Self::Port     // kill action
+                | Self::Lsp      // rename action
                 | Self::LspRename
         )
     }
@@ -376,14 +406,33 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
 
     // ── Execute ─────────────────────────────────────────────────
     let result = match t {
-        Tool::ExecuteCommand => execute::run(&tool.arguments, workdir).await,
+        // ── New canonical tools ───────────────────────────────────────────
         Tool::ReadFile => files::read(&tool.arguments, workdir).await,
-        Tool::WriteToFile => files::write(&tool.arguments, workdir).await,
-        Tool::ReplaceInFile => files::replace(&tool.arguments, workdir).await,
+        Tool::WriteFile => files::write(&tool.arguments, workdir).await,
+        Tool::EditFile => files::replace(&tool.arguments, workdir).await,
         Tool::ApplyPatch => files::apply_patch(&tool.arguments, workdir).await,
         Tool::ListFiles => files::list(&tool.arguments, workdir).await,
         Tool::DeleteFile => files::delete(&tool.arguments, workdir).await,
-        // Background processes & ports
+        Tool::Grep => search::grep(&tool.arguments, workdir).await,
+        Tool::Glob => search::glob_search(&tool.arguments, workdir).await,
+        Tool::Diagnostics => lint::diagnostics(&tool.arguments, workdir).await,
+        Tool::Run => process::run_command(&tool.arguments, workdir).await,
+        Tool::Process => process::manage_process(&tool.arguments, workdir).await,
+        Tool::Port => process::manage_port(&tool.arguments, workdir).await,
+        Tool::References => code::find_references(&tool.arguments, workdir).await,
+        Tool::Lsp => ToolResult::err("lsp tool must be executed via ProxyBridge in dispatch.rs"),
+        Tool::ShowCode => display::show_code(&tool.arguments, workdir).await,
+        Tool::ShowDiagram => display::show_diagram(&tool.arguments, workdir).await,
+        Tool::RunProject => run_config::run_project(&tool.arguments, workdir).await,
+        Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
+        Tool::Git => git::git(&tool.arguments, workdir).await,
+        Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
+        Tool::Fetch => web::fetch_webpage(&tool.arguments).await,
+
+        // ── Legacy aliases (map to same implementations) ──────────────────
+        Tool::ExecuteCommand => execute::run(&tool.arguments, workdir).await,
+        Tool::WriteToFile => files::write(&tool.arguments, workdir).await,
+        Tool::ReplaceInFile => files::replace(&tool.arguments, workdir).await,
         Tool::ExecuteBackground => process::execute_background(&tool.arguments, workdir).await,
         Tool::ReadProcessOutput => process::read_process_output(&tool.arguments, workdir).await,
         Tool::CheckProcessStatus => process::check_process_status(&tool.arguments, workdir).await,
@@ -391,31 +440,20 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::WaitForPort => process::wait_for_port(&tool.arguments, workdir).await,
         Tool::CheckPort => process::check_port(&tool.arguments, workdir).await,
         Tool::KillPort => process::kill_port(&tool.arguments, workdir).await,
-        // Search
-        Tool::Grep => search::grep(&tool.arguments, workdir).await,
-        Tool::Glob => search::glob_search(&tool.arguments, workdir).await,
-        Tool::CodebaseSearch => search::semantic(&tool.arguments, workdir).await,
+        Tool::FindSymbolReferences => code::find_references(&tool.arguments, workdir).await,
         Tool::ListCodeDefinitions => code::list_definitions(&tool.arguments, workdir).await,
         Tool::GetSymbolDefinition => code::get_definition(&tool.arguments, workdir).await,
-        Tool::FindSymbolReferences => code::find_references(&tool.arguments, workdir).await,
-        Tool::Diagnostics => lint::diagnostics(&tool.arguments, workdir).await,
-        Tool::ShowCode => display::show_code(&tool.arguments, workdir).await,
-        Tool::ShowDiagram => display::show_diagram(&tool.arguments, workdir).await,
         Tool::ListRunConfigs => run_config::list_run_configs(&tool.arguments, workdir).await,
-        Tool::RunProject => run_config::run_project(&tool.arguments, workdir).await,
-        Tool::StopProject => run_config::stop_project(&tool.arguments, workdir).await,
-        Tool::Git => git::git(&tool.arguments, workdir).await,
-        Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
         Tool::FetchWebpage => web::fetch_webpage(&tool.arguments).await,
-        
-        // LSP tools (stubs for direct execution - preferred via bridge in dispatch.rs)
-        Tool::LspGoToDefinition 
-        | Tool::LspFindReferences 
-        | Tool::LspHover 
+
+        // LSP legacy stubs (preferred via bridge in dispatch.rs)
+        Tool::LspGoToDefinition
+        | Tool::LspFindReferences
+        | Tool::LspHover
         | Tool::LspRename => ToolResult::err("LSP tools must be executed via ProxyBridge"),
-        
-        // These are handled specially by the agent
-        Tool::AttemptCompletion 
+
+        // Handled specially by the agent
+        Tool::AttemptCompletion
         | Tool::AskFollowupQuestion
         | Tool::PlanModeRespond
         | Tool::ActModeRespond

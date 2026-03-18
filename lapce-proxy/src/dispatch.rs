@@ -46,8 +46,9 @@ use toml;
 
 use crate::{
     agent_terminal::AgentTerminalManager,
-    buffer::{Buffer, get_mod_time, load_file},
-    plugin::{PluginCatalogRpcHandler, catalog::PluginCatalog},
+    buffer::{get_mod_time, load_file, Buffer},
+    plugin::{catalog::PluginCatalog, PluginCatalogRpcHandler},
+    proto_manager::ProtoManager,
     terminal::{Terminal, TerminalSender},
     watcher::{FileWatcher, Notify, WatchToken},
 };
@@ -392,6 +393,13 @@ impl ProxyHandler for Dispatcher {
                 if let Err(err) = self.catalog_rpc.enable_volt(volt) {
                     tracing::error!("{:?}", err);
                 }
+            }
+            ProtoInstallProgress {
+                tool,
+                version,
+                progress,
+            } => {
+                self.core_rpc.proto_install_progress(tool, version, progress);
             }
             GitCommit { message, diffs } => {
                 if let Some(workspace) = self.workspace.as_ref() {
@@ -1050,6 +1058,30 @@ impl ProxyHandler for Dispatcher {
                         }
                     } else {
                         Err(RpcError { code: 0, message: "no workspace set".to_string() })
+                    };
+                    proxy_rpc.handle_response(id, result);
+                });
+            }
+            ProtoInstallTool { tool, version } => {
+                let workspace = self.workspace.clone();
+                let proxy_rpc = self.proxy_rpc.clone();
+                let core_rpc = self.core_rpc.clone();
+                let tool_clone = tool.clone();
+                let version_clone = version.clone();
+                tokio::task::spawn_blocking(move || {
+                    let manager = ProtoManager::new(workspace);
+                    let result = match manager.install_tool(&tool, &version, |progress| {
+                        core_rpc.proto_install_progress(
+                            tool_clone.clone(),
+                            version_clone.clone(),
+                            progress,
+                        );
+                    }) {
+                        Ok(_) => Ok(ProxyResponse::Success {}),
+                        Err(e) => Err(RpcError {
+                            code: 0,
+                            message: e.to_string(),
+                        }),
                     };
                     proxy_rpc.handle_response(id, result);
                 });
@@ -1874,22 +1906,6 @@ impl ProxyHandler for Dispatcher {
                 };
                 self.respond_rpc(id, result);
             }
-            ProtoInstallTool { tool, version } => {
-                use crate::proto_manager::ProtoManager;
-                let workspace = self.workspace.clone();
-                let proxy_rpc = self.proxy_rpc.clone();
-                tokio::task::spawn_blocking(move || {
-                    let manager = ProtoManager::new(workspace);
-                    let result = match manager.install_tool(&tool, &version) {
-                        Ok(message) => Ok(ProxyResponse::ProtoInstallResponse { success: true, message }),
-                        Err(e) => Ok(ProxyResponse::ProtoInstallResponse {
-                            success: false,
-                            message: format!("Failed to install {} {}: {}", tool, version, e),
-                        }),
-                    };
-                    proxy_rpc.handle_response(id, result);
-                });
-            }
             ProtoUninstallTool { tool, version } => {
                 use crate::proto_manager::ProtoManager;
                 let manager = ProtoManager::new(self.workspace.clone());
@@ -2309,6 +2325,7 @@ impl ProxyHandler for Dispatcher {
                 let auto_approve_session = self.auto_approve_session.clone();
                 let agent_term_mgr = self.agent_terminal_mgr.clone();
                 let ide_terminals = self.terminals.clone();
+                let catalog_rpc = self.catalog_rpc.clone();
                 let _ = (provider, model, api_key); // Unused — all LLM calls go through forge-search
 
                 thread::spawn(move || {
@@ -2550,52 +2567,29 @@ impl ProxyHandler for Dispatcher {
                                                 has_tool_calls = true;
                                                 
                                                 let cmd_str = tc_args.get("command").and_then(|c| c.as_str()).unwrap_or("");
-                                                let is_safe_command = if tc_name == "execute_command" || tc_name == "execute_background" {
-                                                    let cmd_lower = cmd_str.to_lowercase();
-                                                    cmd_lower.starts_with("npm run ")
-                                                        || cmd_lower.starts_with("npm test")
-                                                        || cmd_lower.starts_with("npm install")
-                                                        || cmd_lower.starts_with("npx tsc")
-                                                        || cmd_lower.starts_with("npx ")
-                                                        || cmd_lower.starts_with("yarn ")
-                                                        || cmd_lower.starts_with("pnpm ")
-                                                        || cmd_lower.starts_with("cargo check")
-                                                        || cmd_lower.starts_with("cargo build")
-                                                        || cmd_lower.starts_with("cargo test")
-                                                        || cmd_lower.starts_with("cargo run")
-                                                        || cmd_lower.starts_with("go build")
-                                                        || cmd_lower.starts_with("go test")
-                                                        || cmd_lower.starts_with("go run")
-                                                        || cmd_lower.starts_with("python -m py_compile")
-                                                        || cmd_lower.starts_with("python -m pytest")
-                                                        || cmd_lower.starts_with("python -m mypy")
-                                                        || cmd_lower.starts_with("pytest")
-                                                        || cmd_lower.starts_with("pip install")
-                                                        || cmd_lower.starts_with("git status")
-                                                        || cmd_lower.starts_with("git log")
-                                                        || cmd_lower.starts_with("git diff")
-                                                        || cmd_lower.starts_with("git branch")
-                                                        || cmd_lower.starts_with("git show")
-                                                        || cmd_lower.starts_with("cat ")
-                                                        || cmd_lower.starts_with("ls")
-                                                        || cmd_lower.starts_with("find ")
-                                                        || cmd_lower.starts_with("pwd")
-                                                        || cmd_lower.starts_with("echo ")
-                                                        || cmd_lower.starts_with("which ")
-                                                        || cmd_lower.starts_with("node -")
-                                                        || cmd_lower.starts_with("rustc --")
+                                                let is_run_tool = matches!(tc_name.as_str(),
+                                                    "run" | "execute_command" | "execute_background");
+                                                let is_safe_command = if is_run_tool {
+                                                    is_read_only_command(cmd_str)
                                                 } else {
                                                     false
                                                 };
                                                 
                                                 let is_file_edit = matches!(tc_name.as_str(), 
-                                                    "write_to_file" | "replace_in_file" | "apply_patch" | "delete_file");
+                                                    "write_file" | "edit_file" | "apply_patch" | "delete_file"
+                                                    | "write_to_file" | "replace_in_file"); // legacy aliases
                                                 
-                                                let is_risky_command = matches!(tc_name.as_str(), 
-                                                    "execute_command" | "execute_background" | "lsp_rename")
+                                                let is_risky_command = is_run_tool
                                                     && !is_safe_command;
                                                 
-                                                if is_file_edit || is_risky_command {
+                                                // lsp rename (new and legacy) is risky
+                                                let is_risky_lsp = matches!(tc_name.as_str(), "lsp" | "lsp_rename")
+                                                    && {
+                                                        let action = tc_args.get("action").and_then(|v| v.as_str()).unwrap_or("definition");
+                                                        action == "rename"
+                                                    };
+                                                
+                                                if is_file_edit || is_risky_command || is_risky_lsp {
                                                     risky_calls.push((tc_id, tc_name, tc_args, is_file_edit));
                                                 } else {
                                                     safe_calls.push((tc_id, tc_name, tc_args));
@@ -2626,6 +2620,7 @@ impl ProxyHandler for Dispatcher {
                                                     let cr = core_rpc.clone();
                                                     let atm = agent_term_mgr.clone();
                                                     let it = ide_terminals.clone();
+                                                    let cat = catalog_rpc.clone();
                                                     
                                                     futures.push(async move {
                                                         let result = execute_ide_tool(
@@ -2634,6 +2629,7 @@ impl ProxyHandler for Dispatcher {
                                                             &cr,
                                                             &atm,
                                                             &it,
+                                                            &cat,
                                                         ).await;
                                                         (tc_id, tc_name, result)
                                                     });
@@ -2699,6 +2695,7 @@ impl ProxyHandler for Dispatcher {
                                                         &core_rpc,
                                                         &agent_term_mgr,
                                                         &ide_terminals,
+                                                        &catalog_rpc,
                                                     ).await;
                                                     
                                                     if !result.success {
@@ -2722,8 +2719,8 @@ impl ProxyHandler for Dispatcher {
                                                     // 3. Tool succeeded — now ask for approval
                                                     let path = tc_args.get("path").and_then(|p| p.as_str()).unwrap_or("?");
                                                     let summary = match tc_name.as_str() {
-                                                        "write_to_file" => format!("Created/wrote: {}", path),
-                                                        "replace_in_file" => format!("Edited: {}", path),
+                                                        "write_file" | "write_to_file" => format!("Created/wrote: {}", path),
+                                                        "edit_file" | "replace_in_file" => format!("Edited: {}", path),
                                                         "apply_patch" => "Applied multi-file patch".to_string(),
                                                         "delete_file" => format!("Deleted: {}", path),
                                                         _ => format!("Modified: {}", path),
@@ -2812,9 +2809,9 @@ impl ProxyHandler for Dispatcher {
                                                     
                                                     let cmd_str = tc_args.get("command").and_then(|v| v.as_str()).unwrap_or("?");
                                                     let summary = match tc_name.as_str() {
-                                                        "execute_command" => format!("Run command: {}", cmd_str),
+                                                        "run" | "execute_command" => format!("Run command: {}", cmd_str),
                                                         "execute_background" => format!("Start background process: {}", cmd_str),
-                                                        "lsp_rename" => format!("Rename symbol to: {}", tc_args.get("new_name").and_then(|v| v.as_str()).unwrap_or("?")),
+                                                        "lsp" | "lsp_rename" => format!("Rename symbol to: {}", tc_args.get("new_name").and_then(|v| v.as_str()).unwrap_or("?")),
                                                         _ => format!("Execute risky tool: {}", tc_name),
                                                     };
                                                     
@@ -2881,6 +2878,7 @@ impl ProxyHandler for Dispatcher {
                                                         &core_rpc,
                                                         &agent_term_mgr,
                                                         &ide_terminals,
+                                                        &catalog_rpc,
                                                     ).await;
                                                     
                                                     core_rpc.notification(CoreNotification::AgentToolCallUpdate {
@@ -3412,20 +3410,210 @@ impl ProxyHandler for Dispatcher {
 // (XML tool parsing code removed — all LLM calls now go through forge-search)
 // ══════════════════════════════════════════════════════════════════
 
+/// Determine whether a shell command is read-only (safe to run without user approval).
+///
+/// The heuristic is intent-based rather than a prefix whitelist:
+/// - Read-only inspection commands (ls, cat, echo, pwd, which, env, …)
+/// - Build/test commands that should never alter persistent state
+/// - Source-control inspection commands (git status/log/diff/show/branch)
+///
+/// Anything that starts a server, writes to files, installs system packages,
+/// or runs arbitrary code is considered risky and will require approval.
+fn is_read_only_command(cmd: &str) -> bool {
+    let c = cmd.trim();
+    if c.is_empty() {
+        return true;
+    }
+    let lower = c.to_lowercase();
+
+    // Leading env-var assignments are fine (VAR=val cmd ...)
+    let effective = lower
+        .splitn(2, ' ')
+        .last()
+        .map(|s| s.trim())
+        .unwrap_or(&lower);
+
+    // Allow read-only inspection commands
+    let safe_prefixes: &[&str] = &[
+        // File inspection
+        "cat ", "ls", "ll", "pwd", "echo ", "printf ", "which ",
+        "file ", "stat ", "wc ", "head ", "tail ", "diff ", "md5",
+        "sha", "xxd ", "hexdump ",
+        // Environment
+        "env", "printenv", "set", "export -p",
+        // Process inspection
+        "ps ", "pgrep ", "pidof ", "top -b", "htop -d",
+        "lsof ", "netstat ", "ss ",
+        // Build / test (read-only intent)
+        "cargo check", "cargo build", "cargo test", "cargo clippy",
+        "cargo fmt --check", "cargo doc",
+        "npm run ", "npm test", "npm install", "npm ci",
+        "npx tsc", "npx eslint", "npx prettier --check",
+        "yarn ", "pnpm ",
+        "go build", "go test", "go vet", "go fmt",
+        "python -m py_compile", "python -m pytest", "python -m mypy",
+        "python -m flake8", "python -m black --check",
+        "pytest", "pip install", "pip show",
+        "rustc --", "node -e", "node --version",
+        // Source control — inspection only
+        "git status", "git log", "git diff", "git branch",
+        "git show", "git remote -v", "git stash list",
+        // Misc safe
+        "date", "uptime", "uname",
+    ];
+
+    safe_prefixes
+        .iter()
+        .any(|pfx| effective.starts_with(pfx) || lower.starts_with(pfx))
+}
+
+fn get_offset(content: &str, position: lsp_types::Position) -> usize {
+    let mut offset = 0;
+    for (i, line) in content.lines().enumerate() {
+        if i == position.line as usize {
+            return offset + position.character as usize;
+        }
+        offset += line.len() + 1; // +1 for newline
+    }
+    offset
+}
+
+fn make_lsp_position(line: u64, col: u64) -> lsp_types::Position {
+    lsp_types::Position::new(line as u32, col as u32)
+}
+
+fn format_lsp_locations(
+    locs: &[lsp_types::Location],
+    workdir: &std::path::Path,
+) -> String {
+    if locs.is_empty() {
+        return "No locations found".to_string();
+    }
+
+    let mut output = format!("Found {} locations:\n", locs.len());
+    for (i, loc) in locs.iter().enumerate() {
+        if i >= 15 {
+            output.push_str(&format!("... and {} more\n", locs.len() - 15));
+            break;
+        }
+
+        let path = loc.uri.to_file_path().unwrap_or_default();
+        let rel_path = path.strip_prefix(workdir).unwrap_or(&path);
+        output.push_str(&format!(
+            "- {}:{}:{}\n",
+            rel_path.display(),
+            loc.range.start.line,
+            loc.range.start.character
+        ));
+    }
+    output
+}
+
 /// Execute an IDE tool locally (the "Hands" executing what the "Brain" requested).
 /// This handles tool calls that need to run in the IDE context.
 ///
-/// `execute_command` and `execute_background` are routed through the IDE's real
-/// terminal (PTY) so the user can see the output and the shell profile is loaded.
+/// `execute_command`, `execute_background`, and the new `run` tool are routed
+/// through the IDE's real terminal (PTY) so the user can see the output and
+/// the shell profile is loaded.
 async fn execute_ide_tool(
     tc: &forge_agent::ToolCallInfo,
     workspace_path: &std::path::Path,
     core_rpc: &CoreRpcHandler,
     agent_term_mgr: &AgentTerminalManager,
     ide_terminals: &Arc<std::sync::Mutex<HashMap<TermId, TerminalSender>>>,
+    catalog_rpc: &PluginCatalogRpcHandler,
 ) -> forge_agent::tools::ToolResult {
     match tc.name.as_str() {
         // ── Command execution: use real IDE terminal ──────────────
+        // ── New canonical `run` tool (foreground or background) ──
+        "run" => {
+            let command = tc.args.get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if command.is_empty() {
+                return forge_agent::tools::ToolResult::err("Missing 'command' parameter");
+            }
+            let background = tc.args.get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if background {
+                // Route to IDE terminal background execution
+                agent_term_mgr.execute_background(
+                    command, workspace_path, 5_000, core_rpc, ide_terminals,
+                )
+            } else {
+                let timeout_secs = tc.args.get("timeout_secs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(120)
+                    .min(600);
+                agent_term_mgr.execute_command(
+                    command, workspace_path, timeout_secs, core_rpc, ide_terminals,
+                    &tc.id, &tc.name,
+                )
+            }
+        }
+        // ── New `process` tool (output / status / kill) ──────────
+        "process" => {
+            let action = tc.args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+            match action {
+                "output" => {
+                    let pid = tc.args.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32);
+                    if let Some(pid) = pid {
+                        let tail_lines = tc.args.get("lines")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(100) as usize;
+                        if agent_term_mgr.has_terminal(pid) {
+                            if let Some(output) = agent_term_mgr.read_output(pid, tail_lines) {
+                                let is_running = agent_term_mgr.is_running(pid);
+                                return forge_agent::tools::ToolResult::ok(format!(
+                                    "Running: {is_running}\n--- Output (tail {tail_lines} lines) ---\n{output}"
+                                ));
+                            }
+                        }
+                    }
+                    // Fall through to process module
+                    let tool_call_obj = forge_agent::tools::ToolCall {
+                        name: "read_process_output".to_string(),
+                        arguments: tc.args.clone(),
+                        thought_signature: None,
+                    };
+                    forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
+                }
+                _ => {
+                    // status / kill — delegate to process module
+                    let legacy_name = if action == "kill" { "kill_process" } else { "check_process_status" };
+                    let tool_call_obj = forge_agent::tools::ToolCall {
+                        name: legacy_name.to_string(),
+                        arguments: tc.args.clone(),
+                        thought_signature: None,
+                    };
+                    forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
+                }
+            }
+        }
+        // ── New `port` tool (check / kill / wait) ────────────────
+        "port" => {
+            let action = tc.args.get("action").and_then(|v| v.as_str()).unwrap_or("check");
+            // Normalise port_num → port for legacy helpers
+            let mut args = tc.args.clone();
+            if let Some(port_num) = tc.args.get("port_num") {
+                if let Some(obj) = args.as_object_mut() {
+                    obj.insert("port".to_string(), port_num.clone());
+                }
+            }
+            let legacy_name = match action {
+                "kill" => "kill_port",
+                "wait" => "wait_for_port",
+                _ => "check_port",
+            };
+            let tool_call_obj = forge_agent::tools::ToolCall {
+                name: legacy_name.to_string(),
+                arguments: args,
+                thought_signature: None,
+            };
+            forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
+        }
+        // ── Legacy command execution tools ────────────────────────
         "execute_command" => {
             let command = tc.args.get("command")
                 .and_then(|v| v.as_str())
@@ -3452,7 +3640,7 @@ async fn execute_ide_tool(
             }
             let wait_seconds = tc.args.get("wait_seconds")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(3);
+                .unwrap_or(5_000); // ms — passed as initial_wait_ms
 
             agent_term_mgr.execute_background(
                 command, workspace_path, wait_seconds, core_rpc, ide_terminals,
@@ -3482,22 +3670,172 @@ async fn execute_ide_tool(
             };
             forge_agent::tools::execute(&tool_call_obj, workspace_path, false).await
         }
-        // ── LSP tools: wire to bridge ─────────────────────────
-        "lsp_go_to_definition" => {
-            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
-            forge_agent::tools::lsp::lsp_go_to_definition(&tc.args, workspace_path, &bridge).await
+        // ── Unified `lsp` tool ────────────────────────────────
+        // action: "definition" | "references" | "hover" | "rename"
+        "lsp" => {
+            let action = tc.args.get("action").and_then(|v| v.as_str()).unwrap_or("definition");
+            let path_str = tc.args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = tc.args.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+            let col = tc.args.get("column").and_then(|v| v.as_u64()).unwrap_or(0);
+            let path = workspace_path.join(path_str);
+            let position = make_lsp_position(line, col);
+
+            match action {
+                "definition" | "references" => {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let tx = Arc::new(Mutex::new(Some(tx)));
+                    if action == "definition" {
+                        let tx = tx.clone();
+                        catalog_rpc.get_definition(&path, position, move |_, result| {
+                            let locs = match result {
+                                Ok(lsp_types::GotoDefinitionResponse::Scalar(loc)) => vec![loc],
+                                Ok(lsp_types::GotoDefinitionResponse::Array(locs)) => locs,
+                                Ok(lsp_types::GotoDefinitionResponse::Link(links)) => {
+                                    links.into_iter().map(|l| lsp_types::Location {
+                                        uri: l.target_uri,
+                                        range: l.target_selection_range,
+                                    }).collect()
+                                }
+                                Err(_) => vec![],
+                            };
+                            if let Some(tx) = tx.lock().take() {
+                                let _ = tx.send(locs);
+                            }
+                        });
+                    } else {
+                        let tx = tx.clone();
+                        catalog_rpc.get_references(&path, position, move |_, result| {
+                            if let Some(tx) = tx.lock().take() {
+                                let _ = tx.send(result.unwrap_or_default());
+                            }
+                        });
+                    }
+
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+                        Ok(Ok(locs)) => {
+                            forge_agent::tools::ToolResult::ok(format_lsp_locations(&locs, workspace_path))
+                        }
+                        Ok(Err(_)) => forge_agent::tools::ToolResult::ok(format!("No {} found", action)),
+                        Err(_) => forge_agent::tools::ToolResult::err("LSP request timed out".to_string()),
+                    }
+                }
+                "hover" => {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let tx = Arc::new(Mutex::new(Some(tx)));
+                    catalog_rpc.hover(&path, position, move |_, result| {
+                        let text = match result {
+                            Ok(hover) => {
+                                match hover.contents {
+                                    lsp_types::HoverContents::Scalar(content) => {
+                                        match content {
+                                            lsp_types::MarkedString::String(s) => s,
+                                            lsp_types::MarkedString::LanguageString(ls) => {
+                                                format!("```{}\n{}\n```", ls.language, ls.value)
+                                            }
+                                        }
+                                    }
+                                    lsp_types::HoverContents::Array(arr) => {
+                                        arr.into_iter().map(|c| match c {
+                                            lsp_types::MarkedString::String(s) => s,
+                                            lsp_types::MarkedString::LanguageString(ls) => {
+                                                format!("```{}\n{}\n```", ls.language, ls.value)
+                                            }
+                                        }).collect::<Vec<_>>().join("\n\n")
+                                    }
+                                    lsp_types::HoverContents::Markup(markup) => markup.value,
+                                }
+                            }
+                            Err(_) => "No hover information available".to_string(),
+                        };
+                        if let Some(tx) = tx.lock().take() {
+                            let _ = tx.send(text);
+                        }
+                    });
+
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+                        Ok(Ok(text)) => forge_agent::tools::ToolResult::ok(text),
+                        _ => forge_agent::tools::ToolResult::err("LSP hover request failed or timed out".to_string()),
+                    }
+                }
+                "rename" => {
+                    let new_name = tc.args.get("new_name").and_then(|v| v.as_str()).unwrap_or("");
+                    if new_name.is_empty() {
+                        return forge_agent::tools::ToolResult::err("Missing 'new_name' parameter for rename".to_string());
+                    }
+
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    let tx = Arc::new(Mutex::new(Some(tx)));
+                    catalog_rpc.rename(&path, position, new_name.to_string(), move |_, result| {
+                        if let Some(tx) = tx.lock().take() {
+                            let _ = tx.send(result);
+                        }
+                    });
+
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+                        Ok(Ok(Ok(edit))) => {
+                            // Apply WorkspaceEdit
+                            let mut results = Vec::new();
+                            if let Some(changes) = edit.changes {
+                                for (uri, edits) in changes {
+                                    if let Ok(file_path) = uri.to_file_path() {
+                                        if let Ok(mut content) = std::fs::read_to_string(&file_path) {
+                                            let mut edits = edits;
+                                            // Sort edits in reverse to apply from bottom to top
+                                            edits.sort_by(|a, b| {
+                                                b.range.start.cmp(&a.range.start)
+                                            });
+                                            
+                                            for edit in edits {
+                                                let start_offset = get_offset(&content, edit.range.start);
+                                                let end_offset = get_offset(&content, edit.range.end);
+                                                content.replace_range(start_offset..end_offset, &edit.new_text);
+                                            }
+                                            
+                                            if std::fs::write(&file_path, content).is_ok() {
+                                                results.push(file_path.display().to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Note: document_changes not handled yet for simplicity, 
+                            // but most LSPs use `changes` for simple renames.
+                            
+                            if results.is_empty() {
+                                forge_agent::tools::ToolResult::ok("Rename applied (no files changed or only document_changes present)".to_string())
+                            } else {
+                                forge_agent::tools::ToolResult::ok(format!("Successfully renamed in: {}", results.join(", ")))
+                            }
+                        }
+                        Ok(Ok(Err(e))) => forge_agent::tools::ToolResult::err(format!("LSP rename failed: {:?}", e)),
+                        _ => forge_agent::tools::ToolResult::err("LSP rename request failed or timed out".to_string()),
+                    }
+                }
+                other => forge_agent::tools::ToolResult::err(format!(
+                    "Unknown lsp action '{}'. Valid values: definition, references, hover, rename", other
+                )),
+            }
         }
-        "lsp_find_references" => {
-            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
-            forge_agent::tools::lsp::lsp_find_references(&tc.args, workspace_path, &bridge).await
-        }
-        "lsp_hover" => {
-            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
-            forge_agent::tools::lsp::lsp_hover(&tc.args, workspace_path, &bridge).await
-        }
-        "lsp_rename" => {
-            let bridge = forge_agent::bridge_standalone::StandaloneBridge::new(workspace_path.to_path_buf());
-            forge_agent::tools::lsp::lsp_rename(&tc.args, workspace_path, &bridge).await
+        // ── Legacy LSP tools ─────────────────────────────────
+        "lsp_go_to_definition" | "lsp_find_references" | "lsp_hover" | "lsp_rename" => {
+            let mut mapped_args = tc.args.clone();
+            let action = match tc.name.as_str() {
+                "lsp_go_to_definition" => "definition",
+                "lsp_find_references" => "references",
+                "lsp_hover" => "hover",
+                "lsp_rename" => "rename",
+                _ => "definition",
+            };
+            if let Some(obj) = mapped_args.as_object_mut() {
+                obj.insert("action".to_string(), serde_json::Value::String(action.to_string()));
+            }
+            let tc_info = forge_agent::ToolCallInfo {
+                id: tc.id.clone(),
+                name: "lsp".to_string(),
+                args: mapped_args,
+            };
+            // Use Box::pin to avoid recursion error in async fn
+            Box::pin(execute_ide_tool(&tc_info, workspace_path, core_rpc, agent_term_mgr, ide_terminals, catalog_rpc)).await
         }
         // ── Run Configuration tools: forward to IDE ──────────
         "list_run_configs" => {

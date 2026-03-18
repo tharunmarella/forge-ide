@@ -51,10 +51,12 @@ pub async fn execute_background(args: &Value, workdir: &Path) -> ToolResult {
         return ToolResult::err("Missing 'command' parameter");
     };
 
-    let wait_seconds = args
-        .get("wait_seconds")
+    // How long to wait for first output line before declaring "running".
+    // The agent can query output later via the `process` tool.
+    let initial_wait_ms = args
+        .get("initial_wait_ms")
         .and_then(|v| v.as_u64())
-        .unwrap_or(3);
+        .unwrap_or(5_000); // 5 s cap; exits immediately on first output
 
     // Spawn the process
     let mut child = match Command::new("sh")
@@ -72,41 +74,67 @@ pub async fn execute_background(args: &Value, workdir: &Path) -> ToolResult {
     let pid = child.id().unwrap_or(0);
     let output_buffer = Arc::new(Mutex::new(String::new()));
 
-    // Start background task to collect output
-    let buffer_clone = output_buffer.clone();
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    // Notification channel: background reader sends a signal when the first
+    // line of output (or stderr) is available so we don't have to sleep
+    // for a fixed duration.
+    let (first_output_tx, first_output_rx) = tokio::sync::oneshot::channel::<()>();
+    let first_output_tx = Arc::new(std::sync::Mutex::new(Some(first_output_tx)));
 
+    let buffer_clone = output_buffer.clone();
+    let tx1 = first_output_tx.clone();
+    let stdout = child.stdout.take();
     tokio::spawn(async move {
         if let Some(stdout) = stdout {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                let mut buf = buffer_clone.lock().await;
-                if buf.len() < MAX_OUTPUT_CHARS * 2 {
-                    buf.push_str(&line);
-                    buf.push('\n');
+                {
+                    let mut buf = buffer_clone.lock().await;
+                    if buf.len() < MAX_OUTPUT_CHARS * 2 {
+                        buf.push_str(&line);
+                        buf.push('\n');
+                    }
+                }
+                // Signal first output once
+                if let Ok(mut guard) = tx1.lock() {
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(());
+                    }
                 }
             }
         }
     });
 
     let buffer_clone2 = output_buffer.clone();
+    let tx2 = first_output_tx.clone();
+    let stderr = child.stderr.take();
     tokio::spawn(async move {
         if let Some(stderr) = stderr {
             let mut reader = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                let mut buf = buffer_clone2.lock().await;
-                if buf.len() < MAX_OUTPUT_CHARS * 2 {
-                    buf.push_str("[stderr] ");
-                    buf.push_str(&line);
-                    buf.push('\n');
+                {
+                    let mut buf = buffer_clone2.lock().await;
+                    if buf.len() < MAX_OUTPUT_CHARS * 2 {
+                        buf.push_str("[stderr] ");
+                        buf.push_str(&line);
+                        buf.push('\n');
+                    }
+                }
+                if let Ok(mut guard) = tx2.lock() {
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(());
+                    }
                 }
             }
         }
     });
 
-    // Wait briefly for initial output
-    tokio::time::sleep(Duration::from_secs(wait_seconds)).await;
+    // Wait for: first line of output OR process exit OR timeout — whichever
+    // comes first.  This avoids a fixed 3 s sleep for fast-failing commands.
+    let _ = tokio::time::timeout(
+        Duration::from_millis(initial_wait_ms),
+        first_output_rx,
+    )
+    .await;
 
     // Check if still running
     let is_running = child.try_wait().map(|s| s.is_none()).unwrap_or(false);
@@ -133,7 +161,7 @@ pub async fn execute_background(args: &Value, workdir: &Path) -> ToolResult {
         "Process started in background.\n\
          PID: {pid}\n\
          Running: {is_running}\n\
-         --- Initial output ({wait_seconds}s) ---\n\
+         --- Initial output ---\n\
          {initial_output}"
     ))
 }
@@ -556,6 +584,91 @@ pub async fn kill_port(args: &Value, _workdir: &Path) -> ToolResult {
         ToolResult::ok("No action taken")
     } else {
         ToolResult::ok(result_lines.join("\n"))
+    }
+}
+
+// ── New consolidated tools ─────────────────────────────────────────────────
+
+/// `run_command` — consolidated `run` tool: execute a command foreground or background.
+///
+/// Args:
+/// - command: Shell command string
+/// - background: If true, start in background and return PID (default: false)
+/// - timeout_secs: Seconds before giving up for foreground runs (default: 120)
+pub async fn run_command(args: &Value, workdir: &Path) -> ToolResult {
+    let background = args
+        .get("background")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if background {
+        execute_background(args, workdir).await
+    } else {
+        super::execute::run(args, workdir).await
+    }
+}
+
+/// `process` — manage a background process (output / status / kill).
+///
+/// Args:
+/// - pid: Process ID
+/// - action: "output" | "status" | "kill"
+/// - lines: Lines of tail output to return (default: 100, only for "output")
+pub async fn manage_process(args: &Value, workdir: &Path) -> ToolResult {
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("status");
+
+    match action {
+        "output" => {
+            // Map `lines` → `tail_lines`
+            let mut mapped = args.clone();
+            if let Some(lines) = args.get("lines") {
+                if let Some(obj) = mapped.as_object_mut() {
+                    obj.insert("tail_lines".to_string(), lines.clone());
+                }
+            }
+            read_process_output(&mapped, workdir).await
+        }
+        "status" => check_process_status(args, workdir).await,
+        "kill" => kill_process(args, workdir).await,
+        other => ToolResult::err(format!(
+            "Unknown action '{}'. Valid values: output, status, kill",
+            other
+        )),
+    }
+}
+
+/// `port` — check, kill, or wait for a port.
+///
+/// Args:
+/// - port_num: Port number
+/// - action: "check" | "kill" | "wait" (default: "check")
+/// - host: Host to target (default: localhost)
+/// - timeout: Seconds to wait (only for "wait", default: 30)
+pub async fn manage_port(args: &Value, workdir: &Path) -> ToolResult {
+    let action = args
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("check");
+
+    // Normalise: agent uses `port_num`, existing helpers use `port`
+    let mut mapped = args.clone();
+    if let Some(port_num) = args.get("port_num") {
+        if let Some(obj) = mapped.as_object_mut() {
+            obj.insert("port".to_string(), port_num.clone());
+        }
+    }
+
+    match action {
+        "check" => check_port(&mapped, workdir).await,
+        "kill"  => kill_port(&mapped, workdir).await,
+        "wait"  => wait_for_port(&mapped, workdir).await,
+        other => ToolResult::err(format!(
+            "Unknown action '{}'. Valid values: check, kill, wait",
+            other
+        )),
     }
 }
 

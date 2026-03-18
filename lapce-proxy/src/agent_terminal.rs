@@ -204,12 +204,13 @@ impl AgentTerminalManager {
     /// Execute a command in a real IDE terminal (background, returns immediately).
     ///
     /// The terminal appears in the IDE's terminal panel.
-    /// Returns the PID and initial output after waiting briefly.
+    /// Returns the PID and initial output after waiting for the first line of
+    /// output (or up to `initial_wait_ms` milliseconds, whichever comes first).
     pub fn execute_background(
         &self,
         command: &str,
         workdir: &Path,
-        wait_seconds: u64,
+        initial_wait_ms: u64,
         core_rpc: &CoreRpcHandler,
         ide_terminals: &Arc<std::sync::Mutex<HashMap<TermId, TerminalSender>>>,
     ) -> forge_agent::tools::ToolResult {
@@ -227,8 +228,22 @@ impl AgentTerminalManager {
         // Store in our registry for later read_process_output calls
         self.terminals.lock().unwrap().insert(pid, handle);
 
-        // Wait briefly for initial output — no locks held
-        std::thread::sleep(Duration::from_secs(wait_seconds));
+        // Poll for first output (or process exit) up to initial_wait_ms.
+        // Uses short 50 ms polling intervals so fast-failing commands are
+        // reported quickly instead of always waiting the full cap.
+        let poll_interval = Duration::from_millis(50);
+        let deadline = std::time::Instant::now() + Duration::from_millis(initial_wait_ms);
+
+        loop {
+            // Stop waiting if the process exited OR if we have some output
+            if !self.is_running(pid) || !self.get_output(pid).is_empty() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(poll_interval);
+        }
 
         // Check if still running
         let is_running = self.is_running(pid);
@@ -241,7 +256,7 @@ impl AgentTerminalManager {
              PID: {pid}\n\
              Terminal: {term_id:?}\n\
              Running: {is_running}\n\
-             --- Initial output ({wait_seconds}s) ---\n\
+             --- Initial output ---\n\
              {}", &clean_output[..len]
         ))
     }

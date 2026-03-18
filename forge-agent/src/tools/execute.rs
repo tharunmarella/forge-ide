@@ -49,15 +49,7 @@ pub async fn run(args: &Value, workdir: &Path) -> ToolResult {
     let timeout_duration = std::time::Duration::from_secs(timeout_secs);
 
     match tokio::time::timeout(timeout_duration, collect_output(&mut child)).await {
-        Ok((output, truncated, exit_code)) => {
-            let mut result = output;
-            if truncated {
-                result.push_str(&format!(
-                    "\n... (output truncated at {} chars. Use head/tail/grep to get specific parts)",
-                    MAX_OUTPUT_CHARS
-                ));
-            }
-
+        Ok((result, _truncated, exit_code)) => {
             if exit_code == 0 {
                 ToolResult::ok(format!("Exit code: 0\n{result}"))
             } else {
@@ -103,44 +95,60 @@ pub async fn run(args: &Value, workdir: &Path) -> ToolResult {
 
 /// Collect stdout + stderr from a child process.
 /// Returns (output_string, was_truncated, exit_code).
+///
+/// Both streams are collected independently and interleaved in the result.
+/// stderr is always appended (up to 5000 chars) even when stdout fills the buffer,
+/// so the agent always sees error output.
 async fn collect_output(
     child: &mut tokio::process::Child,
 ) -> (String, bool, i32) {
-    let mut output = String::new();
-    let mut truncated = false;
+    let mut stdout_buf = String::new();
+    let mut stderr_buf = String::new();
+    let mut stdout_truncated = false;
 
-    // Stream stdout
+    // Drain stdout
     if let Some(stdout) = child.stdout.take() {
         let mut reader = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = reader.next_line().await {
-            if output.len() + line.len() > MAX_OUTPUT_CHARS {
-                truncated = true;
+            if stdout_buf.len() + line.len() + 1 > MAX_OUTPUT_CHARS {
+                stdout_truncated = true;
                 break;
             }
-            output.push_str(&line);
-            output.push('\n');
+            stdout_buf.push_str(&line);
+            stdout_buf.push('\n');
         }
     }
 
-    // Stream stderr (only if we haven't already truncated)
-    if !truncated {
-        if let Some(stderr) = child.stderr.take() {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                if output.len() + line.len() > MAX_OUTPUT_CHARS {
-                    truncated = true;
-                    break;
-                }
-                output.push_str(&line);
-                output.push('\n');
+    // Always drain stderr (separately, up to 5 KB)
+    const MAX_STDERR_CHARS: usize = 5_000;
+    if let Some(stderr) = child.stderr.take() {
+        let mut reader = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            if stderr_buf.len() + line.len() + 1 > MAX_STDERR_CHARS {
+                break;
             }
+            stderr_buf.push_str(&line);
+            stderr_buf.push('\n');
         }
     }
 
     let status = child.wait().await;
     let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
 
-    (output, truncated, exit_code)
+    // Combine: stdout first, then stderr section if non-empty
+    let mut output = stdout_buf;
+    if stdout_truncated {
+        output.push_str(&format!(
+            "\n... (stdout truncated at {} chars)",
+            MAX_OUTPUT_CHARS
+        ));
+    }
+    if !stderr_buf.is_empty() {
+        output.push_str("\n--- stderr ---\n");
+        output.push_str(&stderr_buf);
+    }
+
+    (output, stdout_truncated, exit_code)
 }
 
 fn truncate_cmd(cmd: &str, max: usize) -> &str {
