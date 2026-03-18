@@ -22,7 +22,7 @@
         <toolWindow
             id="Forge AI"
             anchor="right"
-            icon="AllIcons.Toolwindows.ToolWindowAnt"
+            icon="/icons/forge.svg"
             factoryClass="com.forge.plugin.ui.ForgeToolWindowFactory"
             secondary="false"/>
     </extensions>

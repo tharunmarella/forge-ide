@@ -2,40 +2,41 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Forge AI</title>
-    <!-- Marked.js for Markdown parsing -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- Highlight.js for Code syntax highlighting -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <!-- Mermaid for diagrams -->
-    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <!-- Bundled locally — no CDN dependency, works offline -->
+    <link rel="stylesheet" href="vendor/github-dark.min.css">
+    <script src="vendor/marked.min.js"></script>
+    <script src="vendor/highlight.min.js"></script>
+    <script src="vendor/mermaid.min.js"></script>
 
     <style>
-        /* IntelliJ Native Colors - matching IDE theme */
+        /* Colors injected from Kotlin on load to match the IDE theme.
+           These defaults match IntelliJ Darcula; a light theme override is
+           applied via JS when Kotlin calls window.applyTheme(vars). */
         :root {
-            --bg-primary: #2b2b2b;
-            --bg-secondary: #313335;
-            --bg-tertiary: #3c3f41;
-            --border-color: #323232;
-            --separator-color: #3c3f41;
-            --text-primary: #bbbbbb;
-            --text-secondary: #787878;
-            --accent-blue: #4a9ff5;
-            --accent-hover: #5fb0ff;
+            --bg-primary:    #2b2b2b;
+            --bg-secondary:  #313335;
+            --bg-tertiary:   #3c3f41;
+            --border-color:  #323232;
+            --separator:     #3c3f41;
+            --text-primary:  #bbbbbb;
+            --text-secondary:#787878;
+            --text-heading:  #e0e0e0;
+            --accent-blue:   #4a9ff5;
+            --accent-hover:  #5fb0ff;
             --success-green: #499c54;
-            --error-red: #c75450;
-            --selection-bg: #214283;
+            --error-red:     #c75450;
+            --error:         #c75450;   /* alias so var(--error) always works */
+            --selection-bg:  #214283;
+            --code-bg:       #1e1f22;
+            --code-border:   #323232;
             --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
             font-family: var(--font-main);
@@ -48,6 +49,17 @@
             line-height: 1.5;
         }
 
+        /* ── Scrollbar ─────────────────────────────────────────── */
+        ::-webkit-scrollbar { width: 14px; height: 14px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb {
+            background: #5c5c5c;
+            border: 3px solid var(--bg-primary);
+            border-radius: 7px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: #6c6c6c; }
+
+        /* ── Chat container ────────────────────────────────────── */
         #chat-container {
             flex: 1;
             overflow-y: auto;
@@ -57,24 +69,7 @@
             gap: 8px;
         }
 
-        /* IntelliJ-style Scrollbar */
-        ::-webkit-scrollbar {
-            width: 14px;
-            height: 14px;
-        }
-        ::-webkit-scrollbar-track {
-            background: var(--bg-primary);
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #5c5c5c;
-            border: 3px solid var(--bg-primary);
-            border-radius: 7px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #6c6c6c;
-        }
-
-        /* Messages - IntelliJ style */
+        /* ── Messages ──────────────────────────────────────────── */
         .message {
             padding: 8px 12px;
             display: flex;
@@ -82,96 +77,52 @@
             border-radius: 4px;
             transition: background-color 0.15s;
         }
-        
-        .message:hover {
-            background-color: rgba(255, 255, 255, 0.02);
-        }
-        
-        .message.user {
-            background-color: transparent;
-        }
-        
-        .message.ai {
-            background-color: transparent;
-        }
-
-        .message-avatar {
-            display: none;
-        }
-
-        .message-content {
-            flex: 1;
-            min-width: 0;
-        }
-
+        .message:hover { background-color: rgba(255, 255, 255, 0.02); }
+        .message-avatar { display: none; }
+        .message-content { flex: 1; min-width: 0; }
         .message-header {
             display: flex;
             align-items: center;
             gap: 6px;
             margin-bottom: 4px;
         }
-
         .sender-name {
             font-size: 12px;
             font-weight: 600;
             color: var(--text-primary);
         }
 
-        /* Content Styling */
+        /* ── Bubble content / markdown ─────────────────────────── */
         .bubble-content {
             color: var(--text-primary);
             word-wrap: break-word;
+            overflow-wrap: break-word;
             font-size: 13px;
         }
-        
-        .bubble-content p {
-            margin-bottom: 10px;
-        }
-        .bubble-content p:last-child {
-            margin-bottom: 0;
-        }
-        
-        .bubble-content h1, .bubble-content h2, .bubble-content h3, .bubble-content h4 {
+        .bubble-content p { margin-bottom: 10px; }
+        .bubble-content p:last-child { margin-bottom: 0; }
+        .bubble-content h1, .bubble-content h2,
+        .bubble-content h3, .bubble-content h4 {
             margin: 16px 0 10px 0;
             font-weight: 600;
-            color: #ffffff;
+            color: var(--text-heading);  /* respects theme injection */
             line-height: 1.3;
         }
         .bubble-content h1 { font-size: 20px; }
         .bubble-content h2 { font-size: 17px; }
         .bubble-content h3 { font-size: 15px; }
         .bubble-content h4 { font-size: 13px; }
-        
-        .bubble-content ul, .bubble-content ol {
-            margin-bottom: 10px;
-            padding-left: 20px;
-        }
-        
-        .bubble-content li {
-            margin-bottom: 4px;
-        }
-
-        .bubble-content strong {
-            color: #ffffff;
-            font-weight: 600;
-        }
-
-        .bubble-content a {
-            color: var(--accent-blue);
-            text-decoration: none;
-        }
-        .bubble-content a:hover {
-            text-decoration: underline;
-        }
-
+        .bubble-content ul, .bubble-content ol { margin-bottom: 10px; padding-left: 20px; }
+        .bubble-content li { margin-bottom: 4px; }
+        .bubble-content strong { color: var(--text-heading); font-weight: 600; }
+        .bubble-content a { color: var(--accent-blue); text-decoration: none; }
+        .bubble-content a:hover { text-decoration: underline; }
         .bubble-content blockquote {
-            border-left: 3px solid #4a9ff5;
+            border-left: 3px solid var(--accent-blue);
             padding-left: 12px;
             margin: 10px 0;
             color: var(--text-secondary);
         }
-
-        /* Inline code - IntelliJ style */
         .bubble-content code:not(pre code) {
             background-color: var(--bg-tertiary);
             padding: 2px 4px;
@@ -180,11 +131,9 @@
             font-size: 12px;
             color: #cc7832;
         }
-
-        /* Code Blocks - IntelliJ Editor style */
         .bubble-content pre {
-            background-color: #1e1f22 !important;
-            border: 1px solid var(--border-color);
+            background-color: var(--code-bg);
+            border: 1px solid var(--code-border);
             border-radius: 4px;
             padding: 12px;
             margin: 12px 0;
@@ -194,17 +143,16 @@
             font-family: var(--font-mono);
             font-size: 12px;
             line-height: 1.4;
-            background: transparent !important;
+            background: transparent;
             color: #a9b7c6;
         }
 
-        /* Tool Execution - IntelliJ Console style */
+        /* ── Tool blocks ───────────────────────────────────────── */
         .tool-block {
-            background-color: #2d2d2d;
-            border-left: 3px solid #4a9ff5;
-            border-radius: 0;
+            background-color: var(--bg-secondary);
+            border-left: 3px solid var(--accent-blue);
             padding: 8px 10px;
-            margin: 8px 0;
+            margin: 6px 0;
             font-family: var(--font-mono);
             font-size: 11px;
             color: #a9b7c6;
@@ -215,19 +163,23 @@
             align-items: center;
             gap: 8px;
         }
-        .tool-name {
-            color: #ffc66d;
-            font-weight: normal;
+        .tool-name { color: #ffc66d; }
+        .tool-status { color: var(--success-green); }
+        .tool-status.running { color: var(--accent-blue); font-style: italic; }
+        .tool-status.failed  { color: var(--error-red); }
+
+        /* ── Error messages ────────────────────────────────────── */
+        .error-msg {
+            color: var(--error);   /* now always defined */
+            font-weight: 600;
+            margin-top: 8px;
+            padding: 6px 10px;
+            background: rgba(199, 84, 80, 0.1);
+            border-left: 3px solid var(--error-red);
+            border-radius: 2px;
         }
-        .tool-status {
-            color: var(--success-green);
-            font-weight: normal;
-        }
-        .tool-status.failed {
-            color: var(--error-red);
-        }
-        
-        /* Thinking - subtle */
+
+        /* ── Thinking indicator ────────────────────────────────── */
         .thinking-block {
             display: flex;
             align-items: center;
@@ -238,32 +190,43 @@
             font-style: italic;
         }
         .spinner {
-            width: 12px;
-            height: 12px;
+            width: 12px; height: 12px;
             border: 2px solid var(--text-secondary);
             border-top-color: var(--accent-blue);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
         }
-
         @keyframes spin { 100% { transform: rotate(360deg); } }
 
-        /* Input Area - IntelliJ TextField style */
-        #input-container {
-            padding: 0;
-            background-color: var(--bg-primary);
-            border-top: 1px solid var(--separator-color);
-            min-height: 40px;
+        /* ── Diagram container ─────────────────────────────────── */
+        .diagram-container {
+            margin: 16px 0;
+            padding: 16px;
+            background-color: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            overflow-x: auto;
         }
-        
-        .input-wrapper {
-            display: flex;
-            align-items: stretch;
-            background-color: var(--bg-tertiary);
-            border: none;
-            height: 100%;
+        .diagram-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-heading);
+            margin-bottom: 12px;
         }
 
+        /* ── Input area ────────────────────────────────────────── */
+        #input-container {
+            background-color: var(--bg-primary);
+            border-top: 1px solid var(--separator);
+            padding: 0;
+        }
+        .input-wrapper {
+            display: flex;
+            align-items: flex-end;
+            background-color: var(--bg-tertiary);
+        }
+        /* textarea replaces <input> for multi-line support */
         #user-input {
             flex: 1;
             background: transparent;
@@ -274,40 +237,41 @@
             font-size: 13px;
             resize: none;
             outline: none;
-            width: 100%;
+            min-height: 40px;
+            max-height: 200px;
+            overflow-y: auto;
+            line-height: 1.5;
         }
+        #user-input::placeholder { color: var(--text-secondary); }
 
-        #user-input::placeholder {
-            color: var(--text-secondary);
+        .input-actions {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 4px;
+            gap: 2px;
         }
-
-        #send-btn {
+        .action-btn {
             background: transparent;
             border: none;
             color: var(--text-secondary);
-            width: 40px;
-            border-radius: 0;
+            width: 32px; height: 32px;
+            border-radius: 3px;
             cursor: pointer;
-            transition: all 0.15s;
             display: flex;
             align-items: center;
             justify-content: center;
             flex-shrink: 0;
+            transition: all 0.15s;
         }
-        #send-btn:hover {
-            background: rgba(255, 255, 255, 0.05);
-            color: var(--accent-blue);
-        }
-        #send-btn:active {
-            background: var(--selection-bg);
-        }
-        #send-btn svg {
-            width: 16px;
-            height: 16px;
-            fill: currentColor;
-        }
+        .action-btn:hover { background: rgba(255,255,255,0.07); color: var(--accent-blue); }
+        .action-btn:active { background: var(--selection-bg); }
+        .action-btn svg { width: 16px; height: 16px; fill: currentColor; }
+        .action-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        #stop-btn { color: var(--error-red); display: none; }
+        #stop-btn:hover { background: rgba(199,84,80,0.12); color: var(--error-red); }
 
-        /* Login Screen */
+        /* ── Login screen ──────────────────────────────────────── */
         #login-screen {
             display: none;
             flex-direction: column;
@@ -318,16 +282,10 @@
             text-align: center;
         }
         #login-screen h1 {
-            font-size: 28px;
-            margin-bottom: 10px;
-            font-weight: 600;
-            color: #ffffff;
+            font-size: 28px; margin-bottom: 10px;
+            font-weight: 600; color: var(--text-heading);
         }
-        #login-screen p {
-            color: var(--text-secondary);
-            margin-bottom: 24px;
-            font-size: 13px;
-        }
+        #login-screen p { color: var(--text-secondary); margin-bottom: 24px; font-size: 13px; }
         .auth-btn {
             background-color: var(--bg-secondary);
             border: 1px solid var(--border-color);
@@ -335,286 +293,413 @@
             padding: 10px 20px;
             border-radius: 3px;
             font-size: 13px;
-            font-weight: normal;
             cursor: pointer;
             margin-bottom: 10px;
             min-width: 220px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
             transition: background-color 0.15s;
         }
-        .auth-btn:hover {
-            background-color: var(--bg-tertiary);
-            border-color: var(--accent-blue);
-        }
-        .auth-btn:active {
-            background-color: var(--selection-bg);
-        }
+        .auth-btn:hover { background-color: var(--bg-tertiary); border-color: var(--accent-blue); }
     </style>
 </head>
 <body>
 
-    <!-- Login Screen -->
-    <div id="login-screen">
-        <h1>Forge AI</h1>
-        <p id="login-status">Sign in to continue</p>
-        <button class="auth-btn" onclick="startAuth('github')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-            Sign in with GitHub
-        </button>
-        <button class="auth-btn" onclick="startAuth('google')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-            Sign in with Google
-        </button>
-    </div>
+<!-- Login Screen -->
+<div id="login-screen">
+    <h1>Forge AI</h1>
+    <p id="login-status">Sign in to continue</p>
+    <button class="auth-btn" onclick="startAuth('github')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        Sign in with GitHub
+    </button>
+    <button class="auth-btn" onclick="startAuth('google')">
+        <svg width="18" height="18" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Sign in with Google
+    </button>
+</div>
 
-    <!-- Main Chat Interface -->
-    <div id="main-interface" style="display: none; height: 100%; flex-direction: column;">
-        <div id="chat-container">
-            <div class="message ai">
-                <div class="message-avatar">F</div>
-                <div class="message-content">
-                    <div class="message-header">
-                        <span class="sender-name">Forge AI</span>
-                    </div>
-                    <div class="bubble-content">Ready. How can I help you today?</div>
-                </div>
+<!-- Main Chat Interface -->
+<div id="main-interface" style="display:none; height:100%; flex-direction:column;">
+    <div id="chat-container">
+        <div class="message ai">
+            <div class="message-content">
+                <div class="message-header"><span class="sender-name">Forge AI</span></div>
+                <div class="bubble-content">Ready. How can I help you today?</div>
             </div>
         </div>
-        
-        <div id="input-container">
-            <div class="input-wrapper">
-                <input type="text" id="user-input" placeholder="Message Forge AI..." autocomplete="off" />
-                <button id="send-btn" onclick="sendMessage()">
+    </div>
+
+    <div id="input-container">
+        <div class="input-wrapper">
+            <textarea id="user-input" rows="1" placeholder="Message Forge AI… (Shift+Enter for new line)"></textarea>
+            <div class="input-actions">
+                <!-- Stop button: visible while waiting for response -->
+                <button id="stop-btn" class="action-btn" title="Stop generation" onclick="stopGeneration()">
+                    <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                </button>
+                <!-- Send button -->
+                <button id="send-btn" class="action-btn" title="Send (Enter)" onclick="sendMessage()">
                     <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
                 </button>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        // Configure Marked.js with Highlight.js
-        marked.setOptions({
-            highlight: function(code, lang) {
-                if (lang && hljs.getLanguage(lang)) {
+<script>
+// ── Marked + Highlight.js setup ─────────────────────────────────────────────
+marked.setOptions({
+    highlight: function(code, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+            try { return hljs.highlight(code, { language: lang }).value; } catch (_) {}
+        }
+        return hljs.highlightAuto(code).value;
+    },
+    breaks: true,
+    gfm: true,
+});
+
+mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+
+// ── State ────────────────────────────────────────────────────────────────────
+const chatContainer = document.getElementById('chat-container');
+let currentAiMessageDiv = null;
+let currentAiContentDiv = null;
+let rawMarkdown = '';
+let markdownRafId = null;      // requestAnimationFrame handle for debounced render
+let currentThinkingBlock = null;
+const toolBlocks = {};         // tool_call_id → DOM element (fixes multi-tool tracking)
+let isWaiting = false;
+
+// ── Theme injection from Kotlin ──────────────────────────────────────────────
+// Kotlin calls window.applyTheme({...}) after page load to inject IDE colors.
+window.applyTheme = function(vars) {
+    const root = document.documentElement.style;
+    for (const [k, v] of Object.entries(vars)) {
+        root.setProperty('--' + k, v);
+    }
+};
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+function showAuthScreen(show, statusText) {
+    document.getElementById('login-screen').style.display = show ? 'flex' : 'none';
+    document.getElementById('main-interface').style.display = show ? 'none' : 'flex';
+    if (show && statusText) {
+        document.getElementById('login-status').innerText = statusText;
+    }
+}
+
+function startAuth(provider) {
+    if (window.sendActionToKotlin) {
+        window.sendActionToKotlin(JSON.stringify({ action: 'auth', provider }));
+    }
+}
+
+// ── Waiting state (enables/disables send/stop buttons) ──────────────────────
+function setWaiting(waiting) {
+    isWaiting = waiting;
+    document.getElementById('send-btn').style.display = waiting ? 'none' : 'flex';
+    document.getElementById('stop-btn').style.display = waiting ? 'flex' : 'none';
+    document.getElementById('user-input').disabled = waiting;
+}
+
+function stopGeneration() {
+    if (window.sendActionToKotlin) {
+        window.sendActionToKotlin(JSON.stringify({ action: 'stop' }));
+    }
+    setWaiting(false);
+}
+
+// ── Markdown: debounced render (O(n) not O(n²)) ─────────────────────────────
+function scheduleMarkdownRender() {
+    if (markdownRafId) return;
+    markdownRafId = requestAnimationFrame(() => {
+        markdownRafId = null;
+        if (currentAiContentDiv && rawMarkdown) {
+            currentAiContentDiv.innerHTML = marked.parse(rawMarkdown);
+        }
+    });
+}
+
+function flushMarkdownRender() {
+    if (markdownRafId) {
+        cancelAnimationFrame(markdownRafId);
+        markdownRafId = null;
+    }
+    if (currentAiContentDiv && rawMarkdown) {
+        currentAiContentDiv.innerHTML = marked.parse(rawMarkdown);
+    }
+}
+
+// ── Safe DOM helpers (prevent XSS) ──────────────────────────────────────────
+function setTextSafe(el, text) { el.textContent = text; }
+
+function createDiagram(code, title) {
+    const wrap = document.createElement('div');
+    wrap.className = 'diagram-container';
+
+    if (title) {
+        const h = document.createElement('div');
+        h.className = 'diagram-title';
+        setTextSafe(h, title);  // textContent, not innerHTML
+        wrap.appendChild(h);
+    }
+
+    const id = 'mermaid-' + Date.now();
+    const mermaidEl = document.createElement('div');
+    mermaidEl.className = 'mermaid';
+    mermaidEl.id = id;
+    setTextSafe(mermaidEl, code);  // textContent, not innerHTML
+    wrap.appendChild(mermaidEl);
+
+    return { wrap, id };
+}
+
+// ── Message receiver ─────────────────────────────────────────────────────────
+window.receiveMessageFromKotlin = function(jsonStr) {
+    try {
+        const event = JSON.parse(jsonStr);
+
+        if (event.type === 'auth_status') {
+            showAuthScreen(event.show_login, event.message);
+            return;
+        }
+
+        switch (event.type) {
+
+            // ── Text streaming ──────────────────────────────────────────────
+            case 'text_delta':
+                if (!currentAiMessageDiv) createAiMessageBlock();
+                rawMarkdown += event.content || '';
+                scheduleMarkdownRender();  // debounced — one render per animation frame
+                break;
+
+            // ── Thinking (Kotlin sends thinking_start / thinking_delta) ─────
+            case 'thinking_start':
+                if (!currentAiMessageDiv) createAiMessageBlock();
+                if (!currentThinkingBlock) {
+                    currentThinkingBlock = document.createElement('div');
+                    currentThinkingBlock.className = 'thinking-block';
+                    const spinner = document.createElement('div');
+                    spinner.className = 'spinner';
+                    const label = document.createElement('span');
+                    label.textContent = 'Thinking…';
+                    currentThinkingBlock.appendChild(spinner);
+                    currentThinkingBlock.appendChild(label);
+                    currentAiContentDiv.parentNode.insertBefore(currentThinkingBlock, currentAiContentDiv);
+                }
+                break;
+
+            case 'thinking_delta':
+                // Update the thinking label with the streamed content
+                if (currentThinkingBlock) {
+                    const label = currentThinkingBlock.querySelector('span');
+                    if (label && event.content) {
+                        setTextSafe(label, event.content.slice(0, 80) + (event.content.length > 80 ? '…' : ''));
+                    }
+                }
+                break;
+
+            case 'thinking_end':
+                if (currentThinkingBlock) {
+                    currentThinkingBlock.remove();
+                    currentThinkingBlock = null;
+                }
+                break;
+
+            // ── Tool execution ──────────────────────────────────────────────
+            case 'tool_start': {
+                if (!currentAiMessageDiv) createAiMessageBlock();
+                const block = document.createElement('div');
+                block.className = 'tool-block';
+                const header = document.createElement('div');
+                header.className = 'tool-header';
+                const nameSpan = document.createElement('span');
+                const icon = document.createTextNode('⚙ ');
+                const nameEl = document.createElement('span');
+                nameEl.className = 'tool-name';
+                setTextSafe(nameEl, event.name || '');
+                nameSpan.appendChild(icon);
+                nameSpan.appendChild(nameEl);
+                const statusSpan = document.createElement('span');
+                statusSpan.className = 'tool-status running';
+                statusSpan.textContent = 'Running…';
+                header.appendChild(nameSpan);
+                header.appendChild(statusSpan);
+                block.appendChild(header);
+                currentAiContentDiv.parentNode.insertBefore(block, currentAiContentDiv);
+                // Track by id so tool_end always finds the right block
+                if (event.id) toolBlocks[event.id] = block;
+                break;
+            }
+
+            case 'tool_end': {
+                // Look up by id first, fall back to last block in map
+                const block = toolBlocks[event.id] || Object.values(toolBlocks).pop();
+                if (block) {
+                    const statusSpan = block.querySelector('.tool-status');
+                    if (statusSpan) {
+                        const ok = event.success !== false;  // default to success if unset
+                        statusSpan.textContent = ok ? '✓ Done' : '✗ Failed';
+                        statusSpan.className = 'tool-status' + (ok ? '' : ' failed');
+                    }
+                    if (event.id) delete toolBlocks[event.id];
+                }
+                break;
+            }
+
+            // ── Error ───────────────────────────────────────────────────────
+            case 'error': {
+                if (!currentAiMessageDiv) createAiMessageBlock();
+                const errDiv = document.createElement('div');
+                errDiv.className = 'error-msg';
+                setTextSafe(errDiv, 'Error: ' + (event.message || 'Unknown error'));
+                currentAiContentDiv.appendChild(errDiv);
+                setWaiting(false);
+                break;
+            }
+
+            // ── Mermaid diagram ─────────────────────────────────────────────
+            case 'show_diagram': {
+                if (!currentAiMessageDiv) createAiMessageBlock();
+                const { wrap, id } = createDiagram(event.code || '', event.title || '');
+                currentAiContentDiv.appendChild(wrap);
+                // Render after DOM insertion
+                requestAnimationFrame(() => {
                     try {
-                        return hljs.highlight(code, { language: lang }).value;
-                    } catch (__) {}
-                }
-                return hljs.highlightAuto(code).value;
-            },
-            breaks: true // convert \n to <br>
-        });
-
-        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
-
-        const chatContainer = document.getElementById('chat-container');
-        let currentAiMessageDiv = null;
-        let currentAiContentDiv = null;
-        let rawMarkdown = "";
-        let currentThinkingBlock = null;
-        let currentToolBlock = null;
-
-        function showAuthScreen(show, statusText = "Sign in to continue") {
-            document.getElementById('login-screen').style.display = show ? 'flex' : 'none';
-            document.getElementById('main-interface').style.display = show ? 'none' : 'flex';
-            if (show) {
-                document.getElementById('login-status').innerText = statusText;
+                        mermaid.init(undefined, document.getElementById(id));
+                    } catch (_) {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            const pre = document.createElement('pre');
+                            const code = document.createElement('code');
+                            setTextSafe(code, event.code || '');
+                            pre.appendChild(code);
+                            el.replaceWith(pre);
+                        }
+                    }
+                });
+                break;
             }
-        }
 
-        function startAuth(provider) {
-            if (window.sendActionToKotlin) {
-                window.sendActionToKotlin(JSON.stringify({ action: "auth", provider: provider }));
+            // ── Inline code block ───────────────────────────────────────────
+            case 'show_code': {
+                if (!currentAiMessageDiv) createAiMessageBlock();
+                const wrapper = document.createElement('div');
+                const lang = (event.language || '').replace(/[^a-z0-9]/gi, '');
+                wrapper.innerHTML = marked.parse('```' + lang + '\n' + (event.code || '') + '\n```');
+                currentAiContentDiv.appendChild(wrapper);
+                break;
             }
-        }
 
-        window.receiveMessageFromKotlin = function(jsonStr) {
-            try {
-                const event = JSON.parse(jsonStr);
-
-                if (event.type === "auth_status") {
-                    showAuthScreen(event.show_login, event.message);
-                    return;
+            // ── Stream complete ─────────────────────────────────────────────
+            case 'done':
+                flushMarkdownRender();  // final render with full accumulated markdown
+                if (currentThinkingBlock) {
+                    currentThinkingBlock.remove();
+                    currentThinkingBlock = null;
                 }
-
-                switch (event.type) {
-                    case 'text_delta':
-                        if (!currentAiMessageDiv) createAiMessageBlock();
-                        rawMarkdown += event.content;
-                        // Debounce markdown rendering for performance could be added here
-                        currentAiContentDiv.innerHTML = marked.parse(rawMarkdown);
-                        break;
-
-                    case 'thinking':
-                        if (event.stepType === 'start') {
-                            if (!currentAiMessageDiv) createAiMessageBlock();
-                            currentThinkingBlock = document.createElement('div');
-                            currentThinkingBlock.className = 'thinking-block';
-                            currentThinkingBlock.innerHTML = '<div class="spinner"></div> Thinking...';
-                            
-                            // Insert before the markdown content
-                            currentAiContentDiv.parentNode.insertBefore(
-                                currentThinkingBlock, currentAiContentDiv
-                            );
-                        } else if (event.stepType === 'end' && currentThinkingBlock) {
-                            currentThinkingBlock.remove();
-                            currentThinkingBlock = null;
-                        }
-                        break;
-
-                    case 'tool_start':
-                        if (!currentAiMessageDiv) createAiMessageBlock();
-                        
-                        currentToolBlock = document.createElement('div');
-                        currentToolBlock.className = 'tool-block';
-                        
-                        const inputStr = event.input || "{}";
-                        currentToolBlock.innerHTML = `
-                            <div class="tool-header">
-                                <span>🔧 <span class="tool-name">${event.name}</span></span>
-                                <span class="tool-status">Running...</span>
-                            </div>
-                        `;
-                        
-                        currentAiContentDiv.parentNode.insertBefore(
-                            currentToolBlock, currentAiContentDiv
-                        );
-                        break;
-
-                    case 'tool_end':
-                        if (currentToolBlock) {
-                            const statusSpan = currentToolBlock.querySelector('.tool-status');
-                            if (event.success) {
-                                statusSpan.textContent = '✓ Done';
-                            } else {
-                                statusSpan.textContent = '✗ Failed';
-                                statusSpan.className = 'tool-status failed';
-                            }
-                            currentToolBlock = null;
-                        }
-                        break;
-
-                    case 'error':
-                        if (!currentAiMessageDiv) createAiMessageBlock();
-                        const errDiv = document.createElement('div');
-                        errDiv.style.color = 'var(--error)';
-                        errDiv.style.fontWeight = 'bold';
-                        errDiv.style.marginTop = '8px';
-                        errDiv.textContent = 'Error: ' + event.message;
-                        currentAiContentDiv.appendChild(errDiv);
-                        break;
-
-                    case 'show_diagram':
-                        if (!currentAiMessageDiv) createAiMessageBlock();
-                        const id = 'mermaid-' + Date.now();
-                        const diagramDiv = document.createElement('div');
-                        diagramDiv.className = 'diagram-container';
-                        diagramDiv.style.margin = '16px 0';
-                        diagramDiv.style.padding = '16px';
-                        diagramDiv.style.backgroundColor = '#1e1e1e';
-                        diagramDiv.style.borderRadius = '6px';
-                        
-                        if (event.title) {
-                            diagramDiv.innerHTML = `<h4 style="margin-top:0;">${event.title}</h4><div class="mermaid" id="${id}">${event.code}</div>`;
-                        } else {
-                            diagramDiv.innerHTML = `<div class="mermaid" id="${id}">${event.code}</div>`;
-                        }
-                        currentAiContentDiv.appendChild(diagramDiv);
-                        
-                        try {
-                            mermaid.init(undefined, document.getElementById(id));
-                        } catch (e) {
-                            document.getElementById(id).innerHTML = `<pre><code>${event.code}</code></pre>`;
-                        }
-                        break;
-
-                    case 'show_code':
-                        if (!currentAiMessageDiv) createAiMessageBlock();
-                        const codeBlock = document.createElement('div');
-                        codeBlock.innerHTML = marked.parse("```" + event.language + "\n" + event.code + "\n```");
-                        currentAiContentDiv.appendChild(codeBlock);
-                        break;
-
-                    case 'done':
-                        // Finalize block
-                        currentAiMessageDiv = null;
-                        currentAiContentDiv = null;
-                        break;
+                // Mark all still-running tool blocks as done (safety net)
+                for (const [id, block] of Object.entries(toolBlocks)) {
+                    const s = block.querySelector('.tool-status');
+                    if (s && s.classList.contains('running')) {
+                        s.textContent = '✓ Done';
+                        s.className = 'tool-status';
+                    }
+                    delete toolBlocks[id];
                 }
-                
-                scrollToBottom();
-            } catch (e) {
-                console.error("Failed to parse message from Kotlin", e, jsonStr);
-            }
-        };
-
-        function createAiMessageBlock() {
-            currentAiMessageDiv = document.createElement('div');
-            currentAiMessageDiv.className = 'message ai';
-            
-            currentAiMessageDiv.innerHTML = `
-                <div class="message-avatar">F</div>
-                <div class="message-content">
-                    <div class="message-header">
-                        <span class="sender-name">Forge AI</span>
-                    </div>
-                    <div class="bubble-content"></div>
-                </div>
-            `;
-            
-            chatContainer.appendChild(currentAiMessageDiv);
-            currentAiContentDiv = currentAiMessageDiv.querySelector('.bubble-content');
-            rawMarkdown = "";
-        }
-
-        function appendUserMessage(text) {
-            const div = document.createElement('div');
-            div.className = 'message user';
-            div.innerHTML = `
-                <div class="message-avatar">Y</div>
-                <div class="message-content">
-                    <div class="message-header">
-                        <span class="sender-name">You</span>
-                    </div>
-                    <div class="bubble-content">${text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
-                </div>
-            `;
-            chatContainer.appendChild(div);
-            scrollToBottom();
-        }
-
-        function sendMessage() {
-            const input = document.getElementById('user-input');
-            const text = input.value.trim();
-            
-            if(text !== '') {
-                appendUserMessage(text);
-                input.value = '';
-                
-                // Reset AI tracking
                 currentAiMessageDiv = null;
                 currentAiContentDiv = null;
-                rawMarkdown = "";
-                
-                if (window.sendActionToKotlin) {
-                    window.sendActionToKotlin(JSON.stringify({ action: "chat", text: text }));
-                }
-            }
+                setWaiting(false);
+                break;
         }
-        
-        function scrollToBottom() {
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-        
-        document.getElementById("user-input").addEventListener("keypress", function(event) {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                sendMessage();
-            }
-        });
-    </script>
+
+        scrollToBottom();
+    } catch (e) {
+        console.error('Failed to parse message from Kotlin', e, jsonStr);
+    }
+};
+
+// ── Message creation helpers ─────────────────────────────────────────────────
+function createAiMessageBlock() {
+    currentAiMessageDiv = document.createElement('div');
+    currentAiMessageDiv.className = 'message ai';
+    currentAiMessageDiv.innerHTML = `
+        <div class="message-content">
+            <div class="message-header"><span class="sender-name">Forge AI</span></div>
+            <div class="bubble-content"></div>
+        </div>`;
+    chatContainer.appendChild(currentAiMessageDiv);
+    currentAiContentDiv = currentAiMessageDiv.querySelector('.bubble-content');
+    rawMarkdown = '';
+}
+
+function appendUserMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'message user';
+    const content = document.createElement('div');
+    content.className = 'message-content';
+    const header = document.createElement('div');
+    header.className = 'message-header';
+    const name = document.createElement('span');
+    name.className = 'sender-name';
+    name.textContent = 'You';
+    header.appendChild(name);
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble-content';
+    // Preserve newlines in user messages without innerHTML injection
+    text.split('\n').forEach((line, i, arr) => {
+        bubble.appendChild(document.createTextNode(line));
+        if (i < arr.length - 1) bubble.appendChild(document.createElement('br'));
+    });
+    content.appendChild(header);
+    content.appendChild(bubble);
+    div.appendChild(content);
+    chatContainer.appendChild(div);
+    scrollToBottom();
+}
+
+// ── Send / Stop ──────────────────────────────────────────────────────────────
+function sendMessage() {
+    if (isWaiting) return;
+    const input = document.getElementById('user-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    appendUserMessage(text);
+    input.value = '';
+    autoGrow(input);
+
+    currentAiMessageDiv = null;
+    currentAiContentDiv = null;
+    rawMarkdown = '';
+
+    setWaiting(true);
+
+    if (window.sendActionToKotlin) {
+        window.sendActionToKotlin(JSON.stringify({ action: 'chat', text }));
+    }
+}
+
+function scrollToBottom() {
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+// ── Textarea auto-grow ───────────────────────────────────────────────────────
+function autoGrow(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+const userInput = document.getElementById('user-input');
+userInput.addEventListener('input', () => autoGrow(userInput));
+userInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+    // Shift+Enter: default textarea behaviour inserts newline
+});
+</script>
 </body>
 </html>

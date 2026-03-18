@@ -4,6 +4,7 @@ import com.forge.plugin.ui.ForgeUIService
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,23 +12,31 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
-import java.io.IOException
 import java.util.concurrent.TimeUnit
+
+private val LOG = Logger.getInstance(ForgeApiService::class.java)
 
 @Service(Service.Level.PROJECT)
 class ForgeApiService(private val project: Project) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS) // For streaming
+        .readTimeout(0, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
-    
+
     private val gson = Gson()
-    
-    // Default to local Docker Compose backend
-    private var backendUrl = "http://localhost:8080/chat/stream"
-    private var conversationId: String = java.util.UUID.randomUUID().toString()
-    
+
+    // @Volatile: written from the JBCef query thread, read from OkHttp SSE thread
+    @Volatile private var backendUrl = "http://localhost:8080/chat/stream"
+    @Volatile private var conversationId: String = java.util.UUID.randomUUID().toString()
+    @Volatile private var activeEventSource: EventSource? = null
+
+    fun cancelStream() {
+        activeEventSource?.cancel()
+        activeEventSource = null
+        LOG.info("SSE stream cancelled by user")
+    }
+
     fun setBackendUrl(url: String) {
         var adjustedUrl = url
         if (adjustedUrl.endsWith("/api/agent")) {
@@ -94,7 +103,7 @@ class ForgeApiService(private val project: Project) {
         }
         
         val bodyStr = json.toString()
-        println("Sending payload to backend: $bodyStr")
+        LOG.info("Sending payload to backend (${bodyStr.length} chars)")
         val body = bodyStr.toRequestBody("application/json".toMediaType())
         val requestBuilder = Request.Builder()
             .url(backendUrl)
@@ -107,15 +116,15 @@ class ForgeApiService(private val project: Project) {
         }
         
         val request = requestBuilder.build()
-        println("Sending request to $backendUrl with token length ${token.length}")
+        LOG.info("Sending request to $backendUrl")
 
         val eventSourceListener = object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
-                println("SSE Connection opened. Response: ${response.code}")
+                LOG.info("SSE Connection opened: ${response.code}")
             }
 
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
-                println("Received SSE Event: type=$type, data=$data")
+                LOG.debug("SSE event: type=$type")
                 val sseEvent = SseParser.parse(type, data, gson)
                 if (sseEvent == null) return
 
@@ -124,23 +133,31 @@ class ForgeApiService(private val project: Project) {
                         uiService.postMessage(gson.toJson(mapOf("type" to "text_delta", "content" to sseEvent.text)))
                     }
                     is SseEvent.Thinking -> {
-                        // For now we map this to thinking_start or thinking_delta based on UI needs
-                        uiService.postMessage(gson.toJson(mapOf("type" to "thinking_start")))
-                        uiService.postMessage(gson.toJson(mapOf("type" to "thinking_delta", "content" to sseEvent.message)))
+                        // JS handles thinking_start, thinking_delta, thinking_end
+                        when (sseEvent.stepType) {
+                            "start" -> uiService.postMessage(gson.toJson(mapOf("type" to "thinking_start")))
+                            "end"   -> uiService.postMessage(gson.toJson(mapOf("type" to "thinking_end")))
+                            else    -> uiService.postMessage(gson.toJson(mapOf(
+                                "type" to "thinking_delta",
+                                "content" to sseEvent.message
+                            )))
+                        }
                     }
                     is SseEvent.ToolStart -> {
                         uiService.postMessage(gson.toJson(mapOf(
-                            "type" to "tool_start",
-                            "id" to sseEvent.id,
-                            "name" to sseEvent.name,
+                            "type"  to "tool_start",
+                            "id"    to sseEvent.id,
+                            "name"  to sseEvent.name,
                             "input" to sseEvent.input
                         )))
                     }
                     is SseEvent.ToolEnd -> {
+                        // Forward 'success' so the JS can show ✓ / ✗ correctly
                         uiService.postMessage(gson.toJson(mapOf(
-                            "type" to "tool_end",
-                            "id" to sseEvent.id,
-                            "output" to sseEvent.resultSummary
+                            "type"    to "tool_end",
+                            "id"      to sseEvent.id,
+                            "output"  to sseEvent.resultSummary,
+                            "success" to sseEvent.success
                         )))
                     }
                     is SseEvent.Plan -> {
@@ -194,15 +211,15 @@ class ForgeApiService(private val project: Project) {
             }
 
             override fun onClosed(eventSource: EventSource) {
-                println("SSE Connection closed")
+                LOG.info("SSE Connection closed")
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                println("SSE Connection failed: ${t?.message}, response code: ${response?.code}")
+                LOG.warn("SSE Connection failed: ${t?.message}, response code: ${response?.code}")
                 uiService.postMessage(gson.toJson(mapOf("type" to "error", "message" to "Connection failed: ${t?.message}")))
             }
         }
 
-        EventSources.createFactory(client).newEventSource(request, eventSourceListener)
+        activeEventSource = EventSources.createFactory(client).newEventSource(request, eventSourceListener)
     }
 }

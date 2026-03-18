@@ -96,7 +96,9 @@ object SseParser {
                 }
             }
         } catch (e: Exception) {
-            println("Failed to parse SSE event: ${e.message} for data: $data")
+            com.intellij.openapi.diagnostic.Logger
+                .getInstance(SseParser::class.java)
+                .warn("Failed to parse SSE event (type=$eventName): ${e.message}")
             SseEvent.Error("Failed to parse event: ${e.message}")
         }
     }
