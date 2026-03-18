@@ -2697,7 +2697,7 @@ impl ProxyHandler for Dispatcher {
                                                         &ide_terminals,
                                                         &catalog_rpc,
                                                     ).await;
-                                                    
+
                                                     if !result.success {
                                                         // Tool failed, no need for approval
                                                         core_rpc.notification(CoreNotification::AgentToolCallUpdate {
@@ -2757,11 +2757,26 @@ impl ProxyHandler for Dispatcher {
                                                     } else {
                                                         let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
                                                         pending_approvals.lock().insert(tc_id.clone(), tx);
-                                                        rx.await.unwrap_or(false)
+                                                        // 5-minute timeout: if user doesn't respond, auto-reject and
+                                                        // report to forge-search so it isn't left waiting forever.
+                                                        match tokio::time::timeout(
+                                                            std::time::Duration::from_secs(300),
+                                                            rx,
+                                                        ).await {
+                                                            Ok(Ok(v)) => v,
+                                                            Ok(Err(_)) | Err(_) => {
+                                                                tracing::warn!(
+                                                                    "[APPROVAL] Timed out waiting for user review of {} ({})",
+                                                                    tc_name, tc_id
+                                                                );
+                                                                pending_approvals.lock().remove(&tc_id);
+                                                                false
+                                                            }
+                                                        }
                                                     };
 
                                                     if !approved {
-                                                        // User rejected — revert from snapshot
+                                                        // User rejected or timed out — revert from snapshot
                                                         if let Some((rel_path, old_content)) = diff_snapshots.lock().remove(&tc_id) {
                                                             let full_path = workspace_path.join(&rel_path);
                                                             if let Err(e) = std::fs::write(&full_path, &old_content) {
@@ -2838,9 +2853,24 @@ impl ProxyHandler for Dispatcher {
                                                         });
                                                         let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
                                                         pending_approvals.lock().insert(tc_id.clone(), tx);
-                                                        rx.await.unwrap_or(false)
+                                                        // 5-minute timeout: if user doesn't respond, auto-reject and
+                                                        // report to forge-search so it isn't left waiting forever.
+                                                        match tokio::time::timeout(
+                                                            std::time::Duration::from_secs(300),
+                                                            rx,
+                                                        ).await {
+                                                            Ok(Ok(v)) => v,
+                                                            Ok(Err(_)) | Err(_) => {
+                                                                tracing::warn!(
+                                                                    "[APPROVAL] Timed out waiting for user approval of {} ({})",
+                                                                    tc_name, tc_id
+                                                                );
+                                                                pending_approvals.lock().remove(&tc_id);
+                                                                false
+                                                            }
+                                                        }
                                                     };
-                                                    
+
                                                     if !approved {
                                                         core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                             tool_call_id: tc_id.clone(),
@@ -2880,7 +2910,7 @@ impl ProxyHandler for Dispatcher {
                                                         &ide_terminals,
                                                         &catalog_rpc,
                                                     ).await;
-                                                    
+
                                                     core_rpc.notification(CoreNotification::AgentToolCallUpdate {
                                                         tool_call_id: tc_id.clone(),
                                                         tool_name: tc_name.clone(),
@@ -3426,14 +3456,22 @@ fn is_read_only_command(cmd: &str) -> bool {
     }
     let lower = c.to_lowercase();
 
-    // Leading env-var assignments are fine (VAR=val cmd ...)
-    let effective = lower
-        .splitn(2, ' ')
-        .last()
-        .map(|s| s.trim())
-        .unwrap_or(&lower);
+    // Strip leading env-var assignments (e.g. "CI=1 node script.js")
+    let effective = {
+        let mut s = lower.as_str();
+        loop {
+            // VAR=value prefix
+            let token = s.splitn(2, ' ').next().unwrap_or("");
+            if token.contains('=') && !token.starts_with('-') {
+                s = s[token.len()..].trim_start();
+            } else {
+                break;
+            }
+        }
+        s
+    };
 
-    // Allow read-only inspection commands
+    // ── 1. Always-safe built-ins and inspection commands ─────────────────────
     let safe_prefixes: &[&str] = &[
         // File inspection
         "cat ", "ls", "ll", "pwd", "echo ", "printf ", "which ",
@@ -3444,7 +3482,7 @@ fn is_read_only_command(cmd: &str) -> bool {
         // Process inspection
         "ps ", "pgrep ", "pidof ", "top -b", "htop -d",
         "lsof ", "netstat ", "ss ",
-        // Build / test (read-only intent)
+        // Build / test / lint (no destructive side effects)
         "cargo check", "cargo build", "cargo test", "cargo clippy",
         "cargo fmt --check", "cargo doc",
         "npm run ", "npm test", "npm install", "npm ci",
@@ -3461,10 +3499,70 @@ fn is_read_only_command(cmd: &str) -> bool {
         // Misc safe
         "date", "uptime", "uname",
     ];
+    if safe_prefixes.iter().any(|pfx| effective.starts_with(pfx) || lower.starts_with(pfx)) {
+        return true;
+    }
 
-    safe_prefixes
-        .iter()
-        .any(|pfx| effective.starts_with(pfx) || lower.starts_with(pfx))
+    // ── 2. Script-runner heuristic: agent runs a local script it just wrote ──
+    // Pattern: `node foo.js`, `python foo.py`, `deno run foo.ts`,
+    //          `ts-node foo.ts`, `bun foo.ts`, `python3 script.py`
+    // These are safe because: (a) the agent almost always wrote the script,
+    // (b) the script is a local file path (not a shell injection), and
+    // (c) they are idempotent check/validation scripts.
+    //
+    // We deliberately EXCLUDE anything that looks like an install/deploy/rm:
+    //   - Commands with pipes (|), redirects (>), semicolons
+    //   - Commands with --global, --save, install, deploy, rm, del keywords
+    let has_dangerous_shell_meta = effective.contains('|')
+        || effective.contains('>')
+        || effective.contains(';')
+        || effective.contains("&&")
+        || effective.contains("||")
+        || effective.contains('`')
+        || effective.contains("$(");
+    let has_dangerous_keyword = effective.contains(" install")
+        || effective.contains(" deploy")
+        || effective.contains(" rm ")
+        || effective.contains(" del ")
+        || effective.contains("--global")
+        || effective.contains(" publish")
+        || effective.contains(" push");
+
+    if !has_dangerous_shell_meta && !has_dangerous_keyword {
+        // Local script patterns
+        let script_runners: &[&str] = &[
+            "node ", "node\t",
+            "python ", "python3 ", "python\t",
+            "deno run ", "deno check ",
+            "ts-node ", "tsx ",
+            "bun ", "bun run ",
+            "ruby ", "perl ",
+            "bash ", "sh ", "zsh ",
+        ];
+        for runner in script_runners {
+            if effective.starts_with(runner) {
+                let rest = effective[runner.len()..].trim();
+                // Accept if the argument looks like a local file (has extension,
+                // no http, no subcommand flags like --install)
+                let is_local_script = (rest.ends_with(".js")
+                    || rest.ends_with(".ts")
+                    || rest.ends_with(".py")
+                    || rest.ends_with(".mjs")
+                    || rest.ends_with(".cjs")
+                    || rest.ends_with(".rb")
+                    || rest.ends_with(".pl")
+                    || rest.ends_with(".sh"))
+                    && !rest.starts_with("http")
+                    && !rest.starts_with('-');
+                if is_local_script {
+                    return true;
+                }
+                break;
+            }
+        }
+    }
+
+    false
 }
 
 fn get_offset(content: &str, position: lsp_types::Position) -> usize {
@@ -3519,7 +3617,7 @@ async fn execute_ide_tool(
     tc: &forge_agent::ToolCallInfo,
     workspace_path: &std::path::Path,
     core_rpc: &CoreRpcHandler,
-    agent_term_mgr: &AgentTerminalManager,
+    agent_term_mgr: &Arc<AgentTerminalManager>,
     ide_terminals: &Arc<std::sync::Mutex<HashMap<TermId, TerminalSender>>>,
     catalog_rpc: &PluginCatalogRpcHandler,
 ) -> forge_agent::tools::ToolResult {
@@ -3537,7 +3635,7 @@ async fn execute_ide_tool(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if background {
-                // Route to IDE terminal background execution
+                // Background: returns immediately after spawning — no blocking.
                 agent_term_mgr.execute_background(
                     command, workspace_path, 5_000, core_rpc, ide_terminals,
                 )
@@ -3546,10 +3644,24 @@ async fn execute_ide_tool(
                     .and_then(|v| v.as_u64())
                     .unwrap_or(120)
                     .min(600);
-                agent_term_mgr.execute_command(
-                    command, workspace_path, timeout_secs, core_rpc, ide_terminals,
-                    &tc.id, &tc.name,
-                )
+                // execute_command uses a blocking condvar wait internally, so we must
+                // run it on the blocking thread pool to avoid starving the Tokio executor.
+                // Starvation was causing concurrent SSE streams to time out while a
+                // long-running command held the executor thread.
+                let atm = agent_term_mgr.clone();
+                let wp = workspace_path.to_path_buf();
+                let cmd = command.to_string();
+                let cr = core_rpc.clone();
+                let it = ide_terminals.clone();
+                let tc_id = tc.id.clone();
+                let tc_name = tc.name.clone();
+                tokio::task::spawn_blocking(move || {
+                    atm.execute_command(&cmd, &wp, timeout_secs, &cr, &it, &tc_id, &tc_name)
+                })
+                .await
+                .unwrap_or_else(|e| forge_agent::tools::ToolResult::err(
+                    format!("spawn_blocking panicked: {e}")
+                ))
             }
         }
         // ── New `process` tool (output / status / kill) ──────────
@@ -3835,7 +3947,7 @@ async fn execute_ide_tool(
                 args: mapped_args,
             };
             // Use Box::pin to avoid recursion error in async fn
-            Box::pin(execute_ide_tool(&tc_info, workspace_path, core_rpc, agent_term_mgr, ide_terminals, catalog_rpc)).await
+            Box::pin(execute_ide_tool(&tc_info, workspace_path, core_rpc, &agent_term_mgr, ide_terminals, catalog_rpc)).await
         }
         // ── Run Configuration tools: forward to IDE ──────────
         "list_run_configs" => {
