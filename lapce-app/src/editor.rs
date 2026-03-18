@@ -2946,8 +2946,7 @@ impl EditorData {
                     }
                 }
 
-                self.left_click(pointer_event);
-
+                    return;
                 if (cfg!(target_os = "macos") && pointer_event.modifiers.meta())
                     || (cfg!(not(target_os = "macos"))
                         && pointer_event.modifiers.control())
@@ -2985,6 +2984,8 @@ impl EditorData {
                     }
                     return;
                 }
+
+                self.left_click(pointer_event);
             }
             MouseButton::Secondary => {
                 self.right_click(pointer_event);

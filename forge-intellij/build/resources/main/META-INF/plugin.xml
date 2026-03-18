@@ -5,9 +5,15 @@
   <id>com.forge.plugin.intellij</id>
   <name>Forge AI</name>
   <vendor email="support@forge.ai" url="https://forge.ai">Forge</vendor>
-  <description><![CDATA[Forge AI Coding Assistant. Connects your IDE to the forge-search Rust backend for autonomous tool execution.]]></description>
+  <description><![CDATA[Forge AI Coding Assistant for all JetBrains IDEs. 
+      Provides intelligent code analysis, generation, and refactoring through a native chat interface.
+      Works with IntelliJ IDEA, PyCharm, WebStorm, PhpStorm, GoLand, RubyMine, CLion, Rider, and more.]]></description>
   <!-- Product and plugin compatibility requirements. -->
+  <!-- com.intellij.modules.platform is the base module for ALL JetBrains IDEs -->
   <depends>com.intellij.modules.platform</depends>
+  <!-- Optional dependencies for enhanced functionality in specific IDEs -->
+  <depends optional="true" config-file="java-features.xml">com.intellij.modules.java</depends>
+  <depends optional="true" config-file="python-features.xml">com.intellij.modules.python</depends>
   <extensions defaultExtensionNs="com.intellij">
     <toolWindow id="Forge AI" anchor="right" icon="AllIcons.Toolwindows.ToolWindowAnt" factoryClass="com.forge.plugin.ui.ForgeToolWindowFactory" secondary="false" />
   </extensions>

@@ -5,8 +5,9 @@
 
 use std::{
     collections::HashMap,
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 /// Resolve the proto binary path.
@@ -167,10 +168,13 @@ impl ProtoManager {
     }
 
     /// Install a tool with a specific version
-    pub fn install_tool(&self, tool: &str, version: &str) -> Result<String> {
+    pub fn install_tool<F>(&self, tool: &str, version: &str, mut on_progress: F) -> Result<String>
+    where
+        F: FnMut(f64),
+    {
         let mut cmd = Command::new(proto_bin());
         cmd.arg("install").arg(tool);
-        
+
         if !version.is_empty() && version != "latest" {
             cmd.arg(version);
         }
@@ -180,17 +184,46 @@ impl ProtoManager {
             cmd.current_dir(ws);
         }
 
-        let output = cmd.output()
-            .context(format!("Failed to run proto install {} {}", tool, version))?;
+        // Use piped stdout to capture progress
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let mut child = cmd.spawn()
+            .context(format!("Failed to spawn proto install {} {}", tool, version))?;
 
-        if !output.status.success() {
-            return Err(anyhow!("Failed to install {}: {}", tool, stderr));
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let mut stdout_reader = std::io::BufReader::new(stdout);
+        let mut stderr_reader = std::io::BufReader::new(stderr);
+        let mut full_output = String::new();
+
+        use std::io::BufRead;
+        let mut line = String::new();
+        while stdout_reader.read_line(&mut line)? > 0 {
+            full_output.push_str(&line);
+            // Proto output often contains progress like "[1/2] Downloading... 45%"
+            // We'll look for percentage patterns
+            if let Some(pct_idx) = line.find('%') {
+                let start = line[..pct_idx].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                if let Ok(pct) = line[start..pct_idx].parse::<f64>() {
+                    on_progress(pct);
+                }
+            }
+            line.clear();
         }
 
-        Ok(format!("{}\n{}", stdout, stderr))
+        let mut err_output = String::new();
+        stderr_reader.read_to_string(&mut err_output)?;
+        full_output.push_str(&err_output);
+
+        let status = child.wait()?;
+
+        if !status.success() {
+            return Err(anyhow!("Failed to install {}: {}", tool, err_output));
+        }
+
+        Ok(full_output)
     }
 
     /// Uninstall a tool version

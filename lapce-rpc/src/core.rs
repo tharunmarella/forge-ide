@@ -254,6 +254,13 @@ pub enum CoreNotification {
         /// Progress as a fraction (0.0 to 1.0), or -1.0 when done/error.
         progress: f64,
     },
+
+    // ── Proto SDK Manager ──────────────────────────────────
+    ProtoInstallProgress {
+        tool: String,
+        version: String,
+        progress: f64,
+    },
 }
 
 /// A single step in the agent's task plan.
@@ -631,6 +638,19 @@ impl CoreRpcHandler {
 
     pub fn agent_error(&self, error: String) {
         self.notification(CoreNotification::AgentError { error });
+    }
+
+    pub fn proto_install_progress(
+        &self,
+        tool: String,
+        version: String,
+        progress: f64,
+    ) {
+        self.notification(CoreNotification::ProtoInstallProgress {
+            tool,
+            version,
+            progress,
+        });
     }
 }
 

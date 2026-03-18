@@ -1,913 +1,913 @@
 <application>
-  <component name="PluginAdvertiserExtensions"><![CDATA[{
-  "plugins": {
-    "*.tflite": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.idl": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.fx": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.c": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.cc": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.cpp": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.h": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.hpp": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.cs": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.pl": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.pm": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.aj": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.hs": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.sql": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.css": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.js": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jsf": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jsp": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jspf": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.tag": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.tagf": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.fxml": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jrxml": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ant": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xsd": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.rng": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.tld": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jhm": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xul": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.pom": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xsl": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.wsdl": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xml": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jnlp": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xslt": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.zip": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.egg": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ear": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.klib": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ane": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.war": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jar": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.apk": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.swc": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.txt": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.log": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.pptx": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xlsx": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.pdf": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ppt": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.vsd": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.doc": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.mdb": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.hlp": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.odt": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xls": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.docx": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.iws": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.iml": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ipr": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.patch": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.diff": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ignore": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.rnc": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.htm": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.html": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.shtm": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.shtml": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.sht": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.xhtml": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.mod": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.dtd": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ent": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.elt": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.har": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.json": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.json5": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "devcontainer.json": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ndjson": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jsonlines": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.ldjson": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.jsonl": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.regexp": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.dic": {
-      "pluginIdString": "com.intellij",
-      "nullablePluginName": "IDEA CORE",
-      "isBundled": true
-    },
-    "*.psd": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.xbm": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.tiff": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.bigtiff": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.bmp": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.gif": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.rgbe": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.tga": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.tif": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.ico": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.pgm": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.dcx": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.jpeg": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.wbmp": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.pam": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.jbig2": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.jpg": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.pcx": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.png": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.webp": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.ppm": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.icns": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.pnm": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.xpm": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.pbm": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    "*.svg": {
-      "pluginIdString": "com.intellij.platform.images",
-      "nullablePluginName": "Images",
-      "isBundled": true
-    },
-    ".editorconfig": {
-      "pluginIdString": "org.editorconfig.editorconfigjetbrains",
-      "nullablePluginName": "EditorConfig",
-      "isBundled": true
-    },
-    "*.yml": {
-      "pluginIdString": "org.jetbrains.plugins.yaml",
-      "nullablePluginName": "YAML",
-      "isBundled": true
-    },
-    "*.yaml": {
-      "pluginIdString": "org.jetbrains.plugins.yaml",
-      "nullablePluginName": "YAML",
-      "isBundled": true
-    },
-    "*.md": {
-      "pluginIdString": "org.intellij.plugins.markdown",
-      "nullablePluginName": "Markdown",
-      "isBundled": true
-    },
-    "*.markdown": {
-      "pluginIdString": "org.intellij.plugins.markdown",
-      "nullablePluginName": "Markdown",
-      "isBundled": true
-    },
-    "*.hgignore": {
-      "pluginIdString": "hg4idea",
-      "nullablePluginName": "Mercurial",
-      "isBundled": true
-    },
-    "*.properties": {
-      "pluginIdString": "com.intellij.properties",
-      "nullablePluginName": "Properties",
-      "isBundled": true
-    },
-    "*.sh": {
-      "pluginIdString": "com.jetbrains.sh",
-      "nullablePluginName": "Shell Script",
-      "isBundled": true
-    },
-    "*.bash": {
-      "pluginIdString": "com.jetbrains.sh",
-      "nullablePluginName": "Shell Script",
-      "isBundled": true
-    },
-    "*.zsh": {
-      "pluginIdString": "com.jetbrains.sh",
-      "nullablePluginName": "Shell Script",
-      "isBundled": true
-    },
-    "Gopkg.lock": {
-      "pluginIdString": "org.toml.lang",
-      "nullablePluginName": "Toml",
-      "isBundled": true
-    },
-    "Pipfile": {
-      "pluginIdString": "org.toml.lang",
-      "nullablePluginName": "Toml",
-      "isBundled": true
-    },
-    "Cargo.toml.orig": {
-      "pluginIdString": "org.toml.lang",
-      "nullablePluginName": "Toml",
-      "isBundled": true
-    },
-    "*.toml": {
-      "pluginIdString": "org.toml.lang",
-      "nullablePluginName": "Toml",
-      "isBundled": true
-    },
-    "Cargo.lock": {
-      "pluginIdString": "org.toml.lang",
-      "nullablePluginName": "Toml",
-      "isBundled": true
-    },
-    "poetry.lock": {
-      "pluginIdString": "org.toml.lang",
-      "nullablePluginName": "Toml",
-      "isBundled": true
-    },
-    "*.ijperf": {
-      "pluginIdString": "com.jetbrains.performancePlugin",
-      "nullablePluginName": "Performance Testing",
-      "isBundled": true
-    },
-    "*.xpath": {
-      "pluginIdString": "XPathView",
-      "nullablePluginName": "XPathView + XSLT",
-      "isBundled": true
-    },
-    "*.xpath2": {
-      "pluginIdString": "XPathView",
-      "nullablePluginName": "XPathView + XSLT",
-      "isBundled": true
-    },
-    "*.gitignore": {
-      "pluginIdString": "Git4Idea",
-      "nullablePluginName": "Git",
-      "isBundled": true
-    },
-    "exclude": {
-      "pluginIdString": "Git4Idea",
-      "nullablePluginName": "Git",
-      "isBundled": true
-    },
-    "*.mf": {
-      "pluginIdString": "com.intellij.java",
-      "nullablePluginName": "Java",
-      "isBundled": true
-    },
-    "*.java": {
-      "pluginIdString": "com.intellij.java",
-      "nullablePluginName": "Java",
-      "isBundled": true
-    },
-    "*.class": {
-      "pluginIdString": "com.intellij.java",
-      "nullablePluginName": "Java",
-      "isBundled": true
-    },
-    "*.snippet": {
-      "pluginIdString": "com.intellij.java",
-      "nullablePluginName": "Java",
-      "isBundled": true
-    },
-    "*.jql": {
-      "pluginIdString": "com.intellij.tasks",
-      "nullablePluginName": "Task Management",
-      "isBundled": true
-    },
-    ".classpath": {
-      "pluginIdString": "org.jetbrains.idea.eclipse",
-      "nullablePluginName": "Eclipse Interoperability",
-      "isBundled": true
-    },
-    ".project": {
-      "pluginIdString": "org.jetbrains.idea.eclipse",
-      "nullablePluginName": "Eclipse Interoperability",
-      "isBundled": true
-    },
-    "*.gant": {
-      "pluginIdString": "org.intellij.groovy",
-      "nullablePluginName": "Groovy",
-      "isBundled": true
-    },
-    "*.gy": {
-      "pluginIdString": "org.intellij.groovy",
-      "nullablePluginName": "Groovy",
-      "isBundled": true
-    },
-    "*.groovy": {
-      "pluginIdString": "org.intellij.groovy",
-      "nullablePluginName": "Groovy",
-      "isBundled": true
-    },
-    "*.gdsl": {
-      "pluginIdString": "org.intellij.groovy",
-      "nullablePluginName": "Groovy",
-      "isBundled": true
-    },
-    "org.codehaus.groovy.runtime.ExtensionModule": {
-      "pluginIdString": "org.intellij.groovy",
-      "nullablePluginName": "Groovy",
-      "isBundled": true
-    },
-    "logback.groovy": {
-      "pluginIdString": "org.intellij.groovy",
-      "nullablePluginName": "Groovy",
-      "isBundled": true
-    },
-    "*.kt": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.kts": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.knm": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.kjsm": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.kotlin_metadata": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.kotlin_builtins": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.kotlin_module": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.def": {
-      "pluginIdString": "org.jetbrains.kotlin",
-      "nullablePluginName": "Kotlin",
-      "isBundled": true
-    },
-    "*.form": {
-      "pluginIdString": "com.intellij.uiDesigner",
-      "nullablePluginName": "UI Designer",
-      "isBundled": true
-    },
-    "maven.config": {
-      "pluginIdString": "org.jetbrains.idea.maven",
-      "nullablePluginName": "Maven",
-      "isBundled": true
-    },
-    "*.gradle": {
-      "pluginIdString": "org.jetbrains.plugins.gradle",
-      "nullablePluginName": "Gradle-Java",
-      "isBundled": true
-    },
-    "*.9.png": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.dex": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.aar": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.aab": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.otf": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.ttf": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.aidl": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "proguard-*.txt": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "proguard.cfg": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.pro": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.rs": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.rsh": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.fs": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "multidex-config.txt": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.agsl": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.android_data_binding": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.trace": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.alloc": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.heapprofd": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.perfetto-trace": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.pftrace": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.li": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.lcf": {
-      "pluginIdString": "org.jetbrains.android",
-      "nullablePluginName": "Android",
-      "isBundled": true
-    },
-    "*.dspec": {
-      "pluginIdString": "com.android.tools.design",
-      "nullablePluginName": "Android Design Tools",
-      "isBundled": true
-    },
-    "*.sarif": {
-      "pluginIdString": "org.intellij.qodana",
-      "nullablePluginName": "Qodana",
-      "isBundled": true
-    },
-    "*.sarif.json": {
-      "pluginIdString": "org.intellij.qodana",
-      "nullablePluginName": "Qodana",
-      "isBundled": true
+  <component name="PluginAdvertiserExtensions">{
+  &quot;plugins&quot;: {
+    &quot;*.tflite&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.idl&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.fx&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.c&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.cc&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.cpp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.h&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.hpp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.cs&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pl&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.aj&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.hs&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.sql&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.css&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.js&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jsf&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jsp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jspf&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.tag&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.tagf&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.fxml&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jrxml&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ant&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xsd&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.rng&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.tld&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jhm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xul&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pom&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xsl&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.wsdl&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xml&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jnlp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xslt&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.zip&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.egg&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ear&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.klib&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ane&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.war&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jar&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.apk&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.swc&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.txt&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.log&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pptx&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xlsx&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pdf&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ppt&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.vsd&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.doc&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.mdb&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.hlp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.odt&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xls&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.docx&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.iws&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.iml&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ipr&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.patch&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.diff&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ignore&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.rnc&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.htm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.html&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.shtm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.shtml&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.sht&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xhtml&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.mod&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.dtd&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ent&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.elt&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.har&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.json&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.json5&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;devcontainer.json&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ndjson&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jsonlines&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ldjson&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jsonl&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.regexp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.dic&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+      &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.psd&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xbm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.tiff&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.bigtiff&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.bmp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.gif&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.rgbe&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.tga&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.tif&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ico&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pgm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.dcx&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jpeg&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.wbmp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pam&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jbig2&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jpg&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pcx&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.png&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.webp&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ppm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.icns&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pnm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xpm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pbm&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.svg&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.platform.images&quot;,
+      &quot;nullablePluginName&quot;: &quot;Images&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;.editorconfig&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.editorconfig.editorconfigjetbrains&quot;,
+      &quot;nullablePluginName&quot;: &quot;EditorConfig&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.yml&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.yaml&quot;,
+      &quot;nullablePluginName&quot;: &quot;YAML&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.yaml&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.yaml&quot;,
+      &quot;nullablePluginName&quot;: &quot;YAML&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.md&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.plugins.markdown&quot;,
+      &quot;nullablePluginName&quot;: &quot;Markdown&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.markdown&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.plugins.markdown&quot;,
+      &quot;nullablePluginName&quot;: &quot;Markdown&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.hgignore&quot;: {
+      &quot;pluginIdString&quot;: &quot;hg4idea&quot;,
+      &quot;nullablePluginName&quot;: &quot;Mercurial&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.properties&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.properties&quot;,
+      &quot;nullablePluginName&quot;: &quot;Properties&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.sh&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.jetbrains.sh&quot;,
+      &quot;nullablePluginName&quot;: &quot;Shell Script&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.bash&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.jetbrains.sh&quot;,
+      &quot;nullablePluginName&quot;: &quot;Shell Script&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.zsh&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.jetbrains.sh&quot;,
+      &quot;nullablePluginName&quot;: &quot;Shell Script&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;Gopkg.lock&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.toml.lang&quot;,
+      &quot;nullablePluginName&quot;: &quot;Toml&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;Pipfile&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.toml.lang&quot;,
+      &quot;nullablePluginName&quot;: &quot;Toml&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;Cargo.toml.orig&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.toml.lang&quot;,
+      &quot;nullablePluginName&quot;: &quot;Toml&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.toml&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.toml.lang&quot;,
+      &quot;nullablePluginName&quot;: &quot;Toml&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;Cargo.lock&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.toml.lang&quot;,
+      &quot;nullablePluginName&quot;: &quot;Toml&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;poetry.lock&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.toml.lang&quot;,
+      &quot;nullablePluginName&quot;: &quot;Toml&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ijperf&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.jetbrains.performancePlugin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Performance Testing&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xpath&quot;: {
+      &quot;pluginIdString&quot;: &quot;XPathView&quot;,
+      &quot;nullablePluginName&quot;: &quot;XPathView + XSLT&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.xpath2&quot;: {
+      &quot;pluginIdString&quot;: &quot;XPathView&quot;,
+      &quot;nullablePluginName&quot;: &quot;XPathView + XSLT&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.gitignore&quot;: {
+      &quot;pluginIdString&quot;: &quot;Git4Idea&quot;,
+      &quot;nullablePluginName&quot;: &quot;Git&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;exclude&quot;: {
+      &quot;pluginIdString&quot;: &quot;Git4Idea&quot;,
+      &quot;nullablePluginName&quot;: &quot;Git&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.mf&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+      &quot;nullablePluginName&quot;: &quot;Java&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.java&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+      &quot;nullablePluginName&quot;: &quot;Java&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.class&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+      &quot;nullablePluginName&quot;: &quot;Java&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.snippet&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+      &quot;nullablePluginName&quot;: &quot;Java&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.jql&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.tasks&quot;,
+      &quot;nullablePluginName&quot;: &quot;Task Management&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;.classpath&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.idea.eclipse&quot;,
+      &quot;nullablePluginName&quot;: &quot;Eclipse Interoperability&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;.project&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.idea.eclipse&quot;,
+      &quot;nullablePluginName&quot;: &quot;Eclipse Interoperability&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.gant&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+      &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.gy&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+      &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.groovy&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+      &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.gdsl&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+      &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;org.codehaus.groovy.runtime.ExtensionModule&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+      &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;logback.groovy&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+      &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.kt&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.kts&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.knm&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.kjsm&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.kotlin_metadata&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.kotlin_builtins&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.kotlin_module&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.def&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+      &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.form&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.intellij.uiDesigner&quot;,
+      &quot;nullablePluginName&quot;: &quot;UI Designer&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;maven.config&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.idea.maven&quot;,
+      &quot;nullablePluginName&quot;: &quot;Maven&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.gradle&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.gradle&quot;,
+      &quot;nullablePluginName&quot;: &quot;Gradle-Java&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.9.png&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.dex&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.aar&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.aab&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.otf&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.ttf&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.aidl&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;proguard-*.txt&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;proguard.cfg&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pro&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.rs&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.rsh&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.fs&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;multidex-config.txt&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.agsl&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.android_data_binding&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.trace&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.alloc&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.heapprofd&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.perfetto-trace&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.pftrace&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.li&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.lcf&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.dspec&quot;: {
+      &quot;pluginIdString&quot;: &quot;com.android.tools.design&quot;,
+      &quot;nullablePluginName&quot;: &quot;Android Design Tools&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.sarif&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.qodana&quot;,
+      &quot;nullablePluginName&quot;: &quot;Qodana&quot;,
+      &quot;isBundled&quot;: true
+    },
+    &quot;*.sarif.json&quot;: {
+      &quot;pluginIdString&quot;: &quot;org.intellij.qodana&quot;,
+      &quot;nullablePluginName&quot;: &quot;Qodana&quot;,
+      &quot;isBundled&quot;: true
     }
   }
-}]]></component>
+}</component>
   <component name="PluginFeatureCacheService"><![CDATA[{
   "extensions": {
     "featureMap": {
@@ -1826,6 +1826,14 @@
           }
         ]
       },
+      "*.3tg.json": {
+        "dataSet": [
+          {
+            "pluginIdString": "tech.coding-creed.3tg-taas",
+            "nullablePluginName": "3TG TaaS"
+          }
+        ]
+      },
       "*.4": {
         "dataSet": [
           {
@@ -2583,6 +2591,10 @@
           {
             "pluginIdString": "de.keeyzar.gpt-helper.gpt-helper",
             "nullablePluginName": "gpt-helper"
+          },
+          {
+            "pluginIdString": "arbnet",
+            "nullablePluginName": "Arb.NET"
           }
         ]
       },
@@ -2919,6 +2931,14 @@
           {
             "pluginIdString": "com.aridclown.IntelliJ-Defold",
             "nullablePluginName": "Defold Support"
+          }
+        ]
+      },
+      "*.atlin": {
+        "dataSet": [
+          {
+            "pluginIdString": "com.herminal.atlin.plugin",
+            "nullablePluginName": "Atlin Language Support"
           }
         ]
       },
@@ -6472,6 +6492,10 @@
           {
             "pluginIdString": "com.syncfusion.documentviewer",
             "nullablePluginName": "Document Viewer"
+          },
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
           }
         ]
       },
@@ -6524,6 +6548,10 @@
           {
             "pluginIdString": "com.syncfusion.documentviewer",
             "nullablePluginName": "Document Viewer"
+          },
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
           }
         ]
       },
@@ -6696,6 +6724,10 @@
           {
             "pluginIdString": "com.intellij.drools",
             "nullablePluginName": "Drools"
+          },
+          {
+            "pluginIdString": "org.drools.intellij-drools",
+            "nullablePluginName": "Drools DRL Language Support"
           },
           {
             "pluginIdString": "com.intellij.drools",
@@ -7656,16 +7688,16 @@
       "*.ex": {
         "dataSet": [
           {
+            "pluginIdString": "org.elixir_lang",
+            "nullablePluginName": "Elixir"
+          },
+          {
             "pluginIdString": "dev.murek.elixirij",
             "nullablePluginName": "Elixirij"
           },
           {
             "pluginIdString": "com.flexible.elixir",
             "nullablePluginName": "Flexible Elixir"
-          },
-          {
-            "pluginIdString": "org.elixir_lang",
-            "nullablePluginName": "Elixir"
           }
         ]
       },
@@ -7776,17 +7808,21 @@
             "nullablePluginName": "Elixir"
           },
           {
-            "pluginIdString": "com.flexible.elixir",
-            "nullablePluginName": "Flexible Elixir"
-          },
-          {
             "pluginIdString": "dev.murek.elixirij",
             "nullablePluginName": "Elixirij"
+          },
+          {
+            "pluginIdString": "com.flexible.elixir",
+            "nullablePluginName": "Flexible Elixir"
           }
         ]
       },
       "*.ext": {
         "dataSet": [
+          {
+            "pluginIdString": "com.github.b3er.idea.plugins.arc.browser",
+            "nullablePluginName": "Archive Browser"
+          },
           {
             "pluginIdString": "com.github.dixtdf.archive.manager",
             "nullablePluginName": "ArchiveManager"
@@ -7794,10 +7830,6 @@
           {
             "pluginIdString": "com.github.puotek.armaconfigplugin",
             "nullablePluginName": "arma-config-support"
-          },
-          {
-            "pluginIdString": "com.github.b3er.idea.plugins.arc.browser",
-            "nullablePluginName": "Archive Browser"
           }
         ]
       },
@@ -10128,6 +10160,22 @@
           }
         ]
       },
+      "*.hwp": {
+        "dataSet": [
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
+          }
+        ]
+      },
+      "*.hwpx": {
+        "dataSet": [
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
+          }
+        ]
+      },
       "*.hx": {
         "dataSet": [
           {
@@ -10958,10 +11006,6 @@
       "*.jenkinsfile": {
         "dataSet": [
           {
-            "pluginIdString": "com.github.bashtovoi.jenkinsfile-syntax-highlighter",
-            "nullablePluginName": "Jenkinsfile Syntax Highlighter"
-          },
-          {
             "pluginIdString": "co.anbora.labs.jenkins.jenkinsFile",
             "nullablePluginName": "Jenkinsfile"
           },
@@ -10972,6 +11016,10 @@
           {
             "pluginIdString": "com.poeticcoder.pipelinelens",
             "nullablePluginName": "PipelineLens"
+          },
+          {
+            "pluginIdString": "com.github.bashtovoi.jenkinsfile-syntax-highlighter",
+            "nullablePluginName": "Jenkinsfile Syntax Highlighter"
           }
         ]
       },
@@ -12554,12 +12602,12 @@
       "*.leex": {
         "dataSet": [
           {
-            "pluginIdString": "com.flexible.elixir",
-            "nullablePluginName": "Flexible Elixir"
-          },
-          {
             "pluginIdString": "org.elixir_lang",
             "nullablePluginName": "Elixir"
+          },
+          {
+            "pluginIdString": "com.flexible.elixir",
+            "nullablePluginName": "Flexible Elixir"
           }
         ]
       },
@@ -13216,16 +13264,16 @@
             "nullablePluginName": "Matlab Support"
           },
           {
+            "pluginIdString": "com.langheroes.matlab",
+            "nullablePluginName": "Matrix Hero - MATLAB IDE"
+          },
+          {
             "pluginIdString": "dev.adnathanail.mirandaintellijplugin",
             "nullablePluginName": "Miranda Language Support"
           },
           {
             "pluginIdString": "org.jetbrains.plugins.cpp.frontend",
             "nullablePluginName": "C/C++ for JetBrains Client"
-          },
-          {
-            "pluginIdString": "com.langheroes.matlab",
-            "nullablePluginName": "Matrix Hero - MATLAB IDE"
           }
         ]
       },
@@ -14108,12 +14156,12 @@
             "nullablePluginName": "Mermaid"
           },
           {
-            "pluginIdString": "com.nereid.mermaid",
-            "nullablePluginName": "Nereid"
-          },
-          {
             "pluginIdString": "dev.tachilabs.mermaidstudio",
             "nullablePluginName": "Mermaid Studio"
+          },
+          {
+            "pluginIdString": "com.nereid.mermaid",
+            "nullablePluginName": "Nereid"
           },
           {
             "pluginIdString": "nb-mind-map-idea",
@@ -14685,6 +14733,10 @@
       "*.mv": {
         "dataSet": [
           {
+            "pluginIdString": "org.endless.move.lang",
+            "nullablePluginName": "Move on Endless"
+          },
+          {
             "pluginIdString": "org.move.lang",
             "nullablePluginName": "Move on Aptos"
           },
@@ -14695,10 +14747,6 @@
           {
             "pluginIdString": "org.iota.ide",
             "nullablePluginName": "IOTA Move"
-          },
-          {
-            "pluginIdString": "org.endless.move.lang",
-            "nullablePluginName": "Move on Endless"
           }
         ]
       },
@@ -14998,10 +15046,6 @@
             "nullablePluginName": "nginx Support"
           },
           {
-            "pluginIdString": "cc.ayakurayuki.nginx-configuration-formatter",
-            "nullablePluginName": "Nginx Configuration Formatter"
-          },
-          {
             "pluginIdString": "dev.meanmail.plugin.nginx-intellij-plugin",
             "nullablePluginName": "Nginx Configuration"
           },
@@ -15012,6 +15056,10 @@
           {
             "pluginIdString": "net.ishchenko.idea.nginx",
             "nullablePluginName": "nginx-support"
+          },
+          {
+            "pluginIdString": "cc.ayakurayuki.nginx-configuration-formatter",
+            "nullablePluginName": "Nginx Configuration Formatter"
           }
         ]
       },
@@ -16049,6 +16097,10 @@
           {
             "pluginIdString": "com.syncfusion.documentviewer",
             "nullablePluginName": "Document Viewer"
+          },
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
           }
         ]
       },
@@ -16939,11 +16991,23 @@
           }
         ]
       },
+      "*.ppt": {
+        "dataSet": [
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
+          }
+        ]
+      },
       "*.pptx": {
         "dataSet": [
           {
             "pluginIdString": "org.zhangwenqing.idea.ooxml-tools",
             "nullablePluginName": "OOXml Tools"
+          },
+          {
+            "pluginIdString": "com.omniviewer.omni-viewer",
+            "nullablePluginName": "Omni Viewer"
           }
         ]
       },
@@ -17705,6 +17769,10 @@
       "*.qml": {
         "dataSet": [
           {
+            "pluginIdString": "com.chief.ijplugin.weapp",
+            "nullablePluginName": "WeChat MiniProgram Dev Tools"
+          },
+          {
             "pluginIdString": "quickturnstudio.language.qml.QmlEditor",
             "nullablePluginName": "QmlEditor"
           },
@@ -17715,10 +17783,6 @@
           {
             "pluginIdString": "com.intellij.lang.qml",
             "nullablePluginName": "QML"
-          },
-          {
-            "pluginIdString": "com.chief.ijplugin.weapp",
-            "nullablePluginName": "WeChat MiniProgram Dev Tools"
           }
         ]
       },
@@ -17773,6 +17837,14 @@
       "*.qss": {
         "dataSet": [
           {
+            "pluginIdString": "com.popo.super-qss",
+            "nullablePluginName": "Super-qss"
+          },
+          {
+            "pluginIdString": "com.chief.ijplugin.weapp",
+            "nullablePluginName": "WeChat MiniProgram Dev Tools"
+          },
+          {
             "pluginIdString": "quickturnstudio.sdk.language.qss.QtStyleSheetsEditor",
             "nullablePluginName": "Qt Style Sheets Editor"
           },
@@ -17783,14 +17855,6 @@
           {
             "pluginIdString": "qsseditor",
             "nullablePluginName": "QssSupport"
-          },
-          {
-            "pluginIdString": "com.popo.super-qss",
-            "nullablePluginName": "Super-qss"
-          },
-          {
-            "pluginIdString": "com.chief.ijplugin.weapp",
-            "nullablePluginName": "WeChat MiniProgram Dev Tools"
           },
           {
             "pluginIdString": "quickturnstudio.sdk.language.qss.QtStyleSheetHighlighter",
@@ -19950,8 +20014,20 @@
           }
         ]
       },
+      "*.spark": {
+        "dataSet": [
+          {
+            "pluginIdString": "com.sparkrunner.plugin",
+            "nullablePluginName": "Spark Test Runner"
+          }
+        ]
+      },
       "*.sparql": {
         "dataSet": [
+          {
+            "pluginIdString": "org.outsparql.outSPARQL",
+            "nullablePluginName": "outSPARQL"
+          },
           {
             "pluginIdString": "sparql4idea",
             "nullablePluginName": "sparql4idea"
@@ -19959,10 +20035,6 @@
           {
             "pluginIdString": "com.sharedvocabs.plugins.rdfandsparql",
             "nullablePluginName": "RDF and SPARQL"
-          },
-          {
-            "pluginIdString": "org.outsparql.outSPARQL",
-            "nullablePluginName": "outSPARQL"
           }
         ]
       },
@@ -22564,16 +22636,16 @@
             "nullablePluginName": "Python Community Edition"
           },
           {
-            "pluginIdString": "com.hytaledocs.hytale",
-            "nullablePluginName": "Hytale Development Tools"
-          },
-          {
             "pluginIdString": "de.bungee.idea.plugins.uifile",
             "nullablePluginName": "Hytale .ui Support"
           },
           {
             "pluginIdString": "dev.lp4.HytaleModdingTool",
             "nullablePluginName": "HytaleModdingTool"
+          },
+          {
+            "pluginIdString": "com.hytaledocs.hytale",
+            "nullablePluginName": "Hytale Development Tools"
           },
           {
             "pluginIdString": "com.intellij.qt",
@@ -22851,6 +22923,14 @@
           {
             "pluginIdString": "io.v.vdl",
             "nullablePluginName": "VDL plugin for IntelliJ"
+          }
+        ]
+      },
+      "*.veld": {
+        "dataSet": [
+          {
+            "pluginIdString": "dev.veld.jetbrains",
+            "nullablePluginName": "Veld"
           }
         ]
       },
@@ -23662,28 +23742,28 @@
       "*.wxs": {
         "dataSet": [
           {
+            "pluginIdString": "com.chief.ijplugin.weapp",
+            "nullablePluginName": "WeChat MiniProgram Dev Tools"
+          },
+          {
             "pluginIdString": "com.hxz.mpxjs",
             "nullablePluginName": "Mpx"
           },
           {
             "pluginIdString": "com.intellij.wechat.miniprogram",
             "nullablePluginName": "WeChat Mini Program"
-          },
-          {
-            "pluginIdString": "com.chief.ijplugin.weapp",
-            "nullablePluginName": "WeChat MiniProgram Dev Tools"
           }
         ]
       },
       "*.wxss": {
         "dataSet": [
           {
-            "pluginIdString": "com.chief.ijplugin.weapp",
-            "nullablePluginName": "WeChat MiniProgram Dev Tools"
-          },
-          {
             "pluginIdString": "com.intellij.wechat.miniprogram",
             "nullablePluginName": "WeChat Mini Program"
+          },
+          {
+            "pluginIdString": "com.chief.ijplugin.weapp",
+            "nullablePluginName": "WeChat MiniProgram Dev Tools"
           }
         ]
       },
@@ -26513,28 +26593,28 @@
       "nest-cli.json": {
         "dataSet": [
           {
-            "pluginIdString": "com.coconutmkii.nestjssupport",
-            "nullablePluginName": "NestJS Framework Support"
-          },
-          {
             "pluginIdString": "com.nekofar.milad.intellij.nestjs",
             "nullablePluginName": "Nest"
           },
           {
             "pluginIdString": "com.github.dinbtechit.jetbrainsnestjs",
             "nullablePluginName": "nestjs"
+          },
+          {
+            "pluginIdString": "com.coconutmkii.nestjssupport",
+            "nullablePluginName": "NestJS Framework Support"
           }
         ]
       },
       "next.config.js": {
         "dataSet": [
           {
-            "pluginIdString": "com.nekofar.milad.intellij.nextjs",
-            "nullablePluginName": "Next.js"
-          },
-          {
             "pluginIdString": "com.kronkcms.plugin",
             "nullablePluginName": "Kronk CMS"
+          },
+          {
+            "pluginIdString": "com.nekofar.milad.intellij.nextjs",
+            "nullablePluginName": "Next.js"
           }
         ]
       },
@@ -27579,7 +27659,8 @@
           }
         ]
       }
-    }
+    },
+    "lastUpdateTime": 1772537323505
   },
   "dependencies": {
     "featureMap": {
@@ -29691,347 +29772,348 @@
           }
         ]
       }
-    }
+    },
+    "lastUpdateTime": 1772537323559
   }
 }]]></component>
-  <component name="PluginFeatureService"><![CDATA[{
-  "features": {
-    "com.intellij.facetType": {
-      "featureMap": {
-        "kotlin-language": {
-          "displayName": "Kotlin",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.kotlin",
-            "nullablePluginName": "Kotlin",
-            "isBundled": true
+  <component name="PluginFeatureService">{
+  &quot;features&quot;: {
+    &quot;com.intellij.facetType&quot;: {
+      &quot;featureMap&quot;: {
+        &quot;kotlin-language&quot;: {
+          &quot;displayName&quot;: &quot;Kotlin&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+            &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "android": {
-          "displayName": "Android",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;android&quot;: {
+          &quot;displayName&quot;: &quot;Android&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "android-artifact": {
-          "displayName": "Android Artifact",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;android-artifact&quot;: {
+          &quot;displayName&quot;: &quot;Android Artifact&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "android-gradle": {
-          "displayName": "Android-Gradle",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;android-gradle&quot;: {
+          &quot;displayName&quot;: &quot;Android-Gradle&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "native-android-gradle": {
-          "displayName": "Native-Android-Gradle",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;native-android-gradle&quot;: {
+          &quot;displayName&quot;: &quot;Native-Android-Gradle&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "java-gradle": {
-          "displayName": "Java-Gradle",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;java-gradle&quot;: {
+          &quot;displayName&quot;: &quot;Java-Gradle&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "apk": {
-          "displayName": "APK",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;apk&quot;: {
+          &quot;displayName&quot;: &quot;APK&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         }
       }
     },
-    "dependencySupport": {
-      "featureMap": {
-        "java:com.jetbrains:ideaIC": {
-          "displayName": "IntelliJ Platform Community",
-          "pluginData": {
-            "pluginIdString": "DevKit",
-            "nullablePluginName": "Plugin DevKit",
-            "isBundled": true
+    &quot;dependencySupport&quot;: {
+      &quot;featureMap&quot;: {
+        &quot;java:com.jetbrains:ideaIC&quot;: {
+          &quot;displayName&quot;: &quot;IntelliJ Platform Community&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;DevKit&quot;,
+            &quot;nullablePluginName&quot;: &quot;Plugin DevKit&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "java:com.jetbrains:ideaIU": {
-          "displayName": "IntelliJ Platform Ultimate",
-          "pluginData": {
-            "pluginIdString": "DevKit",
-            "nullablePluginName": "Plugin DevKit",
-            "isBundled": true
+        &quot;java:com.jetbrains:ideaIU&quot;: {
+          &quot;displayName&quot;: &quot;IntelliJ Platform Ultimate&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;DevKit&quot;,
+            &quot;nullablePluginName&quot;: &quot;Plugin DevKit&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "java:junit:junit": {
-          "displayName": "JUnit",
-          "pluginData": {
-            "pluginIdString": "JUnit",
-            "nullablePluginName": "JUnit",
-            "isBundled": true
+        &quot;java:junit:junit&quot;: {
+          &quot;displayName&quot;: &quot;JUnit&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;JUnit&quot;,
+            &quot;nullablePluginName&quot;: &quot;JUnit&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "java:org.openjfx:javafx-base": {
-          "displayName": "JavaFX",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.plugins.javaFX",
-            "nullablePluginName": "JavaFX",
-            "isBundled": true
+        &quot;java:org.openjfx:javafx-base&quot;: {
+          &quot;displayName&quot;: &quot;JavaFX&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.javaFX&quot;,
+            &quot;nullablePluginName&quot;: &quot;JavaFX&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "java:org.testng:testng": {
-          "displayName": "TestNG",
-          "pluginData": {
-            "pluginIdString": "TestNG-J",
-            "nullablePluginName": "TestNG",
-            "isBundled": true
+        &quot;java:org.testng:testng&quot;: {
+          &quot;displayName&quot;: &quot;TestNG&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;TestNG-J&quot;,
+            &quot;nullablePluginName&quot;: &quot;TestNG&quot;,
+            &quot;isBundled&quot;: true
           }
         }
       }
     },
-    "com.intellij.packaging.artifacts.ArtifactType": {
-      "featureMap": {
-        "jar": {
-          "displayName": "JAR",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+    &quot;com.intellij.packaging.artifacts.ArtifactType&quot;: {
+      &quot;featureMap&quot;: {
+        &quot;jar&quot;: {
+          &quot;displayName&quot;: &quot;JAR&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "jlink": {
-          "displayName": "Run-time image (JLink)",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+        &quot;jlink&quot;: {
+          &quot;displayName&quot;: &quot;Run-time image (JLink)&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "javafx": {
-          "displayName": "JavaFx application",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.plugins.javaFX",
-            "nullablePluginName": "JavaFX",
-            "isBundled": true
+        &quot;javafx&quot;: {
+          &quot;displayName&quot;: &quot;JavaFx application&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.javaFX&quot;,
+            &quot;nullablePluginName&quot;: &quot;JavaFX&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "jpackage": {
-          "displayName": "Platform specific package",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.plugins.javaFX",
-            "nullablePluginName": "JavaFX",
-            "isBundled": true
+        &quot;jpackage&quot;: {
+          &quot;displayName&quot;: &quot;Platform specific package&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.javaFX&quot;,
+            &quot;nullablePluginName&quot;: &quot;JavaFX&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "javafx-preloader": {
-          "displayName": "JavaFx preloader",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.plugins.javaFX",
-            "nullablePluginName": "JavaFX",
-            "isBundled": true
+        &quot;javafx-preloader&quot;: {
+          &quot;displayName&quot;: &quot;JavaFx preloader&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.plugins.javaFX&quot;,
+            &quot;nullablePluginName&quot;: &quot;JavaFX&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "plain": {
-          "displayName": "Other",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+        &quot;plain&quot;: {
+          &quot;displayName&quot;: &quot;Other&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         }
       }
     },
-    "com.intellij.configurationType": {
-      "featureMap": {
-        "CompoundRunConfigurationType": {
-          "displayName": "Compound",
-          "pluginData": {
-            "pluginIdString": "com.intellij",
-            "nullablePluginName": "IDEA CORE",
-            "isBundled": true
+    &quot;com.intellij.configurationType&quot;: {
+      &quot;featureMap&quot;: {
+        &quot;CompoundRunConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Compound&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij&quot;,
+            &quot;nullablePluginName&quot;: &quot;IDEA CORE&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "GradleRunConfiguration": {
-          "displayName": "Gradle",
-          "pluginData": {
-            "pluginIdString": "com.intellij.gradle",
-            "nullablePluginName": "Gradle",
-            "isBundled": true
+        &quot;GradleRunConfiguration&quot;: {
+          &quot;displayName&quot;: &quot;Gradle&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.gradle&quot;,
+            &quot;nullablePluginName&quot;: &quot;Gradle&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "ShConfigurationType": {
-          "displayName": "Shell Script",
-          "pluginData": {
-            "pluginIdString": "com.jetbrains.sh",
-            "nullablePluginName": "Shell Script",
-            "isBundled": true
+        &quot;ShConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Shell Script&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.jetbrains.sh&quot;,
+            &quot;nullablePluginName&quot;: &quot;Shell Script&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "XSLT": {
-          "displayName": "XSLT",
-          "pluginData": {
-            "pluginIdString": "XPathView",
-            "nullablePluginName": "XPathView + XSLT",
-            "isBundled": true
+        &quot;XSLT&quot;: {
+          &quot;displayName&quot;: &quot;XSLT&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;XPathView&quot;,
+            &quot;nullablePluginName&quot;: &quot;XPathView + XSLT&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "Application": {
-          "displayName": "Application",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+        &quot;Application&quot;: {
+          &quot;displayName&quot;: &quot;Application&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "JarApplication": {
-          "displayName": "JAR Application",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+        &quot;JarApplication&quot;: {
+          &quot;displayName&quot;: &quot;JAR Application&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "Java Scratch": {
-          "displayName": "Java Scratch",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+        &quot;Java Scratch&quot;: {
+          &quot;displayName&quot;: &quot;Java Scratch&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "Remote": {
-          "displayName": "Remote JVM Debug",
-          "pluginData": {
-            "pluginIdString": "com.intellij.java",
-            "nullablePluginName": "Java",
-            "isBundled": true
+        &quot;Remote&quot;: {
+          &quot;displayName&quot;: &quot;Remote JVM Debug&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.intellij.java&quot;,
+            &quot;nullablePluginName&quot;: &quot;Java&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "#org.jetbrains.idea.devkit.run.PluginConfigurationType": {
-          "displayName": "Plugin",
-          "pluginData": {
-            "pluginIdString": "DevKit",
-            "nullablePluginName": "Plugin DevKit",
-            "isBundled": true
+        &quot;#org.jetbrains.idea.devkit.run.PluginConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Plugin&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;DevKit&quot;,
+            &quot;nullablePluginName&quot;: &quot;Plugin DevKit&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "JUnit": {
-          "displayName": "JUnit",
-          "pluginData": {
-            "pluginIdString": "JUnit",
-            "nullablePluginName": "JUnit",
-            "isBundled": true
+        &quot;JUnit&quot;: {
+          &quot;displayName&quot;: &quot;JUnit&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;JUnit&quot;,
+            &quot;nullablePluginName&quot;: &quot;JUnit&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "AntRunConfiguration": {
-          "displayName": "Ant Target",
-          "pluginData": {
-            "pluginIdString": "AntSupport",
-            "nullablePluginName": "Ant",
-            "isBundled": true
+        &quot;AntRunConfiguration&quot;: {
+          &quot;displayName&quot;: &quot;Ant Target&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;AntSupport&quot;,
+            &quot;nullablePluginName&quot;: &quot;Ant&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "GroovyScriptRunConfiguration": {
-          "displayName": "Groovy",
-          "pluginData": {
-            "pluginIdString": "org.intellij.groovy",
-            "nullablePluginName": "Groovy",
-            "isBundled": true
+        &quot;GroovyScriptRunConfiguration&quot;: {
+          &quot;displayName&quot;: &quot;Groovy&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.intellij.groovy&quot;,
+            &quot;nullablePluginName&quot;: &quot;Groovy&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "JetRunConfigurationType": {
-          "displayName": "Kotlin",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.kotlin",
-            "nullablePluginName": "Kotlin",
-            "isBundled": true
+        &quot;JetRunConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Kotlin&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+            &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "KotlinStandaloneScriptRunConfigurationType": {
-          "displayName": "Kotlin script (Beta)",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.kotlin",
-            "nullablePluginName": "Kotlin",
-            "isBundled": true
+        &quot;KotlinStandaloneScriptRunConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Kotlin script (Beta)&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.kotlin&quot;,
+            &quot;nullablePluginName&quot;: &quot;Kotlin&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "MavenRunConfiguration": {
-          "displayName": "Maven",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.idea.maven",
-            "nullablePluginName": "Maven",
-            "isBundled": true
+        &quot;MavenRunConfiguration&quot;: {
+          &quot;displayName&quot;: &quot;Maven&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.idea.maven&quot;,
+            &quot;nullablePluginName&quot;: &quot;Maven&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "TestNG": {
-          "displayName": "TestNG",
-          "pluginData": {
-            "pluginIdString": "TestNG-J",
-            "nullablePluginName": "TestNG",
-            "isBundled": true
+        &quot;TestNG&quot;: {
+          &quot;displayName&quot;: &quot;TestNG&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;TestNG-J&quot;,
+            &quot;nullablePluginName&quot;: &quot;TestNG&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "AndroidRunConfigurationType": {
-          "displayName": "Android App",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;AndroidRunConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Android App&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "AndroidTestRunConfigurationType": {
-          "displayName": "Android Instrumented Tests",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;AndroidTestRunConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Android Instrumented Tests&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "AndroidWatchFaceConfigurationType": {
-          "displayName": "Wear OS Watch Face",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;AndroidWatchFaceConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Wear OS Watch Face&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "AndroidTileConfigurationType": {
-          "displayName": "Wear OS Tile",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;AndroidTileConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Wear OS Tile&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "AndroidComplicationConfigurationType": {
-          "displayName": "Wear OS Complication",
-          "pluginData": {
-            "pluginIdString": "org.jetbrains.android",
-            "nullablePluginName": "Android",
-            "isBundled": true
+        &quot;AndroidComplicationConfigurationType&quot;: {
+          &quot;displayName&quot;: &quot;Wear OS Complication&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;org.jetbrains.android&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android&quot;,
+            &quot;isBundled&quot;: true
           }
         },
-        "ComposePreviewRunConfiguration": {
-          "displayName": "Compose Preview",
-          "pluginData": {
-            "pluginIdString": "com.android.tools.design",
-            "nullablePluginName": "Android Design Tools",
-            "isBundled": true
+        &quot;ComposePreviewRunConfiguration&quot;: {
+          &quot;displayName&quot;: &quot;Compose Preview&quot;,
+          &quot;pluginData&quot;: {
+            &quot;pluginIdString&quot;: &quot;com.android.tools.design&quot;,
+            &quot;nullablePluginName&quot;: &quot;Android Design Tools&quot;,
+            &quot;isBundled&quot;: true
           }
         }
       }
     }
   }
-}]]></component>
+}</component>
 </application>

@@ -24,7 +24,7 @@ use lapce_rpc::proxy::ProxyRpcHandler;
 
 /// Detected tool info
 #[derive(Clone, Debug)]
-struct DetectedTool {
+pub struct DetectedTool {
     name: String,
     suggested_version: String,
     reason: String,
@@ -34,19 +34,25 @@ struct DetectedTool {
 
 /// SDK Manager state
 #[derive(Clone)]
-struct SdkManagerData {
-    scope: Scope,
-    proto_installed: RwSignal<Option<bool>>,
-    proto_version: RwSignal<Option<String>>,
-    installed_tools: RwSignal<Vec<ProtoToolInfo>>,
-    detected_tools: RwSignal<Vec<DetectedTool>>,
-    loading: RwSignal<bool>,
-    error: RwSignal<Option<String>>,
-    install_message: RwSignal<Option<String>>,
+pub struct SdkManagerData {
+    pub scope: Scope,
+    pub proto_installed: RwSignal<Option<bool>>,
+    pub proto_version: RwSignal<Option<String>>,
+    pub installed_tools: RwSignal<Vec<ProtoToolInfo>>,
+    pub detected_tools: RwSignal<Vec<DetectedTool>>,
+    pub loading: RwSignal<bool>,
+    pub error: RwSignal<Option<String>>,
+    pub install_message: RwSignal<Option<String>>,
+    pub installing: RwSignal<im::HashMap<String, ToolInstallInfo>>,
+}
+
+#[derive(Clone)]
+pub struct ToolInstallInfo {
+    pub progress: RwSignal<f64>,
 }
 
 impl SdkManagerData {
-    fn new(cx: Scope) -> Self {
+    pub fn new(cx: Scope) -> Self {
         Self {
             scope: cx,
             proto_installed: cx.create_rw_signal(None),
@@ -56,6 +62,7 @@ impl SdkManagerData {
             loading: cx.create_rw_signal(true),
             error: cx.create_rw_signal(None),
             install_message: cx.create_rw_signal(None),
+            installing: cx.create_rw_signal(im::HashMap::new()),
         }
     }
 }
@@ -69,6 +76,7 @@ pub fn sdk_panel(
     let common = window_tab_data.common.clone();
     
     let sdk_data = SdkManagerData::new(scope);
+    window_tab_data.panel.sdk_data.set(Some(sdk_data.clone()));
     
     // Fetch proto status on panel load
     fetch_proto_status(scope, common.clone(), sdk_data.clone());

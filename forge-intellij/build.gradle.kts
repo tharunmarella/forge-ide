@@ -15,8 +15,10 @@ repositories {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-gradle-intellij-plugin.html
 intellij {
     version.set("2023.2.5")
-    type.set("IC") // IntelliJ IDEA Community Edition
-    plugins.set(listOf("java", "Git4Idea"))
+    type.set("IC") // IntelliJ IDEA Community Edition (base for all JetBrains IDEs)
+    // Git4Idea is available in all JetBrains IDEs
+    // Java plugin is needed for optional Java features
+    plugins.set(listOf("Git4Idea", "java"))
 }
 
 dependencies {

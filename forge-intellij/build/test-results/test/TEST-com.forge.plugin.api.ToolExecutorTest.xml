@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.forge.plugin.api.ToolExecutorTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-03-02T05:12:10" hostname="Mac" time="1.084">
+<testsuite name="com.forge.plugin.api.ToolExecutorTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-03-03T11:29:45" hostname="Mac" time="1.496">
   <properties/>
-  <testcase name="testShowCode" classname="com.forge.plugin.api.ToolExecutorTest" time="1.042"/>
-  <testcase name="testUnknownTool" classname="com.forge.plugin.api.ToolExecutorTest" time="0.022"/>
-  <testcase name="testShowDiagram" classname="com.forge.plugin.api.ToolExecutorTest" time="0.02"/>
+  <testcase name="testShowCode" classname="com.forge.plugin.api.ToolExecutorTest" time="1.465"/>
+  <testcase name="testUnknownTool" classname="com.forge.plugin.api.ToolExecutorTest" time="0.018"/>
+  <testcase name="testShowDiagram" classname="com.forge.plugin.api.ToolExecutorTest" time="0.013"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[Configuration file for j.u.l.LogManager does not exist: /Users/tharun/.gradle/caches/modules-2/files-2.1/com.jetbrains.intellij.idea/ideaIC/2023.2.5/30e9f22cc3cd8197ba1217cc1aa50a3914a2b873/ideaIC-2023.2.5/test-log.properties
-[    183]   WARN - #c.i.u.n.s.ConfirmingTrustManager - Received an empty list of custom trusted root certificates from the system. Check log above for possible errors, enable debug logging in category 'org.jetbrains.nativecerts' for more information
+[    191]   WARN - #c.i.u.n.s.ConfirmingTrustManager - Received an empty list of custom trusted root certificates from the system. Check log above for possible errors, enable debug logging in category 'org.jetbrains.nativecerts' for more information
 ]]></system-err>
 </testsuite>

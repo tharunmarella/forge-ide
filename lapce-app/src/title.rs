@@ -816,11 +816,15 @@ fn right(
             clickable_icon(
                 || LapceIcons::AI_CHAT,
                 move || {
-                    panel_ai_open.show_panel(&PanelKind::AiChat);
+                    if panel_ai_open.is_panel_visible(&PanelKind::AiChat) {
+                        panel_ai_open.hide_panel(&PanelKind::AiChat);
+                    } else {
+                        panel_ai_open.show_panel(&PanelKind::AiChat);
+                    }
                 },
                 move || panel_ai_open2.is_panel_visible(&PanelKind::AiChat),
                 || false,
-                || "Open AI Assistant",
+                || "Toggle AI Assistant",
                 config,
             )
             .style(move |s| {

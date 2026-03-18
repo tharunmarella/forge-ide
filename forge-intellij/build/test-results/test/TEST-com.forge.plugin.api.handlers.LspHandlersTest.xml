@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.forge.plugin.api.handlers.LspHandlersTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-03-02T05:12:12" hostname="Mac" time="0.519">
+<testsuite name="com.forge.plugin.api.handlers.LspHandlersTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-03-03T11:29:47" hostname="Mac" time="0.525">
   <properties/>
-  <testcase name="testHandleGetDocumentSymbols" classname="com.forge.plugin.api.handlers.LspHandlersTest" time="0.491"/>
-  <testcase name="testHandleLspGoToDefinition" classname="com.forge.plugin.api.handlers.LspHandlersTest" time="0.028"/>
+  <testcase name="testHandleGetDocumentSymbols" classname="com.forge.plugin.api.handlers.LspHandlersTest" time="0.495"/>
+  <testcase name="testHandleLspGoToDefinition" classname="com.forge.plugin.api.handlers.LspHandlersTest" time="0.03"/>
   <system-out><![CDATA[testHandleGetDocumentSymbols result: {"success":true,"result":{"symbols":[{"name":"TestClass","kind":"PsiClassImpl","line":0},{"name":"myField","kind":"PsiFieldImpl","line":1},{"name":"myMethod","kind":"PsiMethodImpl","line":2}]}}
 testHandleLspGoToDefinition result: {"success":true,"result":{"path":"/src/Main.java","line":3,"column":10}}
 ]]></system-out>

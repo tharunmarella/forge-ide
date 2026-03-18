@@ -479,10 +479,9 @@ impl WindowTabData {
                     style.shown = false;
                 }
                 PanelData {
-                    panels: cx.create_rw_signal(panel_order),
+                    panels: cx.create_rw_signal(i.panel.panels.clone()),
                     styles: cx.create_rw_signal(styles),
                     size: cx.create_rw_signal(i.panel.size.clone()),
-                    available_size: panel_available_size,
                     sections: cx.create_rw_signal(
                         i.panel
                             .sections
@@ -490,6 +489,8 @@ impl WindowTabData {
                             .map(|(key, value)| (*key, cx.create_rw_signal(*value)))
                             .collect(),
                     ),
+                    sdk_data: cx.create_rw_signal(None),
+                    available_size: panel_available_size,
                     common: common.clone(),
                 }
             })
@@ -2464,6 +2465,22 @@ impl WindowTabData {
     fn handle_core_notification(&self, rpc: &CoreNotification) {
         let cx = self.scope;
         match rpc {
+            CoreNotification::ProtoInstallProgress {
+                tool,
+                version,
+                progress,
+            } => {
+                if let Some(sdk_data) = self.panel.sdk_data.get_untracked() {
+                    sdk_data.installing.update(|installing| {
+                        installing.insert(
+                            tool.clone(),
+                            crate::panel::sdk_view::ToolInstallInfo {
+                                progress: self.scope.create_rw_signal(*progress),
+                            },
+                        );
+                    });
+                }
+            }
             CoreNotification::ProxyStatus { status } => {
                 self.common.proxy_status.set(Some(status.to_owned()));
             }

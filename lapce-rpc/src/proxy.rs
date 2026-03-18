@@ -704,6 +704,11 @@ pub enum ProxyNotification {
         path: PathBuf,
         breakpoints: Vec<SourceBreakpoint>,
     },
+    ProtoInstallProgress {
+        tool: String,
+        version: String,
+        progress: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

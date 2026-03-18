@@ -99,6 +99,7 @@ pub struct PanelData {
     pub available_size: Memo<Size>,
     pub sections: RwSignal<im::HashMap<PanelSection, RwSignal<bool>>>,
     pub common: Rc<CommonData>,
+    pub sdk_data: RwSignal<Option<crate::panel::sdk_view::SdkManagerData>>,
 }
 
 impl PanelData {
@@ -183,6 +184,7 @@ impl PanelData {
             available_size,
             sections,
             common,
+            sdk_data: cx.create_rw_signal(None),
         }
     }
 
