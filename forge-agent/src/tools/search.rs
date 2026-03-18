@@ -463,6 +463,55 @@ pub async fn glob_search(args: &Value, workdir: &Path) -> ToolResult {
     }
 }
 
+/// Workspace symbols search (fallback when forge-search not available)
+pub async fn workspace_symbols(args: &Value, workdir: &Path) -> ToolResult {
+    let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
+        return ToolResult::err("Missing 'query' parameter");
+    };
+
+    let mut results = Vec::new();
+    let max_results = 50;
+
+    for entry in WalkDir::new(workdir)
+        .max_depth(10)
+        .into_iter()
+        .filter_entry(|e| {
+            let name = e.file_name().to_string_lossy();
+            if e.file_type().is_dir() {
+                return !should_skip_dir(&name);
+            }
+            true
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let file_path = entry.path();
+        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        
+        if let Ok(content) = std::fs::read_to_string(file_path) {
+            let defs = super::code::extract_definitions_regex(&content, ext);
+            for def in defs {
+                if def.to_lowercase().contains(&query.to_lowercase()) {
+                    let rel_path = file_path.strip_prefix(workdir).unwrap_or(file_path);
+                    results.push(format!("{}: {}", rel_path.display(), def));
+                    if results.len() >= max_results {
+                        break;
+                    }
+                }
+            }
+        }
+        if results.len() >= max_results {
+            break;
+        }
+    }
+
+    if results.is_empty() {
+        ToolResult::ok("No symbols found matching query")
+    } else {
+        ToolResult::ok(results.join("\n"))
+    }
+}
+
 // ── Utilities ────────────────────────────────────────────────────
 
 fn truncate_lines(s: &str, max_lines: usize) -> String {

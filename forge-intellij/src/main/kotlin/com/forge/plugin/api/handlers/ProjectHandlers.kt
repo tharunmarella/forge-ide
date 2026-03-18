@@ -68,58 +68,33 @@ object ProjectHandlers {
     }
 
     fun handleProjectSkeleton(project: Project, args: JsonObject): String {
+        val focusPath = args.get("focus_path")?.asString ?: ""
         val view = args.get("view")?.asString ?: "map"
         val basePath = project.basePath ?: return ToolResult.error("Project base path not found")
+        val rootDir = if (focusPath.isNotEmpty()) LocalFileSystem.getInstance().findFileByPath("$basePath/$focusPath") else project.projectFile?.parent
         
-        val result = JsonObject()
-        result.addProperty("project_name", project.name)
-        result.addProperty("base_path", basePath)
+        if (rootDir == null) return ToolResult.error("Root directory not found")
+
+        val skeleton = StringBuilder()
+        buildSkeleton(project, rootDir, skeleton, 0, view == "skeleton")
+        return ToolResult.success(skeleton.toString())
+    }
+
+    private fun buildSkeleton(project: Project, dir: com.intellij.openapi.vfs.VirtualFile, sb: StringBuilder, indent: Int, showSignatures: Boolean) {
+        val prefix = "  ".repeat(indent)
+        sb.append("$prefix${dir.name}/\n")
         
-        val structure = JsonArray()
-        
-        ApplicationManager.getApplication().runReadAction {
-            // Get all source roots
-            val projectRootManager = com.intellij.openapi.roots.ProjectRootManager.getInstance(project)
-            val contentRoots = projectRootManager.contentSourceRoots
-            
-            for (root in contentRoots) {
-                val rootInfo = JsonObject()
-                rootInfo.addProperty("path", root.path.removePrefix("$basePath/"))
-                rootInfo.addProperty("type", "source_root")
-                
-                // Count files and directories
-                var fileCount = 0
-                var dirCount = 0
-                com.intellij.openapi.vfs.VfsUtil.iterateChildrenRecursively(root, null) { file ->
-                    if (file.isDirectory) dirCount++ else fileCount++
-                    true
-                }
-                rootInfo.addProperty("file_count", fileCount)
-                rootInfo.addProperty("dir_count", dirCount)
-                
-                structure.add(rootInfo)
-            }
-            
-            // Get key configuration files
-            val configFiles = listOf(
-                "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
-                "package.json", "Cargo.toml", "go.mod", "requirements.txt", "setup.py",
-                ".gitignore", "README.md", "LICENSE"
-            )
-            
-            val foundConfigs = JsonArray()
-            for (filename in configFiles) {
-                val file = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
-                    .findFileByPath("$basePath/$filename")
-                if (file != null) {
-                    foundConfigs.add(filename)
+        dir.children.forEach { file ->
+            if (file.isDirectory) {
+                buildSkeleton(project, file, sb, indent + 1, showSignatures)
+            } else {
+                sb.append("$prefix  ${file.name}\n")
+                if (showSignatures) {
+                    // In a real plugin, we would use PSI to extract signatures
+                    // For now, we'll just list the file
                 }
             }
-            result.add("config_files", foundConfigs)
         }
-        
-        result.add("structure", structure)
-        return ToolResult.success(result)
     }
 
     fun handleCodebaseSearch(project: Project, args: JsonObject): String {
@@ -145,58 +120,116 @@ object ProjectHandlers {
             val gitRepository = git4idea.repo.GitRepositoryManager.getInstance(project).repositories.firstOrNull()
                 ?: return ToolResult.error("No git repository found")
             
+            val git = git4idea.commands.Git.getInstance()
+            
             when (operation) {
                 "status" -> {
-                    val changeListManager = com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project)
-                    val changes = changeListManager.allChanges
-                    val resultsArray = JsonArray()
-                    changes.forEach { change ->
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.STATUS)
+                    handler.addParameters("--porcelain")
+                    val result = git.runCommand(handler)
+                    if (result.success()) {
                         val obj = JsonObject()
-                        obj.addProperty("path", change.virtualFile?.path?.removePrefix("$basePath/") ?: "")
-                        obj.addProperty("status", change.type.toString())
-                        resultsArray.add(obj)
+                        obj.addProperty("status", result.outputAsJoinedString)
+                        ToolResult.success(obj)
+                    } else {
+                        ToolResult.error(result.errorOutputAsJoinedString)
                     }
-                    val result = JsonObject()
-                    result.add("changes", resultsArray)
-                    ToolResult.success(result)
+                }
+                "stage" -> {
+                    if (paths == null || paths.isEmpty()) return ToolResult.error("Missing 'paths' for stage operation")
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.ADD)
+                    handler.addParameters(paths)
+                    val result = git.runCommand(handler)
+                    if (result.success()) ToolResult.success("Staged ${paths.size} files")
+                    else ToolResult.error(result.errorOutputAsJoinedString)
+                }
+                "unstage" -> {
+                    if (paths == null || paths.isEmpty()) return ToolResult.error("Missing 'paths' for unstage operation")
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.RESET)
+                    handler.addParameters("HEAD")
+                    handler.addParameters(paths)
+                    val result = git.runCommand(handler)
+                    if (result.success()) ToolResult.success("Unstaged ${paths.size} files")
+                    else ToolResult.error(result.errorOutputAsJoinedString)
+                }
+                "commit" -> {
+                    if (message == null) return ToolResult.error("Missing 'message' for commit operation")
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.COMMIT)
+                    handler.addParameters("-m", message)
+                    val result = git.runCommand(handler)
+                    if (result.success()) ToolResult.success("Committed changes")
+                    else ToolResult.error(result.errorOutputAsJoinedString)
+                }
+                "push" -> {
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.PUSH)
+                    val result = git.runCommand(handler)
+                    if (result.success()) ToolResult.success("Pushed changes")
+                    else ToolResult.error(result.errorOutputAsJoinedString)
+                }
+                "pull" -> {
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.PULL)
+                    val result = git.runCommand(handler)
+                    if (result.success()) ToolResult.success("Pulled changes")
+                    else ToolResult.error(result.errorOutputAsJoinedString)
                 }
                 "log" -> {
-                    val commits = mutableListOf<String>()
-                    
-                    ApplicationManager.getApplication().runReadAction {
-                        try {
-                            val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.LOG)
-                            handler.addParameters("-n", limit.toString(), "--oneline")
-                            val result = git4idea.commands.Git.getInstance().runCommand(handler)
-                            commits.addAll(result.output)
-                        } catch (e: Exception) {
-                            // Fallback handled below
-                        }
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.LOG)
+                    handler.addParameters("-n", limit.toString(), "--oneline")
+                    val result = git.runCommand(handler)
+                    if (result.success()) {
+                        val obj = JsonObject()
+                        obj.addProperty("log", result.outputAsJoinedString)
+                        ToolResult.success(obj)
+                    } else {
+                        ToolResult.error(result.errorOutputAsJoinedString)
                     }
-                    
-                    val result = JsonObject()
-                    result.addProperty("log", commits.joinToString("\n"))
-                    ToolResult.success(result)
                 }
                 "branch" -> {
                     when (action) {
                         "list" -> {
-                            val branches = gitRepository.branches
-                            val result = JsonObject()
-                            val branchArray = JsonArray()
-                            branches.localBranches.forEach { branch -> 
-                                branchArray.add(branch.name)
+                            val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.BRANCH)
+                            val result = git.runCommand(handler)
+                            if (result.success()) {
+                                val obj = JsonObject()
+                                obj.addProperty("branches", result.outputAsJoinedString)
+                                ToolResult.success(obj)
+                            } else {
+                                ToolResult.error(result.errorOutputAsJoinedString)
                             }
-                            result.add("branches", branchArray)
-                            result.addProperty("current", gitRepository.currentBranch?.name ?: "")
-                            ToolResult.success(result)
                         }
-                        else -> ToolResult.error("Git branch operation '$action' not fully implemented via IntelliJ API")
+                        "create" -> {
+                            if (name == null) return ToolResult.error("Missing 'name' for branch create")
+                            val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.CHECKOUT)
+                            handler.addParameters("-b", name)
+                            val result = git.runCommand(handler)
+                            if (result.success()) ToolResult.success("Created and switched to branch $name")
+                            else ToolResult.error(result.errorOutputAsJoinedString)
+                        }
+                        "switch" -> {
+                            if (name == null) return ToolResult.error("Missing 'name' for branch switch")
+                            val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.CHECKOUT)
+                            handler.addParameters(name)
+                            val result = git.runCommand(handler)
+                            if (result.success()) ToolResult.success("Switched to branch $name")
+                            else ToolResult.error(result.errorOutputAsJoinedString)
+                        }
+                        else -> ToolResult.error("Unknown branch action: $action")
                     }
                 }
-                else -> {
-                    ToolResult.error("Git operation '$operation' not fully implemented via IntelliJ API. Requires further work.")
+                "diff" -> {
+                    val handler = git4idea.commands.GitLineHandler(project, gitRepository.root, git4idea.commands.GitCommand.DIFF)
+                    if (staged) handler.addParameters("--cached")
+                    if (path != null) handler.addParameters(path)
+                    val result = git.runCommand(handler)
+                    if (result.success()) {
+                        val obj = JsonObject()
+                        obj.addProperty("diff", result.outputAsJoinedString)
+                        ToolResult.success(obj)
+                    } else {
+                        ToolResult.error(result.errorOutputAsJoinedString)
+                    }
                 }
+                else -> ToolResult.error("Unknown git operation: $operation")
             }
         } catch (e: Exception) {
             ToolResult.error("Git operation failed: ${e.message}")

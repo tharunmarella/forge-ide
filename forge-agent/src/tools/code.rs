@@ -260,7 +260,7 @@ pub async fn find_references(args: &Value, workdir: &Path) -> ToolResult {
 }
 
 /// Extract definitions from source code (regex fallback)
-fn extract_definitions_regex(content: &str, ext: &str) -> Vec<String> {
+pub(super) fn extract_definitions_regex(content: &str, ext: &str) -> Vec<String> {
     let mut defs = Vec::new();
 
     let patterns: Vec<(&str, &str)> = match ext {

@@ -145,3 +145,71 @@ pub async fn lsp_rename(
         Err(e) => ToolResult::err(format!("LSP rename failed: {e}")),
     }
 }
+
+/// Search for symbols in the workspace using LSP.
+pub async fn workspace_symbols(
+    args: &Value,
+    _workdir: &Path,
+    bridge: &dyn ProxyBridge,
+) -> ToolResult {
+    let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
+        return ToolResult::err("Missing 'query' parameter");
+    };
+
+    match bridge.workspace_symbols(query).await {
+        Ok(symbols) => {
+            if symbols.is_empty() {
+                ToolResult::ok("No symbols found")
+            } else {
+                let mut output = String::from("Found symbols:\n");
+                for (i, sym) in symbols.iter().enumerate() {
+                    if i >= 20 {
+                        output.push_str(&format!("... and {} more\n", symbols.len() - 20));
+                        break;
+                    }
+                    output.push_str(&format!(
+                        "- {} ({}) line {}\n",
+                        sym.name,
+                        sym.kind,
+                        sym.start_line,
+                    ));
+                }
+                ToolResult::ok(output)
+            }
+        }
+        Err(e) => ToolResult::err(format!("LSP workspace-symbols failed: {e}")),
+    }
+}
+
+/// Get diagnostics for a file using LSP.
+pub async fn get_diagnostics(
+    args: &Value,
+    workdir: &Path,
+    bridge: &dyn ProxyBridge,
+) -> ToolResult {
+    let Some(path_str) = args.get("path").and_then(|v| v.as_str()) else {
+        return ToolResult::err("Missing 'path' parameter");
+    };
+
+    let path = workdir.join(path_str);
+    match bridge.get_diagnostics(&path).await {
+        Ok(diagnostics) => {
+            if diagnostics.is_empty() {
+                ToolResult::ok("No diagnostics found")
+            } else {
+                let mut output = String::from("Diagnostics:\n");
+                for diag in diagnostics {
+                    output.push_str(&format!(
+                        "- [{:?}] {}:{} - {}\n",
+                        diag.severity,
+                        diag.line,
+                        diag.column,
+                        diag.message
+                    ));
+                }
+                ToolResult::ok(output)
+            }
+        }
+        Err(e) => ToolResult::err(format!("LSP get-diagnostics failed: {e}")),
+    }
+}

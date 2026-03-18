@@ -74,6 +74,7 @@ pub enum Tool {
 
     // Web
     Fetch,          // fetch(url_or_query) — was fetch_webpage
+    WorkspaceSymbols, // workspace_symbols(query)
 
     // ── Legacy aliases (kept for backward compatibility) ──────────
     ExecuteCommand,
@@ -132,6 +133,8 @@ impl Tool {
             Self::Git => "git",
             Self::SdkManager => "sdk_manager",
             Self::Fetch => "fetch",
+            Self::WorkspaceSymbols => "workspace_symbols",
+
             // Legacy aliases
             Self::ExecuteCommand => "execute_command",
             Self::WriteToFile => "write_to_file",
@@ -185,7 +188,8 @@ impl Tool {
             "stop_project" => Some(Self::StopProject),
             "git"          => Some(Self::Git),
             "sdk_manager"  => Some(Self::SdkManager),
-            "fetch"        => Some(Self::Fetch),
+            "fetch"             => Some(Self::Fetch),
+            "workspace_symbols" => Some(Self::WorkspaceSymbols),
             // Legacy aliases
             "execute_command"          => Some(Self::ExecuteCommand),
             "write_to_file"            => Some(Self::WriteToFile),
@@ -428,6 +432,7 @@ pub async fn execute_with_options(tool: &ToolCall, workdir: &Path, opts: &Execut
         Tool::Git => git::git(&tool.arguments, workdir).await,
         Tool::SdkManager => sdk_manager::sdk_manager(&tool.arguments, workdir).await,
         Tool::Fetch => web::fetch_webpage(&tool.arguments).await,
+        Tool::WorkspaceSymbols => search::workspace_symbols(&tool.arguments, workdir).await,
 
         // ── Legacy aliases (map to same implementations) ──────────────────
         Tool::ExecuteCommand => execute::run(&tool.arguments, workdir).await,
@@ -791,10 +796,35 @@ pub fn definitions(plan_mode: bool) -> Vec<Value> {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "File or directory to check. For directories, runs the appropriate build tool (cargo check, tsc, etc.)" },
-                    "fix": { "type": "boolean", "description": "If true, attempt to auto-fix issues (when supported by the linter)" }
+                    "path": { "type": "string", "description": "File or directory to check. For directories, runs the appropriate build tool (cargo check, tsc, etc.)" }
                 },
                 "required": ["path"]
+            }
+        }),
+        serde_json::json!({
+            "name": "lsp",
+            "description": "Language server operations — 100% accurate code intelligence from the IDE's LSP client. Actions: definition (jump to exact definition), references (find all usages), hover (get type info and docs), rename (atomically rename symbol everywhere).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["definition", "references", "hover", "rename"], "description": "LSP action to perform" },
+                    "path": { "type": "string", "description": "File path (relative to workspace root)" },
+                    "line": { "type": "integer", "description": "1-indexed line number" },
+                    "column": { "type": "integer", "description": "1-indexed column number" },
+                    "new_name": { "type": "string", "description": "New identifier name (for rename action only)" }
+                },
+                "required": ["action", "path", "line", "column"]
+            }
+        }),
+        serde_json::json!({
+            "name": "workspace_symbols",
+            "description": "Search for symbols (functions, classes, variables) across the entire workspace using LSP.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Symbol name or partial name to search for" }
+                },
+                "required": ["query"]
             }
         }),
         serde_json::json!({

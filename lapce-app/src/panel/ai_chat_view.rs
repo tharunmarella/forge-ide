@@ -1017,8 +1017,10 @@ fn message_bubble(
                                             img(move || png_data.clone())
                                                 .style(move |s| {
                                                     let config = config.get();
-                                                    // IMPORTANT: Images must constrain to 100% of panel width so they don't overflow
-                                                    s.width_pct(100.0)
+                                                    // max_width: scroll containers give unconstrained horizontal space,
+                                                    // so width_pct(100) = infinity. Use panel_width explicitly.
+                                                    let w = (panel_width.get() as f32 - 60.0).max(80.0);
+                                                    s.max_width(w)
                                                         .min_height(80.0)
                                                         .padding(8.0)
                                                         .border_radius(6.0)
@@ -1031,7 +1033,7 @@ fn message_bubble(
                                                         )
                                                 }),
                                         )
-                                        .style(|s| s.width_pct(100.0).max_width_pct(100.0).margin_vert(6.0))
+                                        .style(|s| s.min_width(0.0).margin_vert(6.0))
                                         .into_any()
                                     }
                                 } else {
@@ -1073,9 +1075,7 @@ fn message_bubble(
         let config = config.get();
         s.padding_horiz(10.0)
             .padding_vert(6.0)
-            .width_pct(100.0)
             .min_width(0.0)
-            .max_width_pct(100.0)
             .margin_horiz(8.0)
             .border_bottom(1.0)
             .border_color(
@@ -1231,7 +1231,6 @@ fn file_tool_card(
             .padding_vert(6.0)
             .margin_horiz(8.0)
             .margin_vert(2.0)
-            .width_pct(100.0)
             .min_width(0.0)
             .border_radius(6.0)
             .border(1.0)
@@ -1888,7 +1887,7 @@ fn tool_call_card(
                             let diagram = mermaid_diagram.clone();
                             let diagram_title = mermaid_title.clone();
                             
-                            let image_data = floem::reactive::create_rw_signal(None::<Vec<u8>>);
+                            let svg_data = floem::reactive::create_rw_signal(None::<Vec<u8>>);
                             let fetch_started = floem::reactive::create_rw_signal(false);
                             
                             container(
@@ -1905,37 +1904,79 @@ fn tool_call_card(
                                                 .apply_if(diagram_title.is_none(), |s| s.hide())
                                         })
                                     },
-                                    // Diagram preview (fetches from mermaid.ink natively)
+                                    // Diagram preview (fetches PNG from mermaid.ink with local cache)
                                     {
                                         let diag = diagram.clone();
                                         let diag_click = diagram.clone();
                                         
-                                        // Start fetch on first render
+                                        // Start fetch/load on first render
                                         if let Some(d) = diag {
                                             if !fetch_started.get_untracked() {
                                                 fetch_started.set(true);
                                                 
-                                                let ext_action = floem::ext_event::create_ext_action(floem::reactive::Scope::new(), move |bytes: Vec<u8>| {
-                                                    image_data.set(Some(bytes));
-                                                });
+                                                // Use the current reactive scope so the callback
+                                                // is tied to the UI event loop (not a detached scope).
+                                                let ext_action = floem::ext_event::create_ext_action(
+                                                    floem::reactive::Scope::current(),
+                                                    move |bytes: Vec<u8>| {
+                                                        svg_data.set(Some(bytes));
+                                                    }
+                                                );
                                                 
                                                 std::thread::spawn(move || {
-                                                    use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+                                                    use base64::{Engine as _, engine::general_purpose::STANDARD};
+                                                    use std::hash::{Hash, Hasher};
+                                                    
+                                                    // 1. Cache key = hash of source
+                                                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                                    d.hash(&mut hasher);
+                                                    let cache_key = hasher.finish();
+                                                    
+                                                    // 2. Local disk cache — instant on repeat renders
+                                                    let cache_dir = directories::ProjectDirs::from("dev", "lapce", "Forge-IDE")
+                                                        .map(|p| p.cache_dir().join("mermaid"));
+                                                    
+                                                    if let Some(ref dir) = cache_dir {
+                                                        let _ = std::fs::create_dir_all(dir);
+                                                        let cache_path = dir.join(format!("{}.png", cache_key));
+                                                        if let Ok(cached) = std::fs::read(&cache_path) {
+                                                            ext_action(cached);
+                                                            return;
+                                                        }
+                                                    }
+                                                    
+                                                    // 3. Fetch PNG from mermaid.ink
+                                                    // Standard base64 of {"code": "...", "mermaid": {"theme": "dark"}}
                                                     let json = serde_json::json!({
                                                         "code": d,
                                                         "mermaid": {"theme": "dark"}
                                                     });
-                                                    let encoded = URL_SAFE.encode(json.to_string());
+                                                    let encoded = STANDARD.encode(json.to_string());
                                                     let url = format!("https://mermaid.ink/img/{}", encoded);
                                                     
                                                     let client = reqwest::blocking::Client::builder()
+                                                        .timeout(std::time::Duration::from_secs(15))
                                                         .user_agent("Mozilla/5.0")
                                                         .build()
                                                         .unwrap_or_default();
                                                         
-                                                    if let Ok(resp) = client.get(&url).send() {
-                                                        if let Ok(bytes) = resp.bytes() {
-                                                            ext_action(bytes.to_vec());
+                                                    match client.get(&url).send() {
+                                                        Ok(resp) if resp.status().is_success() => {
+                                                            if let Ok(bytes) = resp.bytes() {
+                                                                let bytes = bytes.to_vec();
+                                                                // Persist to cache for offline/instant reuse
+                                                                if let Some(ref dir) = cache_dir {
+                                                                    let cache_path = dir.join(format!("{}.png", cache_key));
+                                                                    let _ = std::fs::write(cache_path, &bytes);
+                                                                }
+                                                                ext_action(bytes);
+                                                            }
+                                                        }
+                                                        Ok(resp) => {
+                                                            eprintln!("[mermaid] HTTP {}: {}", resp.status(), url);
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!("[mermaid] fetch error: {}", e);
                                                         }
                                                     }
                                                 });
@@ -1943,13 +1984,21 @@ fn tool_call_card(
                                         }
                                         
                                         stack((
+                                            // FIX: key must change (0 → 1) when data arrives so Floem
+                                            // tears down the "Rendering..." label and mounts the image.
                                             dyn_stack(
-                                                move || vec![image_data.get()],
-                                                |_| 0,
-                                                move |img_opt| {
-                                                    if let Some(bytes) = img_opt {
-                                                        img(move || bytes.clone())
-                                                            .style(|s| s.width_pct(100.0).border_radius(4.0))
+                                                move || vec![svg_data.get().is_some() as u8],
+                                                |k| *k,
+                                                move |loaded| {
+                                                    if loaded == 1 {
+                                                        img(move || svg_data.get().unwrap_or_default())
+                                                            .style(move |s| {
+                                                                // max_width is needed because scroll containers give children
+                                                                // unconstrained horizontal space, so width_pct(100) = infinity.
+                                                                // Subtract card padding (16px×2) + border (2px) + container margin (8px×2).
+                                                                let w = (panel_width.get() as f32 - 66.0).max(100.0);
+                                                                s.max_width(w).border_radius(4.0)
+                                                            })
                                                             .into_any()
                                                     } else {
                                                         label(|| "⏳ Rendering diagram...".to_string())
@@ -2054,7 +2103,6 @@ fn tool_call_card(
             .padding_vert(6.0)
             .margin_horiz(8.0)
             .margin_vert(2.0)
-            .width_pct(100.0)
             .min_width(0.0)
             .border(1.0)
             .border_color(
@@ -2121,7 +2169,6 @@ fn thinking_step_view(
         s.padding_horiz(8.0)
             .padding_vert(3.0)
             .margin_horiz(8.0)
-            .width_pct(100.0)
             .min_width(0.0)
             .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.3))
     })
@@ -2159,7 +2206,6 @@ fn plan_view(
         s.padding(8.0)
             .margin_horiz(8.0)
             .margin_vert(4.0)
-            .width_pct(100.0)
             .min_width(0.0)
             .border(1.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.5))
@@ -2295,7 +2341,6 @@ fn server_tool_call_view(
             .padding_vert(4.0)
             .margin_horiz(8.0)
             .margin_vert(1.0)
-            .width_pct(100.0)
             .min_width(0.0)
             .border(1.0)
             .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.4))
@@ -2386,7 +2431,7 @@ fn chat_input_area(
         let has_images = !attached_images.get().is_empty();
         s.flex_row()
             .padding(4.0)
-            .width_pct(100.0)
+            .min_width(0.0)
             .margin_horiz(8.0)
             .apply_if(!has_images, |s| s.hide())
     });
@@ -2536,7 +2581,7 @@ fn chat_input_area(
     ))
     .style(move |s| {
         let config = config.get();
-        s.width_pct(100.0)
+        s.min_width(0.0)
             .height(36.0)
             .items_center()
             .margin_horiz(8.0)

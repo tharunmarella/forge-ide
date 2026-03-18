@@ -4817,6 +4817,7 @@ dependencies = [
  "cpal",
  "criterion",
  "crossbeam-channel",
+ "directories 4.0.1",
  "dirs 5.0.1",
  "dmg",
  "flate2",

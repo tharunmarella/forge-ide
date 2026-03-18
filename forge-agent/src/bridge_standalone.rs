@@ -173,6 +173,11 @@ impl ProxyBridge for StandaloneBridge {
         Ok(Vec::new())
     }
 
+    async fn workspace_symbols(&self, _query: &str) -> Result<Vec<DocSymbol>> {
+        // TODO: Wire to proxy LSP
+        Ok(Vec::new())
+    }
+
     async fn rename_symbol(
         &self,
         _path: &Path,

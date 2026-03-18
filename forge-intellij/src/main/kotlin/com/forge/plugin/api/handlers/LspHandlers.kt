@@ -125,7 +125,12 @@ object LspHandlers {
             try {
                 val virtualFile = findVirtualFile(project, basePath, path) ?: return@runReadAction
                 val document = FileDocumentManager.getInstance().getDocument(virtualFile) ?: return@runReadAction
-                val offset = document.getLineStartOffset(line) + column
+                
+                // Ensure line/column are within bounds
+                if (line < 1 || line > document.lineCount) return@runReadAction
+                val lineStart = document.getLineStartOffset(line - 1)
+                val lineEnd = document.getLineEndOffset(line - 1)
+                val offset = (lineStart + column - 1).coerceIn(lineStart, lineEnd)
 
                 val psiFile = PsiManager.getInstance(project).findFile(virtualFile) ?: return@runReadAction
                 val element = psiFile.findElementAt(offset) ?: return@runReadAction
@@ -139,8 +144,8 @@ object LspHandlers {
 
                 val res = JsonObject()
                 res.addProperty("path", targetFile.path.removePrefix("$basePath/"))
-                res.addProperty("line", targetLine)
-                res.addProperty("column", targetCol)
+                res.addProperty("line", targetLine + 1) // 1-indexed for this IDE
+                res.addProperty("column", targetCol + 1) // 1-indexed for this IDE
                 resultJson = ToolResult.success(res)
             } catch (e: Exception) {
                 resultJson = ToolResult.error("GoTo definition exception: ${e.message}")
@@ -161,7 +166,9 @@ object LspHandlers {
             try {
                 val virtualFile = findVirtualFile(project, basePath, path) ?: return@runReadAction
                 val document = FileDocumentManager.getInstance().getDocument(virtualFile) ?: return@runReadAction
-                val offset = document.getLineStartOffset(line) + column
+                
+                if (line < 1 || line > document.lineCount) return@runReadAction
+                val offset = document.getLineStartOffset(line - 1) + column - 1
 
                 val psiFile = PsiManager.getInstance(project).findFile(virtualFile) ?: return@runReadAction
                 val element = psiFile.findElementAt(offset) ?: return@runReadAction
@@ -180,8 +187,8 @@ object LspHandlers {
 
                     val refObj = JsonObject()
                     refObj.addProperty("path", refFile.path.removePrefix("$basePath/"))
-                    refObj.addProperty("line", refLine)
-                    refObj.addProperty("column", refCol)
+                    refObj.addProperty("line", refLine + 1)
+                    refObj.addProperty("column", refCol + 1)
                     resultsArray.add(refObj)
                 }
 
@@ -208,7 +215,9 @@ object LspHandlers {
             try {
                 val virtualFile = findVirtualFile(project, basePath, path) ?: return@invokeAndWait
                 val document = FileDocumentManager.getInstance().getDocument(virtualFile) ?: return@invokeAndWait
-                val offset = document.getLineStartOffset(line) + column
+                
+                if (line < 1 || line > document.lineCount) return@invokeAndWait
+                val offset = document.getLineStartOffset(line - 1) + column - 1
 
                 val psiFile = PsiManager.getInstance(project).findFile(virtualFile) ?: return@invokeAndWait
                 val element = psiFile.findElementAt(offset) ?: return@invokeAndWait
@@ -240,13 +249,15 @@ object LspHandlers {
                 val psiFile = PsiManager.getInstance(project).findFile(virtualFile) ?: return@runReadAction
                 val document = FileDocumentManager.getInstance().getDocument(virtualFile) ?: return@runReadAction
 
-                val offset = document.getLineStartOffset(line) + column
+                if (line < 1 || line > document.lineCount) return@runReadAction
+                val offset = document.getLineStartOffset(line - 1) + column - 1
                 val element = psiFile.findElementAt(offset) ?: return@runReadAction
 
                 val docManager = com.intellij.codeInsight.documentation.DocumentationManager.getInstance(project)
                 val targetElement = docManager.findTargetElement(null, offset, psiFile, element) ?: element
                 
-                val doc = docManager.generateDocumentation(targetElement, element, false)
+                val provider = com.intellij.lang.documentation.DocumentationProvider.providers.firstOrNull { it.generateDoc(targetElement, element) != null }
+                val doc = provider?.generateDoc(targetElement, element) ?: docManager.generateDocumentation(targetElement, element, false)
                 
                 if (doc != null) {
                     val finalObj = JsonObject()

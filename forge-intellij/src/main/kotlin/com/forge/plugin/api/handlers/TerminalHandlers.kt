@@ -115,7 +115,7 @@ object TerminalHandlers {
         val pid = args.get("pid")?.asLong ?: return ToolResult.error("Missing 'pid' argument")
         val output = processOutputs[pid] ?: return ToolResult.error("No output found for process $pid")
         
-        val tailLines = args.get("tail_lines")?.asInt ?: 100
+        val tailLines = args.get("lines")?.asInt ?: 100
         val lines = output.toString().lines()
         val tail = if (lines.size > tailLines) lines.takeLast(tailLines).joinToString("\n") else output.toString()
         
@@ -172,6 +172,7 @@ object TerminalHandlers {
     fun handleRunProject(project: Project, args: JsonObject): String {
         val configName = args.get("config_name")?.asString
         val command = args.get("command")?.asString
+        val background = args.get("background")?.asBoolean ?: false
         
         if (configName == null && command == null) {
             return ToolResult.error("Missing 'config_name' or 'command' argument")
@@ -187,8 +188,39 @@ object TerminalHandlers {
             val setting = runManager.allSettings.find { it.name == configName }
                 ?: return ToolResult.error("Run configuration '$configName' not found")
             
-            com.intellij.execution.ProgramRunnerUtil.executeConfiguration(setting, com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance())
-            ToolResult.success("Started run configuration '$configName'")
+            if (background) {
+                val executor = com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance()
+                val runner = com.intellij.execution.runners.ProgramRunner.getRunner(executor.id, setting.configuration)
+                    ?: return ToolResult.error("No runner found for configuration '$configName'")
+                
+                val environment = com.intellij.execution.runners.ExecutionEnvironmentBuilder(project, executor)
+                    .runProfile(setting.configuration)
+                    .build()
+                
+                val pid = nextPid.incrementAndGet()
+                val output = StringBuilder()
+                processOutputs[pid] = output
+                
+                runner.execute(environment) { descriptor ->
+                    val handler = descriptor.processHandler
+                    if (handler != null) {
+                        backgroundProcesses[pid] = handler as OSProcessHandler
+                        handler.addProcessListener(object : ProcessAdapter() {
+                            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                                output.append(event.text)
+                            }
+                        })
+                    }
+                }
+                
+                val result = JsonObject()
+                result.addProperty("pid", pid)
+                result.addProperty("config_name", configName)
+                ToolResult.success(result)
+            } else {
+                com.intellij.execution.ProgramRunnerUtil.executeConfiguration(setting, com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance())
+                ToolResult.success("Started run configuration '$configName'")
+            }
         } catch (e: Exception) {
             ToolResult.error("Failed to run project: ${e.message}")
         }
@@ -208,8 +240,14 @@ object TerminalHandlers {
         return ToolResult.success(result)
     }
 
+    fun handleGrep(project: Project, args: JsonObject): String {
+        // Note: grep is already properly implemented in FileHandlers using IntelliJ APIs.
+        // Delegate to FileHandlers for consistency.
+        return FileHandlers.handleGrep(project, args)
+    }
+
     fun handleCheckPort(project: Project, args: JsonObject): String {
-        val port = args.get("port")?.asInt ?: return ToolResult.error("Missing 'port' argument")
+        val port = args.get("port_num")?.asInt ?: return ToolResult.error("Missing 'port_num' argument")
         return try {
             java.net.ServerSocket(port).use {
                 ToolResult.success(mapOf("port" to port, "status" to "available"))
@@ -220,7 +258,7 @@ object TerminalHandlers {
     }
 
     fun handleWaitForPort(project: Project, args: JsonObject): String {
-        val port = args.get("port")?.asInt ?: return ToolResult.error("Missing 'port' argument")
+        val port = args.get("port_num")?.asInt ?: return ToolResult.error("Missing 'port_num' argument")
         val timeout = args.get("timeout")?.asLong ?: 30
         val start = System.currentTimeMillis()
         
@@ -235,7 +273,7 @@ object TerminalHandlers {
     }
 
     fun handleKillPort(project: Project, args: JsonObject): String {
-        val port = args.get("port")?.asInt ?: return ToolResult.error("Missing 'port' argument")
+        val port = args.get("port_num")?.asInt ?: return ToolResult.error("Missing 'port_num' argument")
         val cmd = if (System.getProperty("os.name").lowercase().contains("win")) {
             "for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :$port') do taskkill /f /pid %a"
         } else {
@@ -244,19 +282,14 @@ object TerminalHandlers {
         return handleExecuteCommand(project, JsonObject().apply { addProperty("command", cmd) })
     }
 
-    fun handleGrep(project: Project, args: JsonObject): String {
-        // Note: grep is already properly implemented in FileHandlers using IntelliJ APIs.
-        // Delegate to FileHandlers for consistency.
-        return FileHandlers.handleGrep(project, args)
-    }
-
     fun handleFetchWebpage(project: Project, args: JsonObject): String {
-        val url = args.get("url")?.asString ?: return ToolResult.error("Missing 'url' argument")
+        val urlOrQuery = args.get("url_or_query")?.asString ?: return ToolResult.error("Missing 'url_or_query' argument")
         
         return try {
-            val content = com.intellij.util.io.HttpRequests.request(url)
-                .connectTimeout(5000)
-                .readTimeout(5000)
+            val content = com.intellij.util.io.HttpRequests.request(urlOrQuery)
+                .userAgent("Forge-IDE/1.0")
+                .connectTimeout(10000)
+                .readTimeout(10000)
                 .readString()
             
             val result = JsonObject()
@@ -273,16 +306,31 @@ object TerminalHandlers {
         val operation = args.get("operation")?.asString ?: return ToolResult.error("Missing 'operation' argument")
         val tool = args.get("tool")?.asString ?: ""
         val version = args.get("version")?.asString ?: "latest"
+        val pin = args.get("pin")?.asBoolean ?: true
         
         return try {
             val cmd = when (operation) {
-                "install" -> "proto install $tool $version"
-                "list_installed" -> "proto list"
-                "list_available" -> "proto list-remote $tool"
+                "install" -> {
+                    if (tool.isEmpty()) return ToolResult.error("Missing 'tool' parameter for install operation")
+                    if (version != "latest" && version.isNotEmpty()) {
+                        "proto install $tool $version ${if (pin) "--pin" else ""}"
+                    } else {
+                        "proto install $tool ${if (pin) "--pin" else ""}"
+                    }
+                }
+                "list_installed" -> "proto plugin list --versions"
+                "list_available" -> if (tool.isNotEmpty()) "proto plugin list $tool" else "proto plugin list"
                 "detect_project" -> "proto use"
-                "uninstall" -> "proto uninstall $tool $version"
-                "versions" -> "proto list-remote $tool"
-                else -> return ToolResult.error("Unsupported SDK operation: $operation")
+                "uninstall" -> {
+                    if (tool.isEmpty()) return ToolResult.error("Missing 'tool' parameter for uninstall operation")
+                    if (version.isEmpty()) return ToolResult.error("Missing 'version' parameter for uninstall operation")
+                    "proto uninstall $tool $version"
+                }
+                "versions" -> {
+                    if (tool.isEmpty()) return ToolResult.error("Missing 'tool' parameter for versions operation")
+                    "proto versions $tool"
+                }
+                else -> return ToolResult.error("Unsupported SDK operation: $operation. Valid operations: install, list_installed, list_available, detect_project, uninstall, versions")
             }
             
             handleExecuteCommand(project, JsonObject().apply { addProperty("command", cmd) })

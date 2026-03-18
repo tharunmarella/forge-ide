@@ -177,6 +177,9 @@ pub trait ProxyBridge: Send + Sync {
     /// Get diagnostics for a file.
     async fn get_diagnostics(&self, path: &Path) -> Result<Vec<LspDiagnostic>>;
 
+    /// Search for symbols in the workspace.
+    async fn workspace_symbols(&self, query: &str) -> Result<Vec<DocSymbol>>;
+
     /// Rename a symbol.
     async fn rename_symbol(
         &self,
