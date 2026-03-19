@@ -16,6 +16,7 @@ import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 private val LOG = Logger.getInstance(ForgeToolWindowFactory::class.java)
@@ -27,22 +28,19 @@ class ForgeToolWindowFactory : ToolWindowFactory {
         val uiService = project.getService(ForgeUIService::class.java)
         uiService.setBrowser(browser)
 
-        // Dispose the browser when the project closes — prevents a process leak
-        Disposer.register(project as Disposable, Disposable {
-            browser.dispose()
-        })
+        // Dispose the browser when the project closes to prevent resource leaks
+        Disposer.register(project as Disposable, Disposable { browser.dispose() })
 
-        // Load the bundled HTML (vendor/ assets are local — works offline)
-        val htmlContent = javaClass.classLoader
-            .getResourceAsStream("webview/index.html")
-            ?.bufferedReader()?.use { it.readText() }
-        if (htmlContent != null) {
-            browser.loadHTML(htmlContent, "http://forge-local/index.html")
+        // Extract webview assets to a temp dir so relative paths (vendor/*.js)
+        // resolve correctly over file:// — loadHTML with a virtual origin breaks them
+        val webviewDir = extractWebviewResources()
+        if (webviewDir != null) {
+            browser.loadURL("file://${webviewDir.absolutePath}/index.html")
         } else {
-            LOG.error("Could not load webview/index.html from resources")
+            LOG.error("Could not extract webview resources — Forge AI panel will be blank")
         }
 
-        // JS → Kotlin query bridge
+        // JS to Kotlin bridge
         val jsQuery = JBCefJSQuery.create(browser as JBCefBrowser)
         val gson = Gson()
         jsQuery.addHandler { message: String ->
@@ -51,12 +49,12 @@ class ForgeToolWindowFactory : ToolWindowFactory {
                 when (json.get("action")?.asString) {
                     "chat" -> {
                         val text = json.get("text")?.asString ?: ""
-                        val apiService = project.getService(com.forge.plugin.api.ForgeApiService::class.java)
-                        apiService.sendMessage(text)
+                        project.getService(com.forge.plugin.api.ForgeApiService::class.java)
+                            .sendMessage(text)
                     }
                     "stop" -> {
-                        val apiService = project.getService(com.forge.plugin.api.ForgeApiService::class.java)
-                        apiService.cancelStream()
+                        project.getService(com.forge.plugin.api.ForgeApiService::class.java)
+                            .cancelStream()
                     }
                     "auth" -> {
                         val provider = json.get("provider")?.asString ?: "github"
@@ -69,20 +67,12 @@ class ForgeToolWindowFactory : ToolWindowFactory {
             JBCefJSQuery.Response("OK")
         }
 
-        // On page load: inject bridge + check auth on a pooled thread (not the CEF IO thread)
+        // On page load: inject bridge function and check auth on a pooled thread
         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadEnd(cefBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
-                val injectJs = """
-                    window.sendActionToKotlin = function(msg) {
-                        ${jsQuery.inject("msg")}
-                    };
-                """.trimIndent()
+                val injectJs = "window.sendActionToKotlin = function(msg) { ${jsQuery.inject("msg")} };"
                 cefBrowser.executeJavaScript(injectJs, cefBrowser.url, 0)
-
-                // Inject IDE theme colors so the webview respects the active theme
                 injectTheme(cefBrowser)
-
-                // File I/O must not happen on the CEF IO thread — use the platform pool
                 ApplicationManager.getApplication().executeOnPooledThread {
                     checkAuthentication(uiService)
                 }
@@ -93,45 +83,69 @@ class ForgeToolWindowFactory : ToolWindowFactory {
         toolWindow.contentManager.addContent(content)
     }
 
-    /** Inject IDE colors into the webview as CSS variables. */
+    // ── Private helpers ──────────────────────────────────────────────────────
+
+    private fun extractWebviewResources(): File? {
+        return try {
+            val tempDir = File(System.getProperty("java.io.tmpdir"), "forge-webview")
+            val resources = listOf(
+                "webview/index.html",
+                "webview/vendor/marked.min.js",
+                "webview/vendor/highlight.min.js",
+                "webview/vendor/github-dark.min.css",
+                "webview/vendor/mermaid.min.js"
+            )
+            for (resource in resources) {
+                val stream = javaClass.classLoader.getResourceAsStream(resource) ?: continue
+                val target = File(tempDir, resource.removePrefix("webview/"))
+                target.parentFile.mkdirs()
+                stream.use { input -> target.outputStream().use { out -> input.copyTo(out) } }
+            }
+            tempDir
+        } catch (e: Exception) {
+            LOG.error("Failed to extract webview resources", e)
+            null
+        }
+    }
+
     private fun injectTheme(cefBrowser: CefBrowser) {
-        val isDark = com.intellij.ide.ui.LafManager.getInstance().currentLookAndFeel
-            ?.name?.contains("dark", ignoreCase = true) != false
+        val laf = com.intellij.ide.ui.LafManager.getInstance().currentLookAndFeel
+        val isDark = laf?.name?.contains("dark", ignoreCase = true) != false
         val bg     = com.intellij.util.ui.UIUtil.getPanelBackground()
         val fg     = com.intellij.util.ui.UIUtil.getLabelForeground()
         val border = com.intellij.ui.JBColor.border()
+        val codeBg = if (isDark) "#1e1f22" else "#f4f4f4"
 
         fun rgb(c: java.awt.Color) = "rgb(${c.red},${c.green},${c.blue})"
 
-        val varsJson = buildString {
-            append("{")
-            append("\"bg-primary\":\"${rgb(bg)}\",")
-            append("\"bg-secondary\":\"${rgb(bg.darker())}\",")
-            append("\"bg-tertiary\":\"${rgb(bg.darker().darker())}\",")
-            append("\"text-primary\":\"${rgb(fg)}\",")
-            append("\"border-color\":\"${rgb(border)}\",")
-            append("\"code-bg\":\"${if (isDark) "#1e1f22" else "#f4f4f4"}\",")
-            append("\"code-border\":\"${rgb(border)}\"")
-            append("}")
-        }
+        val vars = mapOf(
+            "bg-primary"   to rgb(bg),
+            "bg-secondary" to rgb(bg.darker()),
+            "bg-tertiary"  to rgb(bg.darker().darker()),
+            "text-primary" to rgb(fg),
+            "border-color" to rgb(border),
+            "code-bg"      to codeBg,
+            "code-border"  to rgb(border)
+        )
+        val json = Gson().toJson(vars)
         cefBrowser.executeJavaScript(
-            "if(window.applyTheme) window.applyTheme($varsJson);",
+            "if(window.applyTheme) window.applyTheme($json);",
             cefBrowser.url, 0
         )
     }
 
     private fun checkAuthentication(uiService: ForgeUIService) {
-        val userHome = System.getProperty("user.home")
+        val home = System.getProperty("user.home")
         val authFiles = listOf(
-            java.io.File(userHome, ".config/forge-ide/forge-auth.json"),
-            java.io.File(userHome, "Library/Application Support/dev.lapce.Lapce-Nightly/forge-auth.json"),
-            java.io.File(userHome, ".config/dev.lapce.Lapce-Nightly/forge-auth.json")
+            File(home, ".config/forge-ide/forge-auth.json"),
+            File(home, "Library/Application Support/dev.lapce.Lapce-Nightly/forge-auth.json"),
+            File(home, ".config/dev.lapce.Lapce-Nightly/forge-auth.json")
         )
         val isAuthenticated = authFiles.any { it.exists() }
         uiService.postMessage(Gson().toJson(mapOf(
-            "type" to "auth_status",
+            "type"       to "auth_status",
             "show_login" to !isAuthenticated,
-            "message" to "Sign in to continue"
+            "message"    to "Sign in to continue"
         )))
     }
 
@@ -145,40 +159,36 @@ class ForgeToolWindowFactory : ToolWindowFactory {
         try {
             java.awt.Desktop.getDesktop().browse(java.net.URI(authUrl))
         } catch (e: Exception) {
-            // Use IntelliJ's dialog API (with proper parent) instead of JOptionPane(null)
             ApplicationManager.getApplication().invokeLater {
-                Messages.showErrorDialog(project, "Failed to open browser: ${e.message}", "Authentication Error")
+                Messages.showErrorDialog(project, "Failed to open browser: ${e.message}", "Auth Error")
             }
             return
         }
 
         uiService.postMessage(Gson().toJson(mapOf(
-            "type" to "auth_status",
+            "type"       to "auth_status",
             "show_login" to true,
-            "message" to "Waiting for authentication… (complete sign-in in your browser)"
+            "message"    to "Waiting for authentication in browser..."
         )))
 
-        // Use the platform thread pool (not raw Thread) so the IDE can cancel on shutdown
         val cancelled = AtomicBoolean(false)
         ApplicationManager.getApplication().executeOnPooledThread {
             var attempts = 0
             var authenticated = false
-
             while (attempts < 60 && !authenticated && !cancelled.get()
                 && !ApplicationManager.getApplication().isDisposed) {
                 Thread.sleep(5000)
                 attempts++
-
                 try {
                     val response = com.intellij.util.io.HttpRequests.request(pollUrl).readString()
                     val json = Gson().fromJson(response, JsonObject::class.java)
-
                     when (json.get("status")?.asString) {
                         "success" -> {
-                            val token = json.get("token")?.asString ?: ""
-                            val email = json.get("email")?.asString ?: ""
-                            val name  = json.get("name")?.asString  ?: ""
-                            saveAuthToken(token, email, name)
+                            saveAuthToken(
+                                json.get("token")?.asString ?: "",
+                                json.get("email")?.asString ?: "",
+                                json.get("name")?.asString  ?: ""
+                            )
                             authenticated = true
                             uiService.postMessage(Gson().toJson(mapOf(
                                 "type" to "auth_status", "show_login" to false
@@ -193,10 +203,9 @@ class ForgeToolWindowFactory : ToolWindowFactory {
                         }
                     }
                 } catch (e: Exception) {
-                    LOG.debug("OAuth poll attempt $attempts failed: ${e.message}")
+                    LOG.debug("OAuth poll $attempts failed: ${e.message}")
                 }
             }
-
             if (!authenticated && !cancelled.get()) {
                 uiService.postMessage(Gson().toJson(mapOf(
                     "type" to "auth_status", "show_login" to true,
@@ -207,11 +216,12 @@ class ForgeToolWindowFactory : ToolWindowFactory {
     }
 
     private fun saveAuthToken(token: String, email: String, name: String) {
-        val configDir = java.io.File(System.getProperty("user.home"), ".config/forge-ide")
+        val configDir = File(System.getProperty("user.home"), ".config/forge-ide")
         configDir.mkdirs()
-        val authData = mapOf("token" to token, "email" to email, "name" to name)
-        java.io.File(configDir, "forge-auth.json")
-            .writeText(Gson().newBuilder().setPrettyPrinting().create().toJson(authData))
+        File(configDir, "forge-auth.json").writeText(
+            Gson().newBuilder().setPrettyPrinting().create()
+                .toJson(mapOf("token" to token, "email" to email, "name" to name))
+        )
     }
 
     override fun isApplicable(project: Project): Boolean =
