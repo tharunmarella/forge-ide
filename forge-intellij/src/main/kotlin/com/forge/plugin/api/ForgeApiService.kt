@@ -27,7 +27,13 @@ class ForgeApiService(private val project: Project) {
     private val gson = Gson()
 
     // @Volatile: written from the JBCef query thread, read from OkHttp SSE thread
-    @Volatile private var backendUrl = "http://localhost:8080/chat/stream"
+    @Volatile private var backendUrl = run {
+        val production = "https://forge-search-production.up.railway.app"
+        val envUrl = System.getenv("FORGE_SEARCH_URL")
+        val base = if (!envUrl.isNullOrBlank() && !envUrl.contains("your-backend") && !envUrl.contains("placeholder"))
+            envUrl else production
+        "$base/chat/stream"
+    }
     @Volatile private var conversationId: String = java.util.UUID.randomUUID().toString()
     @Volatile private var activeEventSource: EventSource? = null
 
@@ -82,7 +88,7 @@ class ForgeApiService(private val project: Project) {
                 return json.get("token")?.asString ?: ""
             }
         } catch (e: Exception) {
-            println("Failed to read token: ${e.message}")
+            LOG.warn("Failed to read token: ${e.message}")
         }
         return ""
     }
@@ -215,7 +221,15 @@ class ForgeApiService(private val project: Project) {
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                LOG.warn("SSE Connection failed: ${t?.message}, response code: ${response?.code}")
+                val code = response?.code
+                LOG.warn("SSE Connection failed: ${t?.message}, response code: $code")
+                if (code == 401 || response?.body?.string()?.contains("Token expired") == true) {
+                    uiService.postMessage(Gson().toJson(mapOf(
+                        "type"       to "auth_status",
+                        "show_login" to true,
+                        "message"    to "Session expired. Please sign in again."
+                    )))
+                }
                 uiService.postMessage(gson.toJson(mapOf("type" to "error", "message" to "Connection failed: ${t?.message}")))
             }
         }

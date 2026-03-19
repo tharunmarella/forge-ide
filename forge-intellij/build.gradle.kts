@@ -40,4 +40,10 @@ tasks {
         sinceBuild.set("232")
         untilBuild.set("241.*")
     }
+
+    runIde {
+        // Always use the real production backend in the sandbox.
+        // Overrides any placeholder FORGE_SEARCH_URL from the shell environment.
+        environment("FORGE_SEARCH_URL", "https://forge-search-production.up.railway.app")
+    }
 }

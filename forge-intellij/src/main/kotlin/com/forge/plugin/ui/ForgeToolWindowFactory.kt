@@ -141,18 +141,45 @@ class ForgeToolWindowFactory : ToolWindowFactory {
             File(home, "Library/Application Support/dev.lapce.Lapce-Nightly/forge-auth.json"),
             File(home, ".config/dev.lapce.Lapce-Nightly/forge-auth.json")
         )
-        val isAuthenticated = authFiles.any { it.exists() }
+        val isAuthenticated = authFiles.any { it.exists() && !isTokenExpired(it) }
         uiService.postMessage(Gson().toJson(mapOf(
             "type"       to "auth_status",
             "show_login" to !isAuthenticated,
-            "message"    to "Sign in to continue"
+            "message"    to if (isAuthenticated) "" else "Your session has expired. Please sign in again."
         )))
+    }
+
+    /** Decode the JWT payload and check the 'exp' claim against the current time. */
+    private fun isTokenExpired(authFile: File): Boolean {
+        return try {
+            val json = Gson().fromJson(authFile.readText(), JsonObject::class.java)
+            val token = json.get("token")?.asString ?: return true
+            val parts = token.split(".")
+            if (parts.size < 2) return true
+            // JWT payload is base64url-encoded (no padding)
+            val payload = String(
+                java.util.Base64.getUrlDecoder().decode(
+                    parts[1].padEnd((parts[1].length + 3) / 4 * 4, '=')
+                )
+            )
+            val payloadJson = Gson().fromJson(payload, JsonObject::class.java)
+            val exp = payloadJson.get("exp")?.asLong ?: return true
+            val nowSec = System.currentTimeMillis() / 1000
+            val expired = nowSec >= exp
+            if (expired) LOG.info("Auth token expired (exp=$exp, now=$nowSec) — showing login")
+            expired
+        } catch (e: Exception) {
+            LOG.warn("Could not decode JWT, treating as expired: ${e.message}")
+            true
+        }
     }
 
     private fun startOAuthFlow(project: Project, provider: String, uiService: ForgeUIService) {
         val sessionId = java.util.UUID.randomUUID().toString()
-        val baseUrl = System.getenv("FORGE_SEARCH_URL")
-            ?: "https://forge-search-production.up.railway.app"
+        val production = "https://forge-search-production.up.railway.app"
+        val envUrl = System.getenv("FORGE_SEARCH_URL")
+        val baseUrl = if (!envUrl.isNullOrBlank() && !envUrl.contains("your-backend") && !envUrl.contains("placeholder"))
+            envUrl else production
         val authUrl = "$baseUrl/auth/$provider?state=poll-$sessionId"
         val pollUrl = "$baseUrl/auth/poll/$sessionId"
 
