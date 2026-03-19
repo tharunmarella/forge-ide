@@ -85,8 +85,8 @@
             background: var(--muted);
             border-radius: var(--radius);
             padding: 8px 10px;
-            display: inline-block;
-            max-width: 90%;
+            display: block;
+            width: 100%;
         }
 
         /* ── Markdown ──────────────────────────────────────────── */
@@ -164,8 +164,8 @@
             font-family: var(--font-mono);
             font-size: 11px;
             color: var(--muted-foreground);
-            width: fit-content;
-            max-width: 100%;
+            width: 100%;
+            overflow: hidden;
         }
         .tool-dot {
             width: 6px; height: 6px;
@@ -181,8 +181,9 @@
             border-top-color: var(--blue);
             animation: spin 0.7s linear infinite;
         }
-        .tool-name { color: #fbbf24; font-weight: 500; }
-        .tool-status { color: var(--muted-foreground); font-size: 10px; }
+        .tool-name   { color: #fbbf24; font-weight: 500; }
+        .tool-detail { color: var(--muted-foreground); font-size: 10.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tool-status { color: var(--muted-foreground); font-size: 10px; flex-shrink: 0; }
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -345,7 +346,7 @@
         </div>
     </div>
     <div id="input-bar">
-        <textarea id="user-input" rows="1" placeholder="Message Forge AI…  (Shift+Enter for new line)"></textarea>
+        <textarea id="user-input" rows="1"></textarea>
         <button id="stop-btn" class="icon-btn" title="Stop" onclick="stopGeneration()">
             <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
         </button>
@@ -503,7 +504,8 @@ window.receiveMessageFromKotlin = (jsonStr) => {
             const tl = getToolList();
             const item = document.createElement('div');
             item.className = 'tool-item';
-            item.innerHTML = `<div class="tool-dot spin"></div><span class="tool-name">${esc(ev.name || '')}</span><span class="tool-status">running</span>`;
+            const summary = toolSummary(ev.name || '', ev.input);
+            item.innerHTML = `<div class="tool-dot spin"></div><span class="tool-name">${esc(ev.name || '')}</span>${summary ? `<span class="tool-detail">${esc(summary)}</span>` : ''}<span class="tool-status">running</span>`;
             tl.appendChild(item);
             if (ev.id) toolEls[ev.id] = item;
             break;
@@ -592,6 +594,43 @@ window.receiveMessageFromKotlin = (jsonStr) => {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/** Extract a short human-readable summary from tool arguments JSON. */
+function toolSummary(name, inputJson) {
+    try {
+        const args = typeof inputJson === 'string' ? JSON.parse(inputJson) : (inputJson || {});
+        // path-based tools
+        const path = args.path || args.file_path || args.filepath || args.file;
+        // shorten to last 2 path segments
+        function shortPath(p) {
+            if (!p) return '';
+            const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
+            return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : p;
+        }
+        switch (name) {
+            case 'read_file':   return shortPath(path);
+            case 'write_file':  return shortPath(path);
+            case 'edit_file':   return shortPath(path);
+            case 'list_files':  return shortPath(path || args.directory || args.dir || '.');
+            case 'glob':        return args.pattern || shortPath(path) || '';
+            case 'grep':        return (args.pattern || args.query || '') + (path ? '  ' + shortPath(path) : '');
+            case 'run':         return (args.command || '').slice(0, 60);
+            case 'explore':     return shortPath(path || args.directory || '.');
+            case 'lsp':         return (args.action || '') + (path ? '  ' + shortPath(path) : '');
+            case 'process':     return args.action || '';
+            case 'port':        return args.port ? ':' + args.port : (args.action || '');
+            case 'search':      return (args.query || args.pattern || '').slice(0, 50);
+            case 'workspace_symbols': return (args.query || '').slice(0, 50);
+            default: {
+                // Generic: first string value that looks meaningful
+                for (const v of Object.values(args)) {
+                    if (typeof v === 'string' && v.length > 0 && v.length < 80) return v.slice(0, 60);
+                }
+                return '';
+            }
+        }
+    } catch(_) { return ''; }
+}
 
 function scrollBottom() { chat.scrollTop = chat.scrollHeight; }
 
