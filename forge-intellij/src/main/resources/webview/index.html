@@ -9,30 +9,24 @@
     <script src="vendor/highlight.min.js"></script>
     <script src="vendor/mermaid.min.js"></script>
     <style>
-        /* shadcn/ui dark theme design tokens */
+        /* IntelliJ Darcula defaults — applyTheme() overrides these at runtime */
         :root {
-            --background:        #09090b;
-            --foreground:        #fafafa;
-            --card:              #09090b;
-            --card-foreground:   #fafafa;
-            --muted:             #27272a;
-            --muted-foreground:  #a1a1aa;
-            --border:            #27272a;
-            --input:             #27272a;
-            --primary:           #fafafa;
-            --primary-foreground:#09090b;
-            --secondary:         #27272a;
-            --secondary-foreground: #fafafa;
-            --accent:            #27272a;
-            --accent-foreground: #fafafa;
-            --destructive:       #7f1d1d;
-            --destructive-fg:    #fca5a5;
-            --ring:              #d4d4d8;
-            --blue:              #3b82f6;
-            --green:             #22c55e;
-            --radius:            6px;
-            --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
-            --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+            --background:        #2b2b2b;
+            --foreground:        #bbbbbb;
+            --muted:             #3c3f41;
+            --muted-foreground:  #787878;
+            --border:            #4e5052;
+            --input:             #3c3f41;
+            --primary:           #bbbbbb;
+            --primary-foreground:#2b2b2b;
+            --destructive:       rgba(199,84,80,0.25);
+            --destructive-fg:    #c75450;
+            --ring:              #6b6b6b;
+            --blue:              #4a9ff5;
+            --green:             #499c54;
+            --radius:            4px;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -134,7 +128,7 @@
             color: #f97316;
         }
         .msg-body pre {
-            background: #18181b !important;
+            background: #1e1f22 !important;
             border: 1px solid var(--border);
             border-radius: var(--radius);
             padding: 10px 12px;
@@ -234,7 +228,7 @@
         .diagram-wrap {
             margin: 6px 0;
             padding: 12px;
-            background: #18181b;
+            background: #1e1f22;
             border: 1px solid var(--border);
             border-radius: var(--radius);
             overflow-x: auto;
@@ -304,6 +298,7 @@
         .login-logo {
             width: 40px; height: 40px;
             background: var(--muted);
+            border: 1px solid var(--border);
             border-radius: 10px;
             display: flex; align-items: center; justify-content: center;
             margin-bottom: 4px;

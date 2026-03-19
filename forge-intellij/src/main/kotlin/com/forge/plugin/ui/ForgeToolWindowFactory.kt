@@ -110,22 +110,22 @@ class ForgeToolWindowFactory : ToolWindowFactory {
 
     private fun injectTheme(cefBrowser: CefBrowser) {
         val laf = com.intellij.ide.ui.LafManager.getInstance().currentLookAndFeel
-        val isDark = laf?.name?.contains("dark", ignoreCase = true) != false
         val bg     = com.intellij.util.ui.UIUtil.getPanelBackground()
         val fg     = com.intellij.util.ui.UIUtil.getLabelForeground()
         val border = com.intellij.ui.JBColor.border()
-        val codeBg = if (isDark) "#1e1f22" else "#f4f4f4"
 
         fun rgb(c: java.awt.Color) = "rgb(${c.red},${c.green},${c.blue})"
 
         val vars = mapOf(
-            "bg-primary"   to rgb(bg),
-            "bg-secondary" to rgb(bg.darker()),
-            "bg-tertiary"  to rgb(bg.darker().darker()),
-            "text-primary" to rgb(fg),
-            "border-color" to rgb(border),
-            "code-bg"      to codeBg,
-            "code-border"  to rgb(border)
+            "background"       to rgb(bg),
+            "foreground"       to rgb(fg),
+            "muted"            to rgb(bg.darker()),
+            "muted-foreground" to rgb(fg.darker()),
+            "border"           to rgb(border),
+            "input"            to rgb(bg.darker()),
+            "ring"             to rgb(border),
+            "primary"          to rgb(fg),
+            "primary-foreground" to rgb(bg)
         )
         val json = Gson().toJson(vars)
         cefBrowser.executeJavaScript(

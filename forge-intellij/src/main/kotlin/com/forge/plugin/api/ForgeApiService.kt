@@ -222,7 +222,15 @@ class ForgeApiService(private val project: Project) {
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 val code = response?.code
-                LOG.warn("SSE Connection failed: ${t?.message}, response code: $code")
+                val msg  = t?.message ?: ""
+                LOG.info("SSE closed: $msg (HTTP $code)")
+
+                // "stream was reset: CANCEL" is a normal HTTP/2 RST_STREAM that the
+                // backend sends when closing one SSE round before opening the next.
+                // It is NOT an error — never show it to the user.
+                if (msg.contains("CANCEL", ignoreCase = true) ||
+                    msg.contains("stream was reset", ignoreCase = true)) return
+
                 if (code == 401 || response?.body?.string()?.contains("Token expired") == true) {
                     uiService.postMessage(Gson().toJson(mapOf(
                         "type"       to "auth_status",
