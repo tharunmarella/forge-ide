@@ -19,6 +19,11 @@ import java.nio.file.Paths
 
 object FileHandlers {
 
+    private val SKIP_DIRS = setOf(
+        "node_modules", ".git", "target", "build", "dist", ".idea",
+        "__pycache__", ".gradle", ".next", "out", "coverage", ".DS_Store"
+    )
+
     fun handleListFiles(project: Project, args: JsonObject): String {
         val path = args.get("path")?.asString ?: ""
         val recursive = args.get("recursive")?.asBoolean ?: false
@@ -300,13 +305,6 @@ object FileHandlers {
             results.size < 500 // stop after 500 matches to avoid OOM
         }
         return ToolResult.success(results.joinToString("\n"))
-    }
-
-    companion object {
-        private val SKIP_DIRS = setOf(
-            "node_modules", ".git", "target", "build", "dist", ".idea",
-            "__pycache__", ".gradle", ".next", "out", "coverage", ".DS_Store"
-        )
     }
 
     fun handleSearchInFile(project: Project, args: JsonObject): String {
