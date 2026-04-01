@@ -903,7 +903,11 @@ fn chat_entry_view(
                 tool_call_card(config, tc, panel_width).into_any()
             }
         }
-        ChatEntryKind::ThinkingStep(_) | ChatEntryKind::Plan(_) | ChatEntryKind::ServerToolCall(_) => {
+        ChatEntryKind::Plan(plan) => {
+            // Show the agent's task plan with status icons
+            plan_view(config, plan).into_any()
+        }
+        ChatEntryKind::ThinkingStep(_) | ChatEntryKind::ServerToolCall(_) => {
             // These entry types were used by the removed thinking section — render nothing.
             empty().into_any()
         }
