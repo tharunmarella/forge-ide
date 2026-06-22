@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Forge AI</title>
+    <script>
+      // Queue Kotlin events that arrive before React has mounted
+      window.__forgeQueue = []
+      window.receiveMessageFromKotlin = function(json) {
+        try {
+          const ev = JSON.parse(json)
+          // Apply theme immediately (no React needed — just set CSS vars)
+          if (ev.type === 'apply_theme' && ev.vars) {
+            Object.entries(ev.vars).forEach(([k, v]) => {
+              document.documentElement.style.setProperty(k, v)
+            })
+          }
+          // Forward to React app if mounted, else queue it
+          if (window.__forgeReady) {
+            window.__forgeDispatch(ev)
+          } else {
+            window.__forgeQueue.push(ev)
+          }
+        } catch(e) {}
+      }
+      // Also accept postMessage
+      window.addEventListener('message', function(e) {
+        try {
+          const ev = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
+          window.receiveMessageFromKotlin(JSON.stringify(ev))
+        } catch(e) {}
+      })
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

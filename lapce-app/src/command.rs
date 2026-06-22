@@ -269,6 +269,14 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Open Database Manager")]
     OpenDatabaseManager,
 
+    #[strum(serialize = "open_forge_ai_chat")]
+    #[strum(message = "Open Forge AI Chat")]
+    OpenForgeAiChat,
+
+    #[strum(serialize = "open_project_map")]
+    #[strum(message = "Open Project Map")]
+    OpenProjectMap,
+
     #[strum(serialize = "open_run_configurations")]
     #[strum(message = "Open Run Configurations")]
     OpenRunConfigurations,
@@ -422,23 +430,29 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "palette.run_and_debug_stop")]
     RunAndDebugStop,
 
+    #[strum(message = "Source Control: Checkout Reference")]
     #[strum(serialize = "source_control.checkout_reference")]
     CheckoutReference,
 
+    #[strum(message = "Toggle Maximized Panel")]
     #[strum(serialize = "toggle_maximized_panel")]
     ToggleMaximizedPanel,
 
+    #[strum(message = "Hide Panel")]
     #[strum(serialize = "hide_panel")]
     HidePanel,
 
+    #[strum(message = "Show Panel")]
     #[strum(serialize = "show_panel")]
     ShowPanel,
 
     /// Toggles the panel passed in parameter.
+    #[strum(message = "Toggle Panel Focus")]
     #[strum(serialize = "toggle_panel_focus")]
     TogglePanelFocus,
 
     /// Toggles the panel passed in parameter.
+    #[strum(message = "Toggle Panel")]
     #[strum(serialize = "toggle_panel_visual")]
     TogglePanelVisual,
 
@@ -459,6 +473,7 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "toggle_terminal_focus")]
     ToggleTerminalFocus,
 
+    #[strum(message = "Toggle Source Control Focus")]
     #[strum(serialize = "toggle_source_control_focus")]
     ToggleSourceControlFocus,
 
@@ -479,30 +494,39 @@ pub enum LapceWorkbenchCommand {
     ToggleSearchFocus,
 
     // Visual toggle commands
+    #[strum(message = "Toggle Terminal")]
     #[strum(serialize = "toggle_terminal_visual")]
     ToggleTerminalVisual,
 
+    #[strum(message = "Toggle Source Control")]
     #[strum(serialize = "toggle_source_control_visual")]
     ToggleSourceControlVisual,
 
+    #[strum(message = "Toggle Plugin")]
     #[strum(serialize = "toggle_plugin_visual")]
     TogglePluginVisual,
 
+    #[strum(message = "Toggle File Explorer")]
     #[strum(serialize = "toggle_file_explorer_visual")]
     ToggleFileExplorerVisual,
 
+    #[strum(message = "Toggle Problem")]
     #[strum(serialize = "toggle_problem_visual")]
     ToggleProblemVisual,
 
+    #[strum(message = "Toggle Debug")]
     #[strum(serialize = "toggle_debug_visual")]
     ToggleDebugVisual,
 
+    #[strum(message = "Toggle Search")]
     #[strum(serialize = "toggle_search_visual")]
     ToggleSearchVisual,
 
+    #[strum(message = "Focus Editor")]
     #[strum(serialize = "focus_editor")]
     FocusEditor,
 
+    #[strum(message = "Focus Terminal")]
     #[strum(serialize = "focus_terminal")]
     FocusTerminal,
 
@@ -510,6 +534,7 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "source_control_init")]
     SourceControlInit,
 
+    #[strum(message = "Source Control: Commit")]
     #[strum(serialize = "source_control_commit")]
     SourceControlCommit,
 
@@ -521,6 +546,7 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "source_control_discard_active_file_changes")]
     SourceControlDiscardActiveFileChanges,
 
+    #[strum(message = "Source Control: Discard Target File Changes")]
     #[strum(serialize = "source_control_discard_target_file_changes")]
     SourceControlDiscardTargetFileChanges,
 
@@ -676,11 +702,12 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Toggle Inlay Hints")]
     ToggleInlayHints,
 
+    #[strum(message = "Restart to Update")]
     #[strum(serialize = "restart_to_update")]
     RestartToUpdate,
 
     #[strum(serialize = "show_about")]
-    #[strum(message = "About Lapce")]
+    #[strum(message = "About Forge IDE")]
     ShowAbout,
 
     #[strum(message = "Save All Files")]
@@ -697,15 +724,19 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "uninstall_from_path")]
     UninstallFromPATH,
 
+    #[strum(message = "Jump Location Backward")]
     #[strum(serialize = "jump_location_backward")]
     JumpLocationBackward,
 
+    #[strum(message = "Jump Location Forward")]
     #[strum(serialize = "jump_location_forward")]
     JumpLocationForward,
 
+    #[strum(message = "Jump Location Backward (Local)")]
     #[strum(serialize = "jump_location_backward_local")]
     JumpLocationBackwardLocal,
 
+    #[strum(message = "Jump Location Forward (Local)")]
     #[strum(serialize = "jump_location_forward_local")]
     JumpLocationForwardLocal,
 

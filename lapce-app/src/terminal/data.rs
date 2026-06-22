@@ -304,6 +304,31 @@ impl KeyPressFocus for TerminalData {
 }
 
 impl TerminalData {
+    pub fn paste_from_clipboard(&self) {
+        let mut clipboard = SystemClipboard::new();
+        let mut check_bracketed_paste = false;
+        if self.mode.get_untracked() == Mode::Terminal {
+            let raw = self.raw.get_untracked();
+            let mut raw = raw.write();
+            let term = &mut raw.term;
+            term.selection = None;
+            if term.mode().contains(TermMode::BRACKETED_PASTE) {
+                check_bracketed_paste = true;
+            }
+        }
+        if let Some(s) = clipboard.get_string() {
+            if check_bracketed_paste {
+                KeyPressFocus::receive_char(self, "\x1b[200~");
+                KeyPressFocus::receive_char(self, &s.replace('\x1b', ""));
+                KeyPressFocus::receive_char(self, "\x1b[201~");
+            } else {
+                KeyPressFocus::receive_char(self, &s);
+            }
+        }
+    }
+}
+
+impl TerminalData {
     pub fn new(
         cx: Scope,
         workspace: Arc<LapceWorkspace>,

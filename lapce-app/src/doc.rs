@@ -1244,6 +1244,11 @@ impl Doc {
     }
 
     pub fn update_find(&self) {
+        if self.common.find.has_invalid_regex() {
+            self.find_result.occurrences.set(Selection::new());
+            return;
+        }
+
         let find_rev = self.common.find.rev.get_untracked();
         if self.find_result.find_rev.get_untracked() != find_rev {
             if self

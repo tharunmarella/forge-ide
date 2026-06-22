@@ -30,9 +30,9 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::SourceControl,  // Commit / Git
             PanelKind::Search,
             PanelKind::Plugin,         // Extensions/Plugins
+            PanelKind::SdkManager,
             PanelKind::DatabaseManager, // Opens as editor tab
             PanelKind::ProjectMapPage,  // Opens as editor tab
-            // Note: SdkManager opens as editor tab via command palette, not in sidebar
         ],
     );
     // Bottom panel: auxiliary panels (Terminal and GitLog have their own headers)
@@ -40,6 +40,7 @@ pub fn default_panel_order() -> PanelOrder {
         PanelPosition::BottomLeft,
         im::vector![
             PanelKind::Terminal,
+            PanelKind::GitLog,
             PanelKind::Problem,
             PanelKind::CallHierarchy,
             PanelKind::References,
@@ -49,7 +50,7 @@ pub fn default_panel_order() -> PanelOrder {
     );
     order.insert(
         PanelPosition::RightTop,
-        im::vector![PanelKind::AiChat, PanelKind::DocumentSymbol],
+        im::vector![PanelKind::AiChat, PanelKind::ProjectMap, PanelKind::DocumentSymbol],
     );
 
     order
@@ -409,24 +410,24 @@ impl PanelData {
         }
 
         let mut new_index_at_old_position = None;
-        let index = self
-            .panels
-            .try_update(|panels| {
-                if let Some((index, current_position)) = current_position {
-                    if let Some(panels) = panels.get_mut(&current_position) {
-                        panels.remove(index);
+        let Some(index) = self.panels.try_update(|panels| {
+            if let Some((index, current_position)) = current_position {
+                if let Some(panels) = panels.get_mut(&current_position) {
+                    panels.remove(index);
 
-                        let max_index = panels.len().saturating_sub(1);
-                        if index > max_index {
-                            new_index_at_old_position = Some(max_index);
-                        }
+                    let max_index = panels.len().saturating_sub(1);
+                    if index > max_index {
+                        new_index_at_old_position = Some(max_index);
                     }
                 }
-                let panels = panels.entry(*position).or_default();
-                panels.push_back(kind);
-                panels.len() - 1
-            })
-            .unwrap();
+            }
+            let panels = panels.entry(*position).or_default();
+            panels.push_back(kind);
+            panels.len() - 1
+        }) else {
+            tracing::warn!("Failed to move panel {:?} — panels signal busy", kind);
+            return;
+        };
         self.styles.update(|styles| {
             if let Some((_, current_position)) = current_position {
                 if let Some(new_index) = new_index_at_old_position {
@@ -440,8 +441,9 @@ impl PanelData {
             style.shown = true;
         });
 
-        let db: Arc<LapceDb> = use_context().unwrap();
-        db.save_panel_orders(self.panels.get_untracked());
+        if let Some(db) = use_context::<Arc<LapceDb>>() {
+            db.save_panel_orders(self.panels.get_untracked());
+        }
     }
 
     pub fn section_open(&self, section: PanelSection) -> RwSignal<bool> {

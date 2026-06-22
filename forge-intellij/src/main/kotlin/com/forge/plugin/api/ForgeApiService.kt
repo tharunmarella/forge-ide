@@ -136,38 +136,38 @@ class ForgeApiService(private val project: Project) {
 
                 when (sseEvent) {
                     is SseEvent.TextDelta -> {
-                        uiService.postMessage(gson.toJson(mapOf("type" to "text_delta", "content" to sseEvent.text)))
+                        // React expects { type: "text_delta", text: "..." }
+                        uiService.postMessage(gson.toJson(mapOf("type" to "text_delta", "text" to sseEvent.text)))
                     }
                     is SseEvent.Thinking -> {
-                        // JS handles thinking_start, thinking_delta, thinking_end
-                        when (sseEvent.stepType) {
-                            "start" -> uiService.postMessage(gson.toJson(mapOf("type" to "thinking_start")))
-                            "end"   -> uiService.postMessage(gson.toJson(mapOf("type" to "thinking_end")))
-                            else    -> uiService.postMessage(gson.toJson(mapOf(
-                                "type" to "thinking_delta",
-                                "content" to sseEvent.message
-                            )))
-                        }
+                        // React handles a single "thinking" event type
+                        uiService.postMessage(gson.toJson(mapOf(
+                            "type"      to "thinking",
+                            "step_type" to sseEvent.stepType,
+                            "message"   to (sseEvent.message ?: "")
+                        )))
                     }
                     is SseEvent.ToolStart -> {
+                        // React expects tool_call_id, tool_name, arguments
                         uiService.postMessage(gson.toJson(mapOf(
-                            "type"  to "tool_start",
-                            "id"    to sseEvent.id,
-                            "name"  to sseEvent.name,
-                            "input" to sseEvent.input
+                            "type"         to "tool_start",
+                            "tool_call_id" to sseEvent.id,
+                            "tool_name"    to sseEvent.name,
+                            "arguments"    to sseEvent.input
                         )))
                     }
                     is SseEvent.ToolEnd -> {
-                        // Forward 'success' so the JS can show ✓ / ✗ correctly
+                        // React expects tool_call_id, success
                         uiService.postMessage(gson.toJson(mapOf(
-                            "type"    to "tool_end",
-                            "id"      to sseEvent.id,
-                            "output"  to sseEvent.resultSummary,
-                            "success" to sseEvent.success
+                            "type"           to "tool_end",
+                            "tool_call_id"   to sseEvent.id,
+                            "success"        to sseEvent.success,
+                            "result_summary" to (sseEvent.resultSummary ?: "")
                         )))
                     }
                     is SseEvent.Plan -> {
-                        uiService.postMessage(gson.toJson(mapOf("type" to "plan_update", "steps" to sseEvent.steps)))
+                        // React expects { type: "plan", steps: [...] }
+                        uiService.postMessage(gson.toJson(mapOf("type" to "plan", "steps" to sseEvent.steps)))
                     }
                     is SseEvent.RequiresAction -> {
                         val results = mutableListOf<Map<String, Any>>()
@@ -207,10 +207,15 @@ class ForgeApiService(private val project: Project) {
                         processMessage(null, results)
                     }
                     is SseEvent.Error -> {
-                        uiService.postMessage(gson.toJson(mapOf("type" to "error", "message" to sseEvent.message)))
+                        // React expects { type: "error", error: "..." }
+                        uiService.postMessage(gson.toJson(mapOf("type" to "error", "error" to sseEvent.message)))
                     }
                     is SseEvent.Done -> {
-                        uiService.postMessage(gson.toJson(mapOf("type" to "done")))
+                        uiService.postMessage(gson.toJson(mapOf(
+                            "type"          to "done",
+                            "answer"        to "",
+                            "total_time_ms" to 0
+                        )))
                         eventSource.cancel()
                     }
                 }
@@ -225,11 +230,13 @@ class ForgeApiService(private val project: Project) {
                 val msg  = t?.message ?: ""
                 LOG.info("SSE closed: $msg (HTTP $code)")
 
-                // "stream was reset: CANCEL" is a normal HTTP/2 RST_STREAM that the
-                // backend sends when closing one SSE round before opening the next.
-                // It is NOT an error — never show it to the user.
+                // These are all normal closure signals that occur when we call
+                // eventSource.cancel() to start a new SSE round with tool results.
+                // They are NOT errors — never show them to the user.
                 if (msg.contains("CANCEL", ignoreCase = true) ||
-                    msg.contains("stream was reset", ignoreCase = true)) return
+                    msg.contains("stream was reset", ignoreCase = true) ||
+                    msg.contains("error decoding response body", ignoreCase = true) ||
+                    msg.contains("Socket closed", ignoreCase = true)) return
 
                 if (code == 401 || response?.body?.string()?.contains("Token expired") == true) {
                     uiService.postMessage(Gson().toJson(mapOf(
@@ -238,7 +245,7 @@ class ForgeApiService(private val project: Project) {
                         "message"    to "Session expired. Please sign in again."
                     )))
                 }
-                uiService.postMessage(gson.toJson(mapOf("type" to "error", "message" to "Connection failed: ${t?.message}")))
+                uiService.postMessage(gson.toJson(mapOf("type" to "error", "error" to "Connection failed: ${t?.message}")))
             }
         }
 

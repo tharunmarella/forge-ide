@@ -980,6 +980,16 @@ pub fn plugin_info_view(plugin: PluginData, volt: VoltID) -> impl View {
                                         // TODO: render images (data URIs and URLs)
                                         container(empty())
                                     }
+                                    MarkdownContent::Link { text, .. } => container(
+                                        label(move || text.clone()).style(move |s| {
+                                            s.color(
+                                                config.get().color(
+                                                    LapceColor::EDITOR_LINK,
+                                                ),
+                                            )
+                                        }),
+                                    )
+                                    .style(|s| s.width_full()),
                                     MarkdownContent::Separator => {
                                         container(empty().style(move |s| {
                                             s.width_full()

@@ -3705,21 +3705,15 @@ async fn execute_ide_tool(
         }
         // ── New `port` tool (check / kill / wait) ────────────────
         "port" => {
-            let action = tc.args.get("action").and_then(|v| v.as_str()).unwrap_or("check");
-            // Normalise port_num → port for legacy helpers
+            // Normalise port_num → port for the internal handler
             let mut args = tc.args.clone();
             if let Some(port_num) = tc.args.get("port_num") {
                 if let Some(obj) = args.as_object_mut() {
                     obj.insert("port".to_string(), port_num.clone());
                 }
             }
-            let legacy_name = match action {
-                "kill" => "kill_port",
-                "wait" => "wait_for_port",
-                _ => "check_port",
-            };
             let tool_call_obj = forge_agent::tools::ToolCall {
-                name: legacy_name.to_string(),
+                name: "port".to_string(),
                 arguments: args,
                 thought_signature: None,
             };

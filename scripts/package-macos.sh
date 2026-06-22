@@ -70,6 +70,8 @@ mkdir -p "$APP_DIR/Contents/Resources"
 # Step 3: Copy binaries
 cp "$BUILD_DIR/lapce" "$APP_DIR/Contents/MacOS/lapce"
 cp "$BUILD_DIR/lapce-proxy" "$APP_DIR/Contents/MacOS/lapce-proxy"
+cp "$PROJECT_DIR/scripts/forge-launcher.sh" "$APP_DIR/Contents/MacOS/forge-launcher"
+chmod +x "$APP_DIR/Contents/MacOS/forge-launcher"
 
 # Strip debug symbols to reduce size
 strip "$APP_DIR/Contents/MacOS/lapce" 2>/dev/null || true
@@ -84,7 +86,7 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>lapce</string>
+  <string>forge-launcher</string>
   <key>CFBundleIdentifier</key>
   <string>dev.forge-ide</string>
   <key>CFBundleInfoDictionaryVersion</key>

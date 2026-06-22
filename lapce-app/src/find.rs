@@ -58,6 +58,7 @@ pub struct FindStatus {
 pub struct FindSearchString {
     pub content: String,
     pub regex: Option<Regex>,
+    pub case_insensitive: bool,
 }
 
 #[derive(Clone)]
@@ -79,6 +80,8 @@ pub struct Find {
     pub replace_focus: RwSignal<bool>,
     /// Triggered by changes in the search string
     pub triggered_by_changes: RwSignal<bool>,
+    /// Set when regex mode is active but the pattern fails to compile.
+    pub regex_error: RwSignal<Option<String>>,
 }
 
 impl Find {
@@ -93,12 +96,14 @@ impl Find {
             replace_active: cx.create_rw_signal(false),
             replace_focus: cx.create_rw_signal(false),
             triggered_by_changes: cx.create_rw_signal(false),
+            regex_error: cx.create_rw_signal(None),
         };
 
         {
             let find = find.clone();
             cx.create_effect(move |_| {
                 find.is_regex.with(|_| ());
+                find.case_matching.with(|_| ());
                 let s = find.search_string.with_untracked(|s| {
                     if let Some(s) = s.as_ref() {
                         s.content.clone()
@@ -156,6 +161,7 @@ impl Find {
     pub fn set_find(&self, search_string: &str) {
         if search_string.is_empty() {
             self.search_string.set(None);
+            self.regex_error.set(None);
             return;
         }
 
@@ -164,10 +170,13 @@ impl Find {
         }
 
         let is_regex = self.is_regex.get_untracked();
+        let case_insensitive = !self.case_sensitive(false);
 
         let search_string_unchanged = self.search_string.with_untracked(|search| {
             if let Some(s) = search {
-                s.content == search_string && s.regex.is_some() == is_regex
+                s.content == search_string
+                    && s.regex.is_some() == is_regex
+                    && s.case_insensitive == case_insensitive
             } else {
                 false
             }
@@ -179,18 +188,35 @@ impl Find {
 
         // create regex from untrusted input
         let regex = match is_regex {
-            false => None,
-            true => RegexBuilder::new(search_string)
+            false => {
+                self.regex_error.set(None);
+                None
+            }
+            true => match RegexBuilder::new(search_string)
                 .size_limit(REGEX_SIZE_LIMIT)
-                .case_insensitive(!self.case_sensitive(false))
+                .case_insensitive(case_insensitive)
                 .build()
-                .ok(),
+            {
+                Ok(regex) => {
+                    self.regex_error.set(None);
+                    Some(regex)
+                }
+                Err(err) => {
+                    self.regex_error.set(Some(err.to_string()));
+                    None
+                }
+            },
         };
         self.triggered_by_changes.set(true);
         self.search_string.set(Some(FindSearchString {
             content: search_string.to_string(),
             regex,
+            case_insensitive,
         }));
+    }
+
+    pub fn has_invalid_regex(&self) -> bool {
+        self.regex_error.with_untracked(|err| err.is_some())
     }
 
     pub fn next(
@@ -200,6 +226,9 @@ impl Find {
         reverse: bool,
         wrap: bool,
     ) -> Option<(usize, usize)> {
+        if self.has_invalid_regex() {
+            return None;
+        }
         if !self.visual.get_untracked() {
             self.visual.set(true);
         }
@@ -533,7 +562,7 @@ impl FindResult {
             progress: cx.create_rw_signal(FindProgress::Started),
             occurrences: cx.create_rw_signal(Selection::new()),
             search_string: cx.create_rw_signal(None),
-            case_matching: cx.create_rw_signal(CaseMatching::Exact),
+            case_matching: cx.create_rw_signal(CaseMatching::CaseInsensitive),
             whole_words: cx.create_rw_signal(false),
             is_regex: cx.create_rw_signal(false),
         }

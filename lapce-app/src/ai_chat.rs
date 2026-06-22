@@ -393,31 +393,15 @@ impl AiChatData {
         }
     }
 
-    /// Whether user can chat — either signed into forge-search or has an API key.
-    ///
-    /// The forge-auth.json token is saved into the Lapce config directory
-    /// (e.g. `~/Library/Application Support/dev.lapce.Lapce-Nightly/`) by the
-    /// OAuth callback.  We check that path first, then fall back to checking
-    /// whether the user has pasted a raw API key into ai-keys.toml.
+    /// Whether user can chat — signed into forge-search or has a direct API key.
     pub fn has_any_key(&self) -> bool {
-        // Primary: forge-search auth token in Lapce's own config dir
-        if let Some(dir) = lapce_core::directory::Directory::config_directory() {
-            if dir.join("forge-auth.json").exists() {
-                return true;
-            }
-        }
+        forge_agent::forge_search::is_authenticated()
+            || self.keys_config.with_untracked(|c| c.has_any_key())
+    }
 
-        // Also check the forge-agent config dir (dirs::config_dir()/forge-ide/)
-        // in case the token was placed there manually for testing.
-        if dirs::config_dir()
-            .map(|d| d.join("forge-ide").join("forge-auth.json"))
-            .map_or(false, |p| p.exists())
-        {
-            return true;
-        }
-
-        // Fallback: check for direct API keys
-        self.keys_config.with_untracked(|c| c.has_any_key())
+    /// Check if forge-search auth token exists and is not expired (file on disk, no network).
+    fn is_forge_search_authenticated(&self) -> bool {
+        forge_agent::forge_search::is_authenticated()
     }
 
     /// Save a key for a provider and update signals.
@@ -462,10 +446,11 @@ impl AiChatData {
     }
 
     pub fn send_message(&self) {
-        let text: String = self.editor.doc().buffer.with_untracked(|b| b.to_string());
-        if text.trim().is_empty() {
+        if self.is_loading.get_untracked() {
             return;
         }
+
+        let text: String = self.editor.doc().buffer.with_untracked(|b| b.to_string());
 
         tracing::info!("[AI_CHAT] send_message called, text_len={}", text.len());
 
@@ -712,24 +697,6 @@ impl AiChatData {
         }
     }
 
-    /// Check if forge-search auth token exists (file on disk, no network).
-    fn is_forge_search_authenticated(&self) -> bool {
-        // Check Lapce's own config dir (where OAuth callback saves the token)
-        if let Some(dir) = lapce_core::directory::Directory::config_directory() {
-            if dir.join("forge-auth.json").exists() {
-                return true;
-            }
-        }
-        // Also check the forge-agent config dir
-        if dirs::config_dir()
-            .map(|d| d.join("forge-ide").join("forge-auth.json"))
-            .map_or(false, |p| p.exists())
-        {
-            return true;
-        }
-        false
-    }
-
 
     pub fn notify_file_changed(&self, path: std::path::PathBuf) {
         if !self.is_forge_search_authenticated() {
@@ -737,8 +704,7 @@ impl AiChatData {
         }
 
         let token = Self::read_forge_token();
-        let base_url = std::env::var("FORGE_SEARCH_URL")
-            .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+        let base_url = forge_agent::forge_search::resolve_base_url(None);
             
         let workspace_id = self
             .common
@@ -787,6 +753,26 @@ impl AiChatData {
         self.conversation_id.set(uuid::Uuid::new_v4().to_string());
     }
 
+    /// Cancel the in-flight agent request.
+    pub fn cancel_message(&self) {
+        if !self.is_loading.get_untracked() {
+            return;
+        }
+
+        let is_loading = self.is_loading;
+        let send = create_ext_action(self.scope, move |result: Result<lapce_rpc::proxy::ProxyResponse, lapce_rpc::RpcError>| {
+            if let Err(rpc_err) = result {
+                tracing::warn!("Agent cancel RPC error: {}", rpc_err.message);
+            }
+            is_loading.set(false);
+        });
+
+        self.common.proxy.request_async(
+            lapce_rpc::proxy::ProxyRequest::AgentCancel {},
+            send,
+        );
+    }
+
     /// Trigger the scroll-to-bottom signal.
     pub fn request_scroll_to_bottom(&self) {
         self.scroll_trigger.update(|v| *v += 1);
@@ -802,8 +788,7 @@ impl AiChatData {
 
         // Read the auth token from disk
         let token = Self::read_forge_token();
-        let base_url = std::env::var("FORGE_SEARCH_URL")
-            .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+        let base_url = forge_agent::forge_search::resolve_base_url(None);
 
         // Derive workspace_id from the open workspace path
         let workspace_name = self
@@ -843,7 +828,26 @@ impl AiChatData {
                 }
             }
 
-            // 2. Search with a tiny query to get total_nodes (workspace stats)
+            // 2. Verify auth token (search is public; models requires JWT)
+            let models_url = format!("{}/models/", base_url);
+            let mut auth_req = client.get(&models_url);
+            if !token.is_empty() {
+                auth_req = auth_req.header("Authorization", format!("Bearer {}", token));
+            }
+            match auth_req.send() {
+                Ok(resp) if resp.status().as_u16() == 401 => {
+                    forge_agent::forge_search::clear_auth();
+                    send("Auth expired".to_string());
+                    return;
+                }
+                Err(_) => {
+                    send("Server offline".to_string());
+                    return;
+                }
+                _ => {}
+            }
+
+            // 3. Search with a tiny query to get total_nodes (workspace stats)
             let search_url = format!("{}/search", base_url);
             let mut req = client.post(&search_url).json(&serde_json::json!({
                 "workspace_id": workspace_name,
@@ -868,6 +872,7 @@ impl AiChatData {
                     }
                 }
                 Ok(resp) if resp.status().as_u16() == 401 => {
+                    forge_agent::forge_search::clear_auth();
                     send("Auth expired".to_string());
                 }
                 _ => {
@@ -951,9 +956,11 @@ impl KeyPressFocus for AiChatData {
             CommandKind::Edit(_)
             | CommandKind::Move(_)
             | CommandKind::MultiSelection(_) => {
-                // Enter sends the message
+                // Enter sends the message (blocked while agent is loading)
                 if let CommandKind::Edit(EditCommand::InsertNewLine) = command.kind {
-                    self.send_message();
+                    if !self.is_loading.get_untracked() {
+                        self.send_message();
+                    }
                     return CommandExecuted::Yes;
                 }
 

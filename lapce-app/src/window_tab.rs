@@ -898,6 +898,16 @@ impl WindowTabData {
             OpenDatabaseManager => {
                 self.main_split.open_database_manager();
             }
+            OpenForgeAiChat => {
+                if self.panel.is_panel_visible(&PanelKind::AiChat) {
+                    self.panel.hide_panel(&PanelKind::AiChat);
+                } else {
+                    self.panel.show_panel(&PanelKind::AiChat);
+                }
+            }
+            OpenProjectMap => {
+                self.main_split.open_project_map();
+            }
             OpenRunConfigurations => {
                 self.main_split.open_run_config_editor();
             }
@@ -2080,9 +2090,19 @@ impl WindowTabData {
                                 }
                             }
                             Err(err) => {
+                                let message = err.message.clone();
                                 file_explorer
                                     .naming
-                                    .update(|naming| naming.set_err(err.message));
+                                    .update(|naming| naming.set_err(message.clone()));
+                                internal_command.send(InternalCommand::ShowAlert {
+                                    title: if is_dir {
+                                        "Failed to create directory".to_string()
+                                    } else {
+                                        "Failed to create file".to_string()
+                                    },
+                                    msg: message,
+                                    buttons: Vec::new(),
+                                });
                             }
                         }
                     },
@@ -2945,6 +2965,14 @@ impl WindowTabData {
             }
             CoreNotification::AgentError { error } => {
                 use crate::ai_chat::{ChatRole, new_message};
+                let error_lc = error.to_lowercase();
+                if error_lc.contains("401")
+                    || error_lc.contains("unauthorized")
+                    || error_lc.contains("not authenticated")
+                {
+                    forge_agent::forge_search::clear_auth();
+                    self.ai_chat.index_status.set("Auth expired".to_string());
+                }
                 // Flush any partial streamed text so it isn't lost silently.
                 let partial = self.ai_chat.streaming_text.get_untracked();
                 if !partial.is_empty() {

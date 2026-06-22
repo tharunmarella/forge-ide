@@ -20,19 +20,90 @@ use walkdir::WalkDir;
 
 // ── Config ───────────────────────────────────────────────────────
 
-const DEFAULT_API_URL: &str = "https://forge-search-production.up.railway.app";
+const DEFAULT_API_URL: &str = "http://localhost:8080";
 const TOKEN_FILE: &str = "forge-auth.json";
 
-/// Global forge-search client (initialized once)
+/// Returns true when `url` is empty or a documented placeholder value.
+pub fn is_placeholder_url(url: &str) -> bool {
+    let lower = url.trim().to_lowercase();
+    lower.is_empty()
+        || lower.contains("your-backend")
+        || lower.contains("placeholder")
+}
+
+/// Resolve the forge-search API base URL from env, optional config, then default.
+pub fn resolve_base_url(config_url: Option<&str>) -> String {
+    if let Ok(env) = std::env::var("FORGE_SEARCH_URL") {
+        let env = env.trim();
+        if !is_placeholder_url(env) {
+            return env.to_string();
+        }
+    }
+    if let Some(cfg) = config_url {
+        let cfg = cfg.trim();
+        if !is_placeholder_url(cfg) {
+            return cfg.to_string();
+        }
+    }
+    DEFAULT_API_URL.to_string()
+}
+
+/// Normalize `FORGE_SEARCH_URL` in the process environment (e.g. after shell env load).
+pub fn ensure_forge_search_url_env(config_url: Option<&str>) {
+    let url = resolve_base_url(config_url);
+    // SAFETY: called during startup before other threads read FORGE_SEARCH_URL.
+    unsafe {
+        std::env::set_var("FORGE_SEARCH_URL", &url);
+    }
+}
+
 static CLIENT: OnceLock<ForgeSearchClient> = OnceLock::new();
 
 pub fn client() -> &'static ForgeSearchClient {
     CLIENT.get_or_init(ForgeSearchClient::new)
 }
 
-/// Check if user has a forge-search auth token (sync, no network).
+/// Check if user has a usable forge-search auth token (sync, no network).
 pub fn is_authenticated() -> bool {
-    AuthToken::exists()
+    AuthToken::load().is_valid()
+}
+
+/// Remove persisted forge-search credentials.
+pub fn clear_auth() {
+    AuthToken::clear();
+}
+
+fn forge_ide_config_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    for app_name in ["Forge-Nightly", "Forge-Release", "Lapce-Nightly"] {
+        if let Some(project) = directories::ProjectDirs::from("dev", "forge-ide", app_name) {
+            dirs.push(project.config_dir().to_path_buf());
+        }
+    }
+    if let Some(legacy) = dirs::config_dir().map(|d| d.join("forge-ide")) {
+        dirs.push(legacy);
+    }
+    dirs
+}
+
+fn is_token_expired(token: &str) -> bool {
+    let Some(payload) = token.split('.').nth(1) else {
+        return true;
+    };
+    use base64::Engine;
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload) else {
+        return true;
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return true;
+    };
+    let Some(exp) = json.get("exp").and_then(|v| v.as_i64()) else {
+        return false;
+    };
+    let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        return false;
+    };
+    now.as_secs() as i64 >= exp
 }
 
 // ── Auth token persistence ───────────────────────────────────────
@@ -46,13 +117,17 @@ struct AuthToken {
 
 impl AuthToken {
     fn config_dir() -> Option<std::path::PathBuf> {
-        // Use platform-specific config directory
-        dirs::config_dir().map(|d| d.join("forge-ide"))
+        for dir in forge_ide_config_dirs() {
+            if dir.join(TOKEN_FILE).exists() {
+                return Some(dir);
+            }
+        }
+        forge_ide_config_dirs().into_iter().next()
     }
 
     fn load() -> Self {
-        if let Some(dir) = Self::config_dir() {
-            let path: std::path::PathBuf = dir.join(TOKEN_FILE);
+        for dir in forge_ide_config_dirs() {
+            let path = dir.join(TOKEN_FILE);
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(auth) = serde_json::from_str(&content) {
                     return auth;
@@ -62,28 +137,24 @@ impl AuthToken {
         Self::default()
     }
 
+    fn is_valid(&self) -> bool {
+        !self.token.trim().is_empty() && !is_token_expired(&self.token)
+    }
+
     fn save(&self) {
-        if let Some(dir) = Self::config_dir() {
-            let path: std::path::PathBuf = dir.join(TOKEN_FILE);
+        if let Some(dir) = forge_ide_config_dirs().into_iter().next() {
+            let path = dir.join(TOKEN_FILE);
             if let Ok(content) = serde_json::to_string_pretty(self) {
+                let _ = std::fs::create_dir_all(&dir);
                 let _ = std::fs::write(path, content);
             }
         }
     }
 
     fn clear() {
-        if let Some(dir) = Self::config_dir() {
-            let path: std::path::PathBuf = dir.join(TOKEN_FILE);
+        for dir in forge_ide_config_dirs() {
+            let path = dir.join(TOKEN_FILE);
             let _ = std::fs::remove_file(path);
-        }
-    }
-
-    pub fn exists() -> bool {
-        if let Some(dir) = Self::config_dir() {
-            let path: std::path::PathBuf = dir.join(TOKEN_FILE);
-            path.exists()
-        } else {
-            false
         }
     }
 }
@@ -166,8 +237,7 @@ pub struct ForgeSearchClient {
 
 impl ForgeSearchClient {
     pub fn new() -> Self {
-        let base_url = std::env::var("FORGE_SEARCH_URL")
-            .unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+        let base_url = resolve_base_url(None);
 
         let auth = AuthToken::load();
         tracing::info!(
@@ -415,7 +485,22 @@ impl ForgeSearchClient {
                         events
                     }
                     Err(e) => {
-                        vec![SseEvent::Error { error: e.to_string() }]
+                        // reqwest emits "error decoding response body" (and similar
+                        // decode / connection-reset errors) when the server closes the
+                        // SSE connection normally after sending requires_action or done.
+                        // That is not a real error — just treat it as end-of-stream.
+                        let msg = e.to_string();
+                        if e.is_decode()
+                            || msg.contains("error decoding response body")
+                            || msg.contains("connection closed")
+                            || msg.contains("connection reset")
+                            || msg.contains("unexpected EOF")
+                        {
+                            tracing::debug!("[SSE] Stream closed by server (normal): {}", msg);
+                            vec![]
+                        } else {
+                            vec![SseEvent::Error { error: msg }]
+                        }
                     }
                 };
                 futures_util::stream::iter(events)

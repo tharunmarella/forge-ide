@@ -600,7 +600,10 @@ impl PaletteData {
 
     /// Initialize the palette with all the available workspaces, local and remote.
     fn get_workspaces(&self) {
-        let db: Arc<LapceDb> = use_context().unwrap();
+        let Some(db) = use_context::<Arc<LapceDb>>() else {
+            tracing::warn!("Palette workspace list: LapceDb context unavailable");
+            return;
+        };
         let workspaces = db.recent_workspaces().unwrap_or_default();
 
         let items = workspaces
@@ -799,7 +802,10 @@ impl PaletteData {
     }
 
     fn get_ssh_hosts(&self) {
-        let db: Arc<LapceDb> = use_context().unwrap();
+        let Some(db) = use_context::<Arc<LapceDb>>() else {
+            tracing::warn!("Palette SSH hosts: LapceDb context unavailable");
+            return;
+        };
         let workspaces = db.recent_workspaces().unwrap_or_default();
         let mut hosts = HashSet::new();
         for workspace in workspaces.iter() {
@@ -852,7 +858,10 @@ impl PaletteData {
             vec![]
         };
 
-        let db: Arc<LapceDb> = use_context().unwrap();
+        let Some(db) = use_context::<Arc<LapceDb>>() else {
+            tracing::warn!("Palette WSL hosts: LapceDb context unavailable");
+            return;
+        };
         let workspaces = db.recent_workspaces().unwrap_or_default();
         let mut hosts = HashSet::new();
         for distro in distros {

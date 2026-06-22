@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use floem::ext_event::create_ext_action;
-use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
+use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith};
 use lapce_rpc::db::{
     DbConnectionConfig, DbQueryResult, DbSchema, DbTableStructure, DbType,
 };
@@ -38,6 +38,32 @@ pub struct ConnectionState {
     pub schema: Option<DbSchema>,
     /// Whether the schema tree is expanded in the sidebar
     pub expanded: bool,
+}
+
+fn merge_connection_list(
+    previous: &[ConnectionState],
+    configs: Vec<DbConnectionConfig>,
+) -> Vec<ConnectionState> {
+    configs
+        .into_iter()
+        .map(|config| {
+            if let Some(prev) = previous.iter().find(|c| c.config.id == config.id) {
+                ConnectionState {
+                    config,
+                    connected: prev.connected,
+                    schema: prev.schema.clone(),
+                    expanded: prev.expanded,
+                }
+            } else {
+                ConnectionState {
+                    config,
+                    connected: false,
+                    schema: None,
+                    expanded: false,
+                }
+            }
+        })
+        .collect()
 }
 
 /// Reactive state container for the Database Manager feature.
@@ -109,22 +135,22 @@ impl DatabaseViewData {
     /// Load all saved connections from the proxy
     pub fn load_connections(&self) {
         let connections = self.connections;
-        let send = create_ext_action(self.scope, move |result| {
-            if let Ok(ProxyResponse::DbConnectionsListResponse {
-                connections: conns,
-            }) = result
-            {
-                connections.set(
-                    conns
-                        .into_iter()
-                        .map(|config| ConnectionState {
-                            config,
-                            connected: false,
-                            schema: None,
-                            expanded: false,
-                        })
-                        .collect(),
-                );
+        let status = self.status_message;
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
+            match result {
+                Ok(ProxyResponse::DbConnectionsListResponse {
+                    connections: conns,
+                }) => {
+                    connections.update(|existing| {
+                        *existing = merge_connection_list(existing, conns);
+                    });
+                }
+                Ok(_) => {
+                    status.set(Some("Failed to load connections".to_string()));
+                }
+                Err(e) => {
+                    status.set(Some(format!("Failed to load connections: {}", e.message)));
+                }
             }
         });
         self.proxy.db_list_connections(move |result| {
@@ -135,22 +161,23 @@ impl DatabaseViewData {
     /// Save a connection config (add or update)
     pub fn save_connection(&self, config: DbConnectionConfig) {
         let connections = self.connections;
-        let send = create_ext_action(self.scope, move |result| {
-            if let Ok(ProxyResponse::DbConnectionsListResponse {
-                connections: conns,
-            }) = result
-            {
-                connections.set(
-                    conns
-                        .into_iter()
-                        .map(|config| ConnectionState {
-                            config,
-                            connected: false,
-                            schema: None,
-                            expanded: false,
-                        })
-                        .collect(),
-                );
+        let status = self.status_message;
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
+            match result {
+                Ok(ProxyResponse::DbConnectionsListResponse {
+                    connections: conns,
+                }) => {
+                    connections.update(|existing| {
+                        *existing = merge_connection_list(existing, conns);
+                    });
+                    status.set(Some("Connection saved".to_string()));
+                }
+                Ok(_) => {
+                    status.set(Some("Failed to save connection".to_string()));
+                }
+                Err(e) => {
+                    status.set(Some(format!("Failed to save connection: {}", e.message)));
+                }
             }
         });
         self.proxy.db_save_connection(config, move |result| {
@@ -163,27 +190,27 @@ impl DatabaseViewData {
         let connections = self.connections;
         let active = self.active_connection_id;
         let view_mode = self.view_mode;
+        let status = self.status_message;
         let conn_id = id.clone();
-        let send = create_ext_action(self.scope, move |result| {
-            if let Ok(ProxyResponse::DbConnectionsListResponse {
-                connections: conns,
-            }) = result
-            {
-                connections.set(
-                    conns
-                        .into_iter()
-                        .map(|config| ConnectionState {
-                            config,
-                            connected: false,
-                            schema: None,
-                            expanded: false,
-                        })
-                        .collect(),
-                );
-                // If we deleted the active connection, reset
-                if active.get() == Some(conn_id.clone()) {
-                    active.set(None);
-                    view_mode.set(DbViewMode::ConnectionList);
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
+            match result {
+                Ok(ProxyResponse::DbConnectionsListResponse {
+                    connections: conns,
+                }) => {
+                    connections.update(|existing| {
+                        *existing = merge_connection_list(existing, conns);
+                    });
+                    if active.get() == Some(conn_id.clone()) {
+                        active.set(None);
+                        view_mode.set(DbViewMode::ConnectionList);
+                    }
+                    status.set(Some("Connection deleted".to_string()));
+                }
+                Ok(_) => {
+                    status.set(Some("Failed to delete connection".to_string()));
+                }
+                Err(e) => {
+                    status.set(Some(format!("Failed to delete connection: {}", e.message)));
                 }
             }
         });
@@ -298,6 +325,14 @@ impl DatabaseViewData {
         let page_offset = self.page_offset;
         let page_size = self.page_size;
 
+        let is_new_table = selected_table.with_untracked(|selected| selected.as_ref() != Some(&table))
+            || self
+                .active_connection_id
+                .with_untracked(|active| active.as_ref() != Some(&connection_id));
+        if is_new_table {
+            page_offset.set(0);
+        }
+
         let offset = page_offset.get();
         let limit = page_size.get();
         let conn_id = connection_id.clone();
@@ -306,17 +341,23 @@ impl DatabaseViewData {
         loading.set(true);
         selected_table.set(Some(table.clone()));
 
-        let send = create_ext_action(self.scope, move |result| {
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
             loading.set(false);
-            if let Ok(ProxyResponse::DbQueryResponse { result }) = result {
-                table_data.set(Some(result));
-                view_mode.set(DbViewMode::TableData {
-                    connection_id: conn_id,
-                    table: tbl,
-                });
-                status.set(None);
-            } else {
-                status.set(Some("Failed to load table data".to_string()));
+            match result {
+                Ok(ProxyResponse::DbQueryResponse { result }) => {
+                    table_data.set(Some(result));
+                    view_mode.set(DbViewMode::TableData {
+                        connection_id: conn_id,
+                        table: tbl,
+                    });
+                    status.set(None);
+                }
+                Ok(_) => {
+                    status.set(Some("Failed to load table data".to_string()));
+                }
+                Err(e) => {
+                    status.set(Some(format!("Failed to load table data: {}", e.message)));
+                }
             }
         });
         self.proxy.db_get_table_data(
@@ -341,17 +382,26 @@ impl DatabaseViewData {
 
         loading.set(true);
 
-        let send = create_ext_action(self.scope, move |result| {
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
             loading.set(false);
-            if let Ok(ProxyResponse::DbTableStructureResponse { structure }) = result {
-                table_structure.set(Some(structure));
-                view_mode.set(DbViewMode::TableStructure {
-                    connection_id: conn_id,
-                    table: tbl,
-                });
-                status.set(None);
-            } else {
-                status.set(Some("Failed to load table structure".to_string()));
+            match result {
+                Ok(ProxyResponse::DbTableStructureResponse { structure }) => {
+                    table_structure.set(Some(structure));
+                    view_mode.set(DbViewMode::TableStructure {
+                        connection_id: conn_id,
+                        table: tbl,
+                    });
+                    status.set(None);
+                }
+                Ok(_) => {
+                    status.set(Some("Failed to load table structure".to_string()));
+                }
+                Err(e) => {
+                    status.set(Some(format!(
+                        "Failed to load table structure: {}",
+                        e.message
+                    )));
+                }
             }
         });
         self.proxy.db_get_table_structure(
@@ -389,28 +439,34 @@ impl DatabaseViewData {
 
         loading.set(true);
 
-        let send = create_ext_action(self.scope, move |result| {
+        let send = create_ext_action(self.scope, move |result: Result<ProxyResponse, lapce_rpc::RpcError>| {
             loading.set(false);
-            if let Ok(ProxyResponse::DbQueryResponse { result }) = result {
-                let msg = if let Some(affected) = result.affected_rows {
-                    Some(format!(
-                        "{} rows affected ({} ms)",
-                        affected, result.execution_time_ms
-                    ))
-                } else {
-                    Some(format!(
-                        "{} rows returned ({} ms)",
-                        result.rows.len(),
-                        result.execution_time_ms
-                    ))
-                };
-                table_data.set(Some(result));
-                view_mode.set(DbViewMode::QueryResults {
-                    connection_id: conn_id,
-                });
-                status.set(msg);
-            } else {
-                status.set(Some("Query execution failed".to_string()));
+            match result {
+                Ok(ProxyResponse::DbQueryResponse { result }) => {
+                    let msg = if let Some(affected) = result.affected_rows {
+                        Some(format!(
+                            "{} rows affected ({} ms)",
+                            affected, result.execution_time_ms
+                        ))
+                    } else {
+                        Some(format!(
+                            "{} rows returned ({} ms)",
+                            result.rows.len(),
+                            result.execution_time_ms
+                        ))
+                    };
+                    table_data.set(Some(result));
+                    view_mode.set(DbViewMode::QueryResults {
+                        connection_id: conn_id,
+                    });
+                    status.set(msg);
+                }
+                Ok(_) => {
+                    status.set(Some("Query execution failed".to_string()));
+                }
+                Err(e) => {
+                    status.set(Some(format!("Query execution failed: {}", e.message)));
+                }
             }
         });
         self.proxy.db_execute_query(

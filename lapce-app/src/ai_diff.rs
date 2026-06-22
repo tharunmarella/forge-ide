@@ -295,6 +295,7 @@ impl AiDiffStore {
                 diff.accept_all();
                 resolved.push(diff.clone());
             }
+            d.clear();
         });
         self.update_has_pending();
         self.version.update(|v| *v += 1);

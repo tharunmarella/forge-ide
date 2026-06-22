@@ -147,20 +147,57 @@
         }
         .msg-body th { background: var(--muted); font-weight: 600; }
 
-        /* ── Tool call badges (compact inline row) ─────────────── */
-        .tool-list {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            margin: 2px 0;
+        /* ── Tool group (collapsible after done) ───────────────── */
+        .tool-group { margin: 3px 0; }
+
+        /* Summary pill — always visible, click to toggle */
+        .tool-summary {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--muted-foreground);
+            cursor: pointer;
+            user-select: none;
+            border: none;
+            outline: none;
         }
+        .tool-summary:hover { background: var(--border); color: var(--foreground); }
+        .tool-summary-icon { font-size: 10px; transition: transform 0.15s; }
+        .tool-group.expanded .tool-summary-icon { transform: rotate(90deg); }
+        .tool-summary-label { color: var(--foreground); font-weight: 500; }
+        .tool-summary-count { color: var(--muted-foreground); }
+
+        /* Running indicator in summary while still active */
+        .tool-spin-sm {
+            width: 8px; height: 8px; border-radius: 50%;
+            border: 1.5px solid var(--muted-foreground);
+            border-top-color: var(--blue);
+            animation: spin 0.7s linear infinite;
+            flex-shrink: 0;
+        }
+
+        /* Expandable list of individual calls */
+        .tool-list {
+            display: none;
+            flex-direction: column;
+            gap: 1px;
+            margin-top: 3px;
+            padding-left: 12px;
+            border-left: 2px solid var(--border);
+        }
+        .tool-group.expanded .tool-list { display: flex; }
+
         .tool-item {
             display: flex;
             align-items: center;
             gap: 6px;
-            padding: 3px 8px;
-            border-radius: 4px;
-            background: var(--muted);
+            padding: 2px 6px;
+            border-radius: 3px;
             font-family: var(--font-mono);
             font-size: 11px;
             color: var(--muted-foreground);
@@ -168,14 +205,12 @@
             overflow: hidden;
         }
         .tool-dot {
-            width: 6px; height: 6px;
-            border-radius: 50%;
-            flex-shrink: 0;
-            background: var(--blue);
+            width: 6px; height: 6px; border-radius: 50%;
+            flex-shrink: 0; background: var(--blue);
         }
-        .tool-dot.done  { background: var(--green); }
-        .tool-dot.err   { background: var(--destructive-fg); }
-        .tool-dot.spin  {
+        .tool-dot.done { background: var(--green); }
+        .tool-dot.err  { background: var(--destructive-fg); }
+        .tool-dot.spin {
             background: transparent;
             border: 1.5px solid var(--muted-foreground);
             border-top-color: var(--blue);
@@ -205,6 +240,44 @@
             animation: spin 0.7s linear infinite;
             flex-shrink: 0;
         }
+
+        /* ── Plan ──────────────────────────────────────────────── */
+        .plan-wrap {
+            margin: 4px 0;
+            padding: 8px 10px;
+            background: var(--muted);
+            border-radius: var(--radius);
+            font-size: 12px;
+        }
+        .plan-header {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted-foreground);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .plan-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 2px 0;
+            line-height: 1.4;
+        }
+        .plan-num {
+            font-size: 10px;
+            color: var(--muted-foreground);
+            font-family: var(--font-mono);
+            flex-shrink: 0;
+            width: 14px;
+            text-align: right;
+            padding-top: 1px;
+        }
+        .plan-icon { flex-shrink: 0; font-size: 12px; line-height: 1.4; }
+        .plan-desc { color: var(--foreground); flex: 1; }
+        .plan-step.done     .plan-desc { color: var(--muted-foreground); text-decoration: line-through; }
+        .plan-step.active   .plan-desc { color: var(--blue); font-weight: 500; }
+        .plan-step.failed   .plan-desc { color: var(--destructive-fg); }
 
         /* ── Error ─────────────────────────────────────────────── */
         .error-line {
@@ -439,6 +512,7 @@ function ensureAiMsg() {
     if (curMsgDiv) return;
     curMsgDiv = document.createElement('div');
     curMsgDiv.className = 'msg ai';
+    curMsgDiv._planEl = null;
 
     curBodyDiv = document.createElement('div');
     curBodyDiv.className = 'msg-body';
@@ -449,13 +523,31 @@ function ensureAiMsg() {
     rawMd = '';
 }
 
-function getToolList() {
+function getToolGroup() {
     if (!curToolList) {
         if (!curMsgDiv) ensureAiMsg();
-        curToolList = document.createElement('div');
-        curToolList.className = 'tool-list';
-        // Insert tool list before the .msg-body
-        curMsgDiv.insertBefore(curToolList, curBodyDiv);
+
+        // Wrapper
+        const group = document.createElement('div');
+        group.className = 'tool-group expanded';  // expanded while running
+
+        // Clickable summary pill
+        const summary = document.createElement('button');
+        summary.className = 'tool-summary';
+        summary.innerHTML = '<span class="tool-spin-sm"></span><span class="tool-summary-icon">›</span><span class="tool-summary-label">Working…</span><span class="tool-summary-count"></span>';
+        summary.addEventListener('click', () => group.classList.toggle('expanded'));
+        group.appendChild(summary);
+
+        // Individual tool rows (hidden when collapsed)
+        const list = document.createElement('div');
+        list.className = 'tool-list';
+        group.appendChild(list);
+
+        curMsgDiv.insertBefore(group, curBodyDiv);
+        curToolList = list;
+        curToolList._group   = group;
+        curToolList._summary = summary;
+        curToolList._count   = 0;
     }
     return curToolList;
 }
@@ -501,12 +593,16 @@ window.receiveMessageFromKotlin = (jsonStr) => {
 
         case 'tool_start': {
             ensureAiMsg();
-            const tl = getToolList();
+            const tl = getToolGroup();
             const item = document.createElement('div');
             item.className = 'tool-item';
-            const summary = toolSummary(ev.name || '', ev.input);
-            item.innerHTML = `<div class="tool-dot spin"></div><span class="tool-name">${esc(ev.name || '')}</span>${summary ? `<span class="tool-detail">${esc(summary)}</span>` : ''}<span class="tool-status">running</span>`;
+            const detail = toolSummary(ev.name || '', ev.input);
+            item.innerHTML = `<div class="tool-dot spin"></div><span class="tool-name">${esc(ev.name || '')}</span>${detail ? `<span class="tool-detail">${esc(detail)}</span>` : ''}<span class="tool-status">running</span>`;
             tl.appendChild(item);
+            tl._count = (tl._count || 0) + 1;
+            // Update summary label to show current tool
+            const lbl = tl._summary?.querySelector('.tool-summary-label');
+            if (lbl) lbl.textContent = ev.name || 'Working…';
             if (ev.id) toolEls[ev.id] = item;
             break;
         }
@@ -531,6 +627,40 @@ window.receiveMessageFromKotlin = (jsonStr) => {
             e.textContent = ev.message || 'Unknown error';
             curMsgDiv.insertBefore(e, curBodyDiv);
             setWaiting(false);
+            break;
+        }
+
+        case 'plan_update': {
+            ensureAiMsg();
+            // Reuse or create the plan element for this message block
+            let planEl = curMsgDiv._planEl;
+            if (!planEl) {
+                planEl = document.createElement('div');
+                planEl.className = 'plan-wrap';
+                const hdr = document.createElement('div');
+                hdr.className = 'plan-header';
+                hdr.textContent = 'Plan';
+                planEl.appendChild(hdr);
+                curMsgDiv.insertBefore(planEl, curBodyDiv);
+                curMsgDiv._planEl = planEl;
+            }
+            // Re-render steps (plan events include the full up-to-date list)
+            const steps = ev.steps || [];
+            // Remove old step rows (keep the header)
+            while (planEl.children.length > 1) planEl.removeChild(planEl.lastChild);
+            steps.forEach((step) => {
+                const row = document.createElement('div');
+                const s = step.status || 'pending';
+                row.className = 'plan-step ' + (s === 'done' ? 'done' : s === 'in_progress' ? 'active' : s === 'failed' ? 'failed' : '');
+
+                const num  = document.createElement('span'); num.className = 'plan-num';  num.textContent = step.number || '';
+                const icon = document.createElement('span'); icon.className = 'plan-icon';
+                icon.textContent = s === 'done' ? '✓' : s === 'in_progress' ? '→' : s === 'failed' ? '✗' : '○';
+                const desc = document.createElement('span'); desc.className = 'plan-desc'; desc.textContent = step.description || '';
+
+                row.appendChild(num); row.appendChild(icon); row.appendChild(desc);
+                planEl.appendChild(row);
+            });
             break;
         }
 
@@ -579,8 +709,21 @@ window.receiveMessageFromKotlin = (jsonStr) => {
                 if (dot?.classList.contains('spin')) { dot.className = 'tool-dot done'; st.textContent = 'done'; }
                 delete toolEls[id];
             }
-            // Don't reset curMsgDiv — let next AI response continue in same block
-            // (adjacent .msg.ai + .msg.ai hides duplicate label via CSS)
+            // Collapse tool group and show final summary
+            if (curToolList?._group) {
+                const group   = curToolList._group;
+                const summary = curToolList._summary;
+                const n       = curToolList._count || 0;
+                // Replace spinner with checkmark, update label
+                const spin = summary.querySelector('.tool-spin-sm');
+                if (spin) { spin.style.border = 'none'; spin.style.animation = 'none'; }
+                const lbl = summary.querySelector('.tool-summary-label');
+                if (lbl) lbl.textContent = n === 1 ? '1 tool call' : `${n} tool calls`;
+                const cnt = summary.querySelector('.tool-summary-count');
+                if (cnt) cnt.textContent = '';
+                // Collapse — user can click › to expand
+                group.classList.remove('expanded');
+            }
             curMsgDiv = null; curBodyDiv = null; curToolList = null;
             setWaiting(false);
             break;

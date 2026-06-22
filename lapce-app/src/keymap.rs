@@ -1,10 +1,10 @@
-use std::{rc::Rc, sync::Arc};
+use std::{collections::HashSet, rc::Rc};
 
 use floem::{
     View,
     event::{Event, EventListener},
     reactive::{
-        Memo, ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith,
+        RwSignal, Scope, SignalGet, SignalUpdate, SignalWith,
         create_effect, create_memo, create_rw_signal,
     },
     style::CursorStyle,
@@ -15,8 +15,9 @@ use floem::{
 use lapce_core::mode::Modes;
 
 use crate::{
-    command::LapceCommand,
-    config::{LapceConfig, color::LapceColor},
+    alert::AlertButton,
+    command::{InternalCommand, LapceCommand},
+    config::color::LapceColor,
     keypress::{
         KeyPressData,
         keymap::{KeyMap, KeyMapPress},
@@ -359,7 +360,7 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
             .style(|s| s.absolute().size_pct(100.0, 100.0)),
         )
         .style(|s| s.width_pct(100.0).flex_basis(0.0).flex_grow(1.0)),
-        keyboard_picker_view(picker, common.ui_line_height, config),
+        keyboard_picker_view(picker, common.clone()),
     ))
     .style(|s| {
         s.absolute()
@@ -371,11 +372,43 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
     })
 }
 
+fn detect_key_conflicts(
+    keymap: &KeyMap,
+    new_keys: &[KeyMapPress],
+    keypress: &KeyPressData,
+) -> Option<String> {
+    let mut seen = HashSet::new();
+    for key in new_keys {
+        if !seen.insert(key.clone()) {
+            return Some(format!("Duplicate key binding: {}", key.label()));
+        }
+    }
+
+    if new_keys.is_empty() {
+        return None;
+    }
+
+    for keymaps in keypress.command_keymaps.values() {
+        for existing in keymaps {
+            if existing.key == new_keys && existing.command != keymap.command {
+                return Some(format!(
+                    "Key binding \"{}\" is already assigned to \"{}\"",
+                    new_keys.iter().map(|k| k.label()).collect::<Vec<_>>().join(" "),
+                    existing.command,
+                ));
+            }
+        }
+    }
+
+    None
+}
+
 fn keyboard_picker_view(
     picker: KeymapPicker,
-    ui_line_height: Memo<f64>,
-    config: ReadSignal<Arc<LapceConfig>>,
+    common: Rc<CommonData>,
 ) -> impl View {
+    let config = common.config;
+    let ui_line_height = common.ui_line_height;
     let picker_cmd = picker.cmd;
     let view = container(
         stack((
@@ -451,20 +484,37 @@ fn keyboard_picker_view(
                                 ))
                             })
                     })
-                    .on_click_stop(move |_| {
+                    .on_click_stop({
+                        let common = common.clone();
+                        move |_| {
                         let keymap = picker.keymap.get_untracked();
                         if let Some(keymap) = keymap {
                             let keys = picker.keys.get_untracked();
+                            let new_keys: Vec<KeyMapPress> =
+                                keys.iter().map(|(key, _)| key.clone()).collect();
+
+                            if let Some(conflict) = common.keypress.with_untracked(
+                                |keypress| {
+                                    detect_key_conflicts(&keymap, &new_keys, keypress)
+                                },
+                            ) {
+                                common.internal_command.send(InternalCommand::ShowAlert {
+                                    title: "Key Binding Conflict".to_string(),
+                                    msg: conflict,
+                                    buttons: vec![AlertButton {
+                                        text: "OK".to_string(),
+                                        action: Rc::new(|| {}),
+                                    }],
+                                });
+                            }
+
                             picker.keymap.set(None);
-                            KeyPressData::update_file(
-                                &keymap,
-                                &keys
-                                    .iter()
-                                    .map(|(key, _)| key.clone())
-                                    .collect::<Vec<KeyMapPress>>(),
-                            );
+                            KeyPressData::update_file(&keymap, &new_keys);
+                            common
+                                .internal_command
+                                .send(InternalCommand::ReloadConfig);
                         }
-                    }),
+                    }}),
                 text("Cancel")
                     .style(move |s| {
                         let config = config.get();

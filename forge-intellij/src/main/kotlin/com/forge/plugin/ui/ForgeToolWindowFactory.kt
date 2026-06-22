@@ -31,8 +31,7 @@ class ForgeToolWindowFactory : ToolWindowFactory {
         // Dispose the browser when the project closes to prevent resource leaks
         Disposer.register(project as Disposable, Disposable { browser.dispose() })
 
-        // Extract webview assets to a temp dir so relative paths (vendor/*.js)
-        // resolve correctly over file:// — loadHTML with a virtual origin breaks them
+        // Extract compiled React bundle to a temp dir and load via file://
         val webviewDir = extractWebviewResources()
         if (webviewDir != null) {
             browser.loadURL("file://${webviewDir.absolutePath}/index.html")
@@ -46,20 +45,16 @@ class ForgeToolWindowFactory : ToolWindowFactory {
         jsQuery.addHandler { message: String ->
             try {
                 val json = gson.fromJson(message, JsonObject::class.java)
+                val apiService = project.getService(com.forge.plugin.api.ForgeApiService::class.java)
                 when (json.get("action")?.asString) {
-                    "chat" -> {
-                        val text = json.get("text")?.asString ?: ""
-                        project.getService(com.forge.plugin.api.ForgeApiService::class.java)
-                            .sendMessage(text)
-                    }
-                    "stop" -> {
-                        project.getService(com.forge.plugin.api.ForgeApiService::class.java)
-                            .cancelStream()
-                    }
-                    "auth" -> {
-                        val provider = json.get("provider")?.asString ?: "github"
-                        startOAuthFlow(project, provider, uiService)
-                    }
+                    // React bridge calls: sendToKotlin('send_message', { message })
+                    "send_message" -> apiService.sendMessage(json.get("message")?.asString ?: "")
+                    "cancel"       -> apiService.cancelStream()
+                    "start_auth"   -> startOAuthFlow(project, "github", uiService)
+                    // Legacy aliases (old index.html)
+                    "chat"         -> apiService.sendMessage(json.get("text")?.asString ?: "")
+                    "stop"         -> apiService.cancelStream()
+                    "auth"         -> startOAuthFlow(project, json.get("provider")?.asString ?: "github", uiService)
                 }
             } catch (e: Exception) {
                 LOG.warn("Error parsing JS message: ${e.message}")
@@ -67,10 +62,11 @@ class ForgeToolWindowFactory : ToolWindowFactory {
             JBCefJSQuery.Response("OK")
         }
 
-        // On page load: inject bridge function and check auth on a pooled thread
+        // On page load: inject bridge + theme + check auth
         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadEnd(cefBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
-                val injectJs = "window.sendActionToKotlin = function(msg) { ${jsQuery.inject("msg")} };"
+                // Expose sendMessageToKotlin so React can call into Kotlin
+                val injectJs = "window.sendMessageToKotlin = function(msg) { ${jsQuery.inject("msg")} };"
                 cefBrowser.executeJavaScript(injectJs, cefBrowser.url, 0)
                 injectTheme(cefBrowser)
                 ApplicationManager.getApplication().executeOnPooledThread {
@@ -87,20 +83,19 @@ class ForgeToolWindowFactory : ToolWindowFactory {
 
     private fun extractWebviewResources(): File? {
         return try {
-            val tempDir = File(System.getProperty("java.io.tmpdir"), "forge-webview")
-            val resources = listOf(
-                "webview/index.html",
-                "webview/vendor/marked.min.js",
-                "webview/vendor/highlight.min.js",
-                "webview/vendor/github-dark.min.css",
-                "webview/vendor/mermaid.min.js"
-            )
-            for (resource in resources) {
-                val stream = javaClass.classLoader.getResourceAsStream(resource) ?: continue
-                val target = File(tempDir, resource.removePrefix("webview/"))
-                target.parentFile.mkdirs()
-                stream.use { input -> target.outputStream().use { out -> input.copyTo(out) } }
-            }
+            // Vite builds a single self-contained index.html (vite-plugin-singlefile)
+            // — just extract that one file, no asset directory needed
+            val tempDir = File(System.getProperty("java.io.tmpdir"), "forge-webview-react")
+            tempDir.mkdirs()
+
+            val stream = javaClass.classLoader.getResourceAsStream("webview/dist/index.html")
+                ?: run {
+                    LOG.error("webview/dist/index.html not found in classpath — run `npm run build` in webview-src/")
+                    return null
+                }
+            val target = File(tempDir, "index.html")
+            stream.use { it.copyTo(target.outputStream()) }
+            LOG.info("Webview extracted to ${target.absolutePath} (${target.length()} bytes)")
             tempDir
         } catch (e: Exception) {
             LOG.error("Failed to extract webview resources", e)
@@ -109,27 +104,30 @@ class ForgeToolWindowFactory : ToolWindowFactory {
     }
 
     private fun injectTheme(cefBrowser: CefBrowser) {
-        val laf = com.intellij.ide.ui.LafManager.getInstance().currentLookAndFeel
         val bg     = com.intellij.util.ui.UIUtil.getPanelBackground()
         val fg     = com.intellij.util.ui.UIUtil.getLabelForeground()
         val border = com.intellij.ui.JBColor.border()
+        val input  = com.intellij.util.ui.UIUtil.getTextFieldBackground()
 
         fun rgb(c: java.awt.Color) = "rgb(${c.red},${c.green},${c.blue})"
 
+        // Match the CSS variable names defined in index.css :root
         val vars = mapOf(
-            "background"       to rgb(bg),
-            "foreground"       to rgb(fg),
-            "muted"            to rgb(bg.darker()),
-            "muted-foreground" to rgb(fg.darker()),
-            "border"           to rgb(border),
-            "input"            to rgb(bg.darker()),
-            "ring"             to rgb(border),
-            "primary"          to rgb(fg),
-            "primary-foreground" to rgb(bg)
+            "--bg"       to rgb(bg),
+            "--bg-card"  to rgb(bg.brighter()),
+            "--bg-input" to rgb(input),
+            "--bg-code"  to "#1e1f22",
+            "--fg"       to rgb(fg),
+            "--fg-muted" to "rgb(136,136,136)",
+            "--fg-dim"   to "rgb(99,101,105)",
+            "--border"   to rgb(border),
+            "--accent"   to "rgb(76,158,217)",
+            "--danger"   to "rgb(199,84,80)",
+            "--green"    to "rgb(106,153,85)"
         )
-        val json = Gson().toJson(vars)
+        val payload = Gson().toJson(mapOf("type" to "apply_theme", "vars" to vars))
         cefBrowser.executeJavaScript(
-            "if(window.applyTheme) window.applyTheme($json);",
+            "window.postMessage($payload, '*');",
             cefBrowser.url, 0
         )
     }

@@ -1,22 +1,64 @@
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use floem::{
     IntoView, View,
-    views::{Decorators, container, label, stack, scroll, svg, Decorators as _, dyn_stack, empty},
-    reactive::{create_rw_signal, SignalGet, SignalUpdate, SignalWith},
-    event::{EventListener, EventPropagation},
-    kurbo::{Point, Size, Rect, Circle},
-    peniko::{Color, Brush},
-    style::{CursorStyle, Position},
-    action::{exec_after, TimerToken},
+    views::{Decorators, container, label, stack, scroll, svg, Decorators as _, dyn_stack},
+    reactive::{create_rw_signal, Scope, RwSignal, SignalGet, SignalUpdate},
+    kurbo::Point,
+    peniko::Color,
+    style::CursorStyle,
+    ext_event::create_ext_action,
 };
 use crate::{
     project_map::ProjectMapData,
     window_tab::WindowTabData,
     config::{color::LapceColor},
-    map_client::{MapNode, MapEdge},
 };
 use super::position::PanelPosition;
+
+fn spawn_map_fetch(
+    scope: Scope,
+    map_data: Arc<Mutex<ProjectMapData>>,
+    workspace_id: String,
+    base_url: String,
+    token: Option<String>,
+    focus_path: Option<String>,
+    focus_symbol: Option<String>,
+    loaded: RwSignal<bool>,
+    loading: RwSignal<bool>,
+    error_msg: RwSignal<Option<String>>,
+    map_revision: RwSignal<u64>,
+) {
+    loading.set(true);
+    let on_done = create_ext_action(
+        scope,
+        move |result: Result<ProjectMapData, String>| {
+            loading.set(false);
+            loaded.set(true);
+            match result {
+                Ok(data) => {
+                    if let Ok(mut md) = map_data.lock() {
+                        *md = data;
+                    }
+                    error_msg.set(None);
+                    map_revision.update(|r| *r += 1);
+                }
+                Err(e) => {
+                    error_msg.set(Some(format!("Error: {e}")));
+                    map_revision.update(|r| *r += 1);
+                }
+            }
+        },
+    );
+    std::thread::spawn(move || {
+        let mut data = ProjectMapData::new(workspace_id, base_url, token);
+        let result = data
+            .fetch_map(focus_path, focus_symbol)
+            .map(|_| data)
+            .map_err(|e| e.to_string());
+        on_done(result);
+    });
+}
 
 pub fn project_map_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -29,41 +71,64 @@ pub fn project_map_panel(
     
     let fs_client = forge_agent::forge_search::client();
     let base_url = fs_client.base_url().to_string();
-    
-    // We use a block_on here because project_map_panel is called in a sync context
-    // but we need the auth token which is behind an async RwLock.
-    let token = match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.block_on(async move { fs_client.token().await }),
-        Err(_) => {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async move { fs_client.token().await })
-        }
-    };
-    let token = if token.is_empty() { None } else { Some(token) };
-    
-    let map_data = Rc::new(RefCell::new(ProjectMapData::new(workspace_id, base_url, token)));
+    let scope = window_tab_data.common.scope;
+
+    let map_data = Arc::new(Mutex::new(ProjectMapData::new(
+        workspace_id.clone(),
+        base_url.clone(),
+        None,
+    )));
     let config = window_tab_data.common.config;
     let loaded = create_rw_signal(false);
+    let loading = create_rw_signal(true);
     let error_msg = create_rw_signal(None::<String>);
-    
-    // Auto-load the project map when the panel is created
+    /// Incremented after each fetch so Floem re-reads RefCell-backed map data.
+    let map_revision = create_rw_signal(0u64);
+
+    let workspace_id_hdr = workspace_id.clone();
+    let base_url_hdr = base_url.clone();
+
+    // Load token + initial map off the UI thread
     {
-        let map_data_load = map_data.clone();
-        let loaded_load = loaded.clone();
-        let error_msg_load = error_msg.clone();
-        
-        // Trigger the load immediately
-        let mut data = map_data_load.borrow_mut();
-        match data.fetch_map(None, None) {
-            Ok(_) => {
-                loaded_load.set(true);
-                error_msg_load.set(None);
-            }
-            Err(e) => {
-                error_msg_load.set(Some(format!("Error: {}", e)));
-                loaded_load.set(true); // Still show the error instead of loading
-            }
-        }
+        let scope_init = scope;
+        let map_data_init = map_data.clone();
+        let ws_init = workspace_id.clone();
+        let bu_init = base_url.clone();
+        let on_token = create_ext_action(scope_init, move |token: Option<String>| {
+            spawn_map_fetch(
+                scope_init,
+                map_data_init,
+                ws_init,
+                bu_init,
+                token,
+                None,
+                None,
+                loaded,
+                loading,
+                error_msg,
+                map_revision,
+            );
+        });
+        std::thread::spawn(move || {
+            let token = match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    handle.block_on(async { forge_agent::forge_search::client().token().await })
+                }
+                Err(_) => match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt.block_on(async {
+                        forge_agent::forge_search::client().token().await
+                    }),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to create tokio runtime for project map: {e}"
+                        );
+                        String::new()
+                    }
+                },
+            };
+            let token = if token.is_empty() { None } else { Some(token) };
+            on_token(token);
+        });
     }
 
     container(
@@ -98,9 +163,23 @@ pub fn project_map_panel(
                                     })
                                     .on_click_stop({
                                         let map_data_back = map_data_breadcrumb.clone();
+                                        let scope_nav = scope;
+                                        let ws_back = workspace_id_hdr.clone();
+                                        let bu_back = base_url_hdr.clone();
                                         move |_| {
-                                            let mut data = map_data_back.borrow_mut();
-                                            let _ = data.fetch_map(None, None); // Go back to top level
+                                            spawn_map_fetch(
+                                                scope_nav,
+                                                map_data_back.clone(),
+                                                ws_back.clone(),
+                                                bu_back.clone(),
+                                                None,
+                                                None,
+                                                None,
+                                                loaded,
+                                                loading,
+                                                error_msg,
+                                                map_revision,
+                                            );
                                         }
                                     }),
                                 
@@ -108,14 +187,19 @@ pub fn project_map_panel(
                                 {
                                     let map_data_level = map_data_breadcrumb.clone();
                                     label(move || {
-                                        let data = map_data_level.borrow();
-                                        if let Some(response) = &data.response {
-                                            if let Some(focus_path) = &response.focus_path {
-                                                format!("/ {}", focus_path)
-                                            } else if let Some(focus_symbol) = &response.focus_symbol {
-                                                format!("/ {} (symbol)", focus_symbol)
+                                        let _rev = map_revision.get();
+                                        let data = map_data_level.lock().ok();
+                                        if let Some(data) = data.as_deref() {
+                                            if let Some(response) = &data.response {
+                                                if let Some(focus_path) = &response.focus_path {
+                                                    format!("/ {}", focus_path)
+                                                } else if let Some(focus_symbol) = &response.focus_symbol {
+                                                    format!("/ {} (symbol)", focus_symbol)
+                                                } else {
+                                                    "/ Architecture Overview".to_string()
+                                                }
                                             } else {
-                                                "/ Architecture Overview".to_string()
+                                                String::new()
                                             }
                                         } else {
                                             String::new()
@@ -152,7 +236,13 @@ pub fn project_map_panel(
                 stack((
                     // Loading state
                     container(
-                        label(|| "Loading project map...".to_string())
+                        label(move || {
+                            if loading.get() {
+                                "Loading project map...".to_string()
+                            } else {
+                                String::new()
+                            }
+                        })
                             .style(move |s| {
                                 let config = config.get();
                                 s.font_size(config.ui.font_size() as f32)
@@ -164,7 +254,7 @@ pub fn project_map_panel(
                             .size_pct(100.0, 100.0)
                             .items_center()
                             .justify_center()
-                            .apply_if(loaded.get(), |s| s.hide())
+                            .apply_if(!loading.get(), |s| s.hide())
                     }),
                     
                     // Interactive Graph Canvas
@@ -182,7 +272,17 @@ pub fn project_map_panel(
                                 }),
                             
                             // Graph visualization
-                            interactive_graph_view(map_data_canvas, config.get())
+                            interactive_graph_view(
+                                map_data_canvas,
+                                config,
+                                map_revision,
+                                scope,
+                                loaded,
+                                loading,
+                                error_msg,
+                                Rc::new(workspace_id_hdr.clone()),
+                                Rc::new(base_url_hdr.clone()),
+                            )
                                 .style(move |s| {
                                     s.size_pct(100.0, 100.0)
                                         .apply_if(error_msg.get().is_some(), |s| s.hide())
@@ -191,7 +291,7 @@ pub fn project_map_panel(
                     })
                     .style(move |s| {
                         s.size_pct(100.0, 100.0)
-                            .apply_if(!loaded.get(), |s| s.hide())
+                            .apply_if(loading.get() || !loaded.get(), |s| s.hide())
                     })
                 ))
             })
@@ -203,47 +303,102 @@ pub fn project_map_panel(
 }
 
 fn interactive_graph_view(
-    map_data: Rc<RefCell<ProjectMapData>>,
-    config: std::sync::Arc<crate::config::LapceConfig>,
+    map_data: Arc<Mutex<ProjectMapData>>,
+    config: floem::reactive::ReadSignal<Arc<crate::config::LapceConfig>>,
+    map_revision: floem::reactive::RwSignal<u64>,
+    scope: floem::reactive::Scope,
+    loaded: floem::reactive::RwSignal<bool>,
+    loading: floem::reactive::RwSignal<bool>,
+    error_msg: floem::reactive::RwSignal<Option<String>>,
+    workspace_id: Rc<String>,
+    base_url: Rc<String>,
 ) -> impl View {
-    let map_data_clone = map_data.clone();
-    let config_clone = config.clone();
-    
     container(
         scroll(
             container(
                 stack((
+                    // Empty graph state
+                    {
+                        let map_data_empty_label = map_data.clone();
+                        let map_data_empty_style = map_data.clone();
+                        container(
+                        label(move || {
+                            if loaded.get() && !loading.get() {
+                                let empty = map_data_empty_label
+                                    .lock()
+                                    .ok()
+                                    .and_then(|data| {
+                                        data.response
+                                            .as_ref()
+                                            .map(|response| response.nodes.is_empty())
+                                    })
+                                    .unwrap_or(true);
+                                if empty {
+                                    return "No project graph data available".to_string();
+                                }
+                            }
+                            String::new()
+                        })
+                        .style(move |s| {
+                            let config = config.get();
+                            s.font_size(config.ui.font_size() as f32)
+                                .color(config.color(LapceColor::PANEL_FOREGROUND_DIM))
+                        }),
+                    )
+                    .style(move |s| {
+                        let show_empty = loaded.get()
+                            && !loading.get()
+                            && map_data_empty_style
+                                .lock()
+                                .ok()
+                                .and_then(|data| {
+                                    data.response
+                                        .as_ref()
+                                        .map(|response| response.nodes.is_empty())
+                                })
+                                .unwrap_or(true);
+                        s.absolute()
+                            .size_pct(100.0, 100.0)
+                            .items_center()
+                            .justify_center()
+                            .apply_if(!show_empty, |s| s.hide())
+                    })
+                    },
                     // SVG for edges
                     svg({
                         let map_data = map_data.clone();
                         move || {
-                            let data = map_data.borrow();
+                            let _rev = map_revision.get();
                             let mut svg_content = String::new();
-                            
-                            if let Some(response) = &data.response {
-                                for edge in &response.edges {
-                                    if let (Some(from_pos), Some(to_pos)) = (
-                                        data.node_positions.get(&edge.from_id),
-                                        data.node_positions.get(&edge.to_id)
-                                    ) {
-                                        let color = match edge.r#type.as_str() {
-                                            "DEPENDS_ON" => "#FF5722",    // Red-orange for component dependencies
-                                            "CALLS" => "#2196F3",        // Blue for function calls
-                                            "IMPORTS" => "#4CAF50",      // Green for imports
-                                            "BELONGS_TO" => "#9C27B0",   // Purple for belongs-to relationships
-                                            "imports" => "#4CAF50",      // Legacy support
-                                            "calls" => "#2196F3",        // Legacy support
-                                            "contains" => "#FF9800",     // Orange for contains
-                                            _ => "#757575",              // Gray for unknown
-                                        };
-                                        svg_content.push_str(&format!(
-                                            r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1" opacity="0.5"/>"#,
-                                            from_pos.x, from_pos.y, to_pos.x, to_pos.y, color
-                                        ));
+                            if let Ok(data) = map_data.lock() {
+                                if let Some(response) = &data.response {
+                                    for edge in &response.edges {
+                                        if let (Some(from_pos), Some(to_pos)) = (
+                                            data.node_positions.get(&edge.from_id),
+                                            data.node_positions.get(&edge.to_id),
+                                        ) {
+                                            let color = match edge.r#type.as_str() {
+                                                "DEPENDS_ON" => "#FF5722",
+                                                "CALLS" => "#2196F3",
+                                                "IMPORTS" => "#4CAF50",
+                                                "BELONGS_TO" => "#9C27B0",
+                                                "imports" => "#4CAF50",
+                                                "calls" => "#2196F3",
+                                                "contains" => "#FF9800",
+                                                _ => "#757575",
+                                            };
+                                            svg_content.push_str(&format!(
+                                                r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1" opacity="0.5"/>"#,
+                                                from_pos.x, from_pos.y, to_pos.x, to_pos.y, color
+                                            ));
+                                        }
                                     }
                                 }
                             }
-                            format!(r#"<svg viewBox="0 0 800 600" width="800" height="600">{}</svg>"#, svg_content)
+                            format!(
+                                r#"<svg viewBox="0 0 800 600" width="800" height="600">{}</svg>"#,
+                                svg_content
+                            )
                         }
                     })
                     .style(|s| s.absolute().size_pct(100.0, 100.0)),
@@ -253,20 +408,36 @@ fn interactive_graph_view(
                         {
                             let map_data = map_data.clone();
                             move || {
-                                let data = map_data.borrow();
-                                if let Some(response) = &data.response {
-                                    response.nodes.clone()
-                                } else {
-                                    Vec::new()
-                                }
+                                let _rev = map_revision.get();
+                                map_data
+                                    .lock()
+                                    .ok()
+                                    .and_then(|data| {
+                                        data.response
+                                            .as_ref()
+                                            .map(|response| response.nodes.clone())
+                                    })
+                                    .unwrap_or_default()
                             }
                         },
                         |node| node.id.clone(),
                         {
                             let map_data = map_data.clone();
+                            let scope_nav = scope;
+                            let loaded_nav = loaded;
+                            let loading_nav = loading;
+                            let error_msg_nav = error_msg;
+                            let map_revision_nav = map_revision;
+                            let workspace_id_nav = workspace_id.clone();
+                            let base_url_nav = base_url.clone();
                             move |node| {
-                                let data = map_data.borrow();
-                                let pos = data.node_positions.get(&node.id).cloned().unwrap_or(Point::ZERO);
+                                let pos = map_data
+                                    .lock()
+                                    .ok()
+                                    .and_then(|data| {
+                                        data.node_positions.get(&node.id).cloned()
+                                    })
+                                    .unwrap_or(Point::ZERO);
                                 let node_color = get_node_color(&node.kind);
                                 let node_name = node.name.clone();
                                 let node_kind = node.kind.clone();
@@ -309,26 +480,35 @@ fn interactive_graph_view(
                                                 let node_id = node_id.clone();
                                                 let node_kind = node_kind.clone();
                                                 label(move || {
-                                                    let data = map_data.borrow();
-                                                    let node = data.response.as_ref()
-                                                        .and_then(|r| r.nodes.iter().find(|n| n.id == node_id));
-                                                    
-                                                    if let Some(n) = node {
-                                                        // Show component-specific info
-                                                        if node_kind == "component" {
-                                                            // Try to get file_count and symbol_count from description
-                                                            let desc = n.description.clone().unwrap_or_default();
-                                                            if desc.is_empty() {
-                                                                "Architecture Component".to_string()
-                                                            } else {
-                                                                desc
-                                                            }
-                                                        } else {
-                                                            n.description.clone().unwrap_or_default()
-                                                        }
-                                                    } else {
-                                                        String::new()
-                                                    }
+                                                    let _rev = map_revision.get();
+                                                    map_data
+                                                        .lock()
+                                                        .ok()
+                                                        .and_then(|data| {
+                                                            data.response.as_ref().and_then(|r| {
+                                                                r.nodes
+                                                                    .iter()
+                                                                    .find(|n| n.id == node_id)
+                                                                    .and_then(|n| {
+                                                                        if node_kind == "component" {
+                                                                            Some(
+                                                                                n.description
+                                                                                    .clone()
+                                                                                    .filter(|d| !d.is_empty())
+                                                                                    .unwrap_or_else(
+                                                                                        || {
+                                                                                            "Architecture Component"
+                                                                                                .to_string()
+                                                                                        },
+                                                                                    ),
+                                                                            )
+                                                                        } else {
+                                                                            n.description.clone()
+                                                                        }
+                                                                    })
+                                                            })
+                                                        })
+                                                        .unwrap_or_default()
                                                 })
                                             }
                                             .style({
@@ -363,37 +543,45 @@ fn interactive_graph_view(
                                         .items_center()
                                         .cursor(CursorStyle::Pointer)
                                 })
-                                .on_click_stop(move |_| {
-                                    let mut data = map_data_click.borrow_mut();
-                                    
-                                    // Handle different node types for drill-down
-                                    match node_kind_click.as_str() {
-                                        "architecture_layer" => {
-                                            // For architecture layers, drill down to show components
-                                            let _ = data.fetch_map(Some(node_id_click.clone()), None::<String>);
-                                        }
-                                        "component" => {
-                                            // For components, use the node ID as focus_path
-                                            let _ = data.fetch_map(Some(node_id_click.clone()), None::<String>);
-                                        }
-                                        "file" => {
-                                            // For files, use the file_path as focus_path
-                                            if let Some(path) = &file_path {
-                                                let _ = data.fetch_map(Some(path.clone()), None::<String>);
+                                .on_click_stop({
+                                    let ws_nav = workspace_id_nav.clone();
+                                    let bu_nav = base_url_nav.clone();
+                                    move |_| {
+                                    let (focus_path, focus_symbol) =
+                                        match node_kind_click.as_str() {
+                                            "architecture_layer" | "component" => {
+                                                (Some(node_id_click.clone()), None)
                                             }
-                                        }
-                                        "function" | "class" | "struct" | "enum" => {
-                                            // For symbols, use focus_symbol
-                                            let _ = data.fetch_map(None, Some(node_id_click.clone()));
-                                        }
-                                        _ => {
-                                            // Default: try file_path first, then node_id
-                                            if let Some(path) = &file_path {
-                                                let _ = data.fetch_map(Some(path.clone()), None::<String>);
-                                            } else {
-                                                let _ = data.fetch_map(Some(node_id_click.clone()), None::<String>);
+                                            "file" => {
+                                                (
+                                                    file_path.clone(),
+                                                    None,
+                                                )
                                             }
-                                        }
+                                            "function" | "class" | "struct" | "enum" => {
+                                                (None, Some(node_id_click.clone()))
+                                            }
+                                            _ => {
+                                                if let Some(path) = &file_path {
+                                                    (Some(path.clone()), None)
+                                                } else {
+                                                    (Some(node_id_click.clone()), None)
+                                                }
+                                            }
+                                        };
+                                    spawn_map_fetch(
+                                        scope_nav,
+                                        map_data_click.clone(),
+                                        ws_nav.as_ref().clone(),
+                                        bu_nav.as_ref().clone(),
+                                        None,
+                                        focus_path.clone(),
+                                        focus_symbol.clone(),
+                                        loaded_nav,
+                                        loading_nav,
+                                        error_msg_nav,
+                                        map_revision_nav,
+                                    );
                                     }
                                 })
                             }
@@ -406,7 +594,7 @@ fn interactive_graph_view(
         )
         .style(move |s| {
             s.size_pct(100.0, 100.0)
-                .background(config_clone.color(LapceColor::PANEL_BACKGROUND))
+                .background(config.get().color(LapceColor::PANEL_BACKGROUND))
         })
     )
 }

@@ -14,6 +14,8 @@ pub enum MarkdownContent {
     Text(TextLayout),
     /// An image - can be a URL or a data URI (data:image/png;base64,...)
     Image { url: String, title: String },
+    /// A clickable hyperlink
+    Link { url: String, text: String },
     Separator,
 }
 
@@ -160,6 +162,23 @@ pub fn parse_markdown_sized(
                                 title: title.to_string(),
                             });
                         }
+                        Tag::Link {
+                            dest_url,
+                            title: _,
+                            link_type: _,
+                            id: _,
+                        } => {
+                            let link_text = current_text[start_offset..pos].to_string();
+                            current_text.truncate(start_offset);
+                            pos = start_offset;
+                            attr_list = AttrsList::new(default_attrs.clone());
+                            builder_dirty = current_text.is_empty();
+
+                            res.push(MarkdownContent::Link {
+                                url: dest_url.to_string(),
+                                text: link_text,
+                            });
+                        }
                         _ => {
                             // Presumably?
                             builder_dirty = true;
@@ -213,9 +232,30 @@ pub fn parse_markdown_sized(
                 pos += 1;
                 builder_dirty = true;
             }
-            Event::Rule => {}
-            Event::FootnoteReference(_text) => {}
-            Event::TaskListMarker(_text) => {}
+            Event::Rule => {
+                if builder_dirty {
+                    let mut text_layout = TextLayout::new();
+                    text_layout.set_text(&current_text, attr_list, None);
+                    res.push(MarkdownContent::Text(text_layout));
+                    attr_list = AttrsList::new(default_attrs.clone());
+                    current_text.clear();
+                    pos = 0;
+                    builder_dirty = false;
+                }
+                res.push(MarkdownContent::Separator);
+            }
+            Event::FootnoteReference(name) => {
+                let footnote = format!("[^{}]", name);
+                current_text.push_str(&footnote);
+                pos += footnote.len();
+                builder_dirty = true;
+            }
+            Event::TaskListMarker(checked) => {
+                let marker = if checked { "[x] " } else { "[ ] " };
+                current_text.push_str(marker);
+                pos += marker.len();
+                builder_dirty = true;
+            }
             Event::InlineHtml(_) => {} // TODO(panekj): Implement
             Event::InlineMath(_) => {} // TODO(panekj): Implement
             Event::DisplayMath(_) => {} // TODO(panekj): Implement
@@ -270,16 +310,15 @@ fn attribute_for_tag<'a>(
         Tag::CodeBlock(_) => Some(default_attrs.family(code_font_family)),
         Tag::Emphasis => Some(default_attrs.style(Style::Italic)),
         Tag::Strong => Some(default_attrs.weight(Weight::BOLD)),
-        // TODO: Strikethrough support
+        Tag::Strikethrough => Some(
+            default_attrs.color(config.color(LapceColor::PANEL_FOREGROUND_DIM)),
+        ),
         Tag::Link {
             link_type: _,
             dest_url: _,
             title: _,
             id: _,
-        } => {
-            // TODO: Link support
-            Some(default_attrs.color(config.color(LapceColor::EDITOR_LINK)))
-        }
+        } => Some(default_attrs.color(config.color(LapceColor::EDITOR_LINK))),
         // All other tags are currently ignored
         _ => None,
     }

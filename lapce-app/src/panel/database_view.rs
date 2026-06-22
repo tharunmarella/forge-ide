@@ -207,6 +207,67 @@ fn connection_tree_item(
                         .color(config.color(LapceColor::EDITOR_DIM))
                         .padding_horiz(4.0)
                 }),
+                // Connection actions
+                {
+                    let db_edit = db_data.clone();
+                    let db_delete = db_data.clone();
+                    let db_disconnect = db_data.clone();
+                    let edit_config = conn.config.clone();
+                    let delete_id = conn_id.clone();
+                    let disconnect_id = conn_id.clone();
+                    stack((
+                        label(|| "✎")
+                            .style(move |s| {
+                                let config = config.get();
+                                s.font_size(config.ui.font_size() as f32 * 0.85)
+                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                    .padding_horiz(4.0)
+                                    .cursor(CursorStyle::Pointer)
+                                    .hover(|s| {
+                                        s.color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                    })
+                            })
+                            .on_click_stop(move |_| {
+                                db_edit.show_edit_connection(edit_config.clone());
+                            }),
+                        label(|| "✕")
+                            .style(move |s| {
+                                let config = config.get();
+                                s.font_size(config.ui.font_size() as f32 * 0.85)
+                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                    .padding_horiz(4.0)
+                                    .cursor(CursorStyle::Pointer)
+                                    .hover(|s| {
+                                        s.color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                    })
+                            })
+                            .on_click_stop(move |_| {
+                                db_delete.delete_connection(delete_id.clone());
+                            }),
+                        label(move || if is_connected.get() { "⏏" } else { "" })
+                            .style(move |s| {
+                                let config = config.get();
+                                s.font_size(config.ui.font_size() as f32 * 0.85)
+                                    .color(config.color(LapceColor::EDITOR_DIM))
+                                    .padding_horiz(4.0)
+                                    .cursor(if is_connected.get() {
+                                        CursorStyle::Pointer
+                                    } else {
+                                        CursorStyle::Default
+                                    })
+                                    .apply_if(!is_connected.get(), |s| s.hide())
+                                    .hover(|s| {
+                                        s.color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                    })
+                            })
+                            .on_click_stop(move |_| {
+                                if is_connected.get_untracked() {
+                                    db_disconnect.disconnect(disconnect_id.clone());
+                                }
+                            }),
+                    ))
+                    .style(|s| s.flex_row().items_center().flex_shrink(0.0))
+                },
             ))
             .style(move |s| {
                 let config = config.get();
@@ -248,42 +309,74 @@ fn connection_tree_item(
                     move |t| t.name.clone(),
                     move |table_info| {
                         let db = db.clone();
+                        let db_structure = db.clone();
                         let cid = cid.clone();
+                        let cid_structure = cid.clone();
                         let tname = table_info.name.clone();
+                        let tname_structure = table_info.name.clone();
                         let ttype = table_info.table_type.clone();
                         let row_count = table_info.row_count;
 
-                        label(move || {
-                            let count_str = row_count
-                                .map(|c| format!(" ({})", c))
-                                .unwrap_or_default();
-                            format!("  {} {}{}", 
-                                if ttype == "collection" { "📁" } else { "📄" },
-                                tname, count_str)
-                        })
-                        .style(move |s| {
-                            let config = config.get();
-                            s.width_full()
-                                .padding_vert(3.0)
-                                .padding_left(32.0)
-                                .padding_right(8.0)
-                                .font_size(config.ui.font_size() as f32 * 0.9)
-                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
-                                .cursor(CursorStyle::Pointer)
-                                .text_ellipsis()
-                                .hover(|s| {
-                                    s.background(
-                                        config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                                    )
+                        stack((
+                            label(move || {
+                                let count_str = row_count
+                                    .map(|c| format!(" ({})", c))
+                                    .unwrap_or_default();
+                                format!(
+                                    "  {} {}{}",
+                                    if ttype == "collection" { "📁" } else { "📄" },
+                                    tname,
+                                    count_str
+                                )
+                            })
+                            .style(move |s| {
+                                let config = config.get();
+                                s.flex_grow(1.0)
+                                    .padding_vert(3.0)
+                                    .padding_left(32.0)
+                                    .font_size(config.ui.font_size() as f32 * 0.9)
+                                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                    .cursor(CursorStyle::Pointer)
+                                    .text_ellipsis()
+                                    .hover(|s| {
+                                        s.background(
+                                            config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                        )
+                                    })
+                            })
+                            .on_click_stop({
+                                let db = db.clone();
+                                let cid = cid.clone();
+                                let tname = table_info.name.clone();
+                                move |_| {
+                                    db.load_table_data(cid.clone(), tname.clone());
+                                }
+                            }),
+                            label(|| "ℹ")
+                                .style(move |s| {
+                                    let config = config.get();
+                                    s.padding_vert(3.0)
+                                        .padding_horiz(8.0)
+                                        .font_size(config.ui.font_size() as f32 * 0.85)
+                                        .color(config.color(LapceColor::EDITOR_DIM))
+                                        .cursor(CursorStyle::Pointer)
+                                        .flex_shrink(0.0)
+                                        .hover(|s| {
+                                            s.background(
+                                                config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                            )
+                                                .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                                        })
                                 })
-                        })
-                        .on_click_stop({
-                            let db = db.clone();
-                            let cid = cid.clone();
-                            let tname = table_info.name.clone();
-                            move |_| {
-                                db.load_table_data(cid.clone(), tname.clone());
-                            }
+                                .on_click_stop(move |_| {
+                                    db_structure.load_table_structure(
+                                        cid_structure.clone(),
+                                        tname_structure.clone(),
+                                    );
+                                }),
+                        ))
+                        .style(move |s| {
+                            s.width_full().flex_row().items_center()
                         })
                     },
                 )
@@ -454,10 +547,15 @@ fn main_content_area(db_data: DatabaseViewData, common: Rc<CommonData>) -> impl 
                 },
             )
             .style(|s| s.width_full().flex_grow(1.0).min_height(0.0)),
-            // Pagination bar
+            // Pagination bar (table data only)
             {
                 let db = db_data.clone();
-                pagination_bar(db, config)
+                let view_mode = db_data.view_mode;
+                container(pagination_bar(db, config)).style(move |s| {
+                    let show = matches!(view_mode.get(), DbViewMode::TableData { .. });
+                    s.width_full()
+                        .display(if show { Display::Flex } else { Display::None })
+                })
             },
         ))
         .style(|s| s.flex_col().width_full().height_full()),
@@ -517,8 +615,21 @@ fn data_grid_view(
             },
             move |data| {
                 data.as_ref()
-                    .map(|d| d.columns.len())
-                    .unwrap_or(0)
+                    .map(|d| {
+                        format!(
+                            "{}:{}:{}:{}:{}",
+                            d.columns
+                                .iter()
+                                .map(|c| format!("{}:{}", c.name, c.data_type))
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            d.rows.len(),
+                            d.total_count.unwrap_or(0),
+                            d.has_more,
+                            d.execution_time_ms
+                        )
+                    })
+                    .unwrap_or_else(|| "empty".to_string())
             },
             move |data| {
                 if let Some(result) = data {
@@ -847,7 +958,9 @@ fn pagination_bar(
                     })
             })
             .on_click_stop(move |_| {
-                db_prev.prev_page();
+                if page_offset.get_untracked() > 0 {
+                    db_prev.prev_page();
+                }
             }),
         // Page info
         label(move || {
@@ -892,7 +1005,13 @@ fn pagination_bar(
                     })
             })
             .on_click_stop(move |_| {
-                db_next.next_page();
+                let has_more = table_data
+                    .get_untracked()
+                    .map(|d| d.has_more)
+                    .unwrap_or(false);
+                if has_more {
+                    db_next.next_page();
+                }
             }),
     ))
     .style(move |s| {
@@ -1113,7 +1232,7 @@ fn connection_form_overlay(
                     form_field("Host:", form_host, "localhost", config),
                     form_field("Port:", form_port, "5432", config),
                     form_field("User:", form_user, "postgres / admin", config),
-                    form_field("Password:", form_password, "", config),
+                    password_form_field("Password:", form_password, config, scope),
                     form_field("Database:", form_database, "mydb", config),
                     // Action buttons
                     stack((
@@ -1217,7 +1336,8 @@ fn connection_form_overlay(
             )
             .style(move |s| {
                 let config = config.get();
-                s.width(800.0)
+                s.width_pct(95.0)
+                    .max_width(800.0)
                     .padding(24.0)
                     .border_radius(8.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
@@ -1261,6 +1381,76 @@ fn form_field(
         }),
         text_input(signal)
             .placeholder(placeholder)
+            .keyboard_navigable()
+            .style(move |s: floem::style::Style| {
+                let config = config.get();
+                s.flex_grow(1.0)
+                    .min_height(32.0)
+                    .padding_horiz(8.0)
+                    .padding_vert(6.0)
+                    .border(1.0)
+                    .border_radius(4.0)
+                    .border_color(config.color(LapceColor::LAPCE_BORDER))
+                    .background(config.color(LapceColor::EDITOR_BACKGROUND))
+                    .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                    .font_size(config.ui.font_size() as f32)
+                    .cursor(CursorStyle::Text)
+                    .set(floem::style::CursorColor, config.color(LapceColor::TERMINAL_CURSOR))
+            }),
+    ))
+    .style(|s| s.flex_row().items_start().margin_bottom(12.0).width_full())
+}
+
+/// Password field with masked display
+fn password_form_field(
+    label_text: &'static str,
+    password: floem::reactive::RwSignal<String>,
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    scope: floem::reactive::Scope,
+) -> impl View {
+    let display = scope.create_rw_signal(String::new());
+    let prev_len = scope.create_rw_signal(0usize);
+
+    scope.create_effect(move |_| {
+        let pw = password.get();
+        let masked = "•".repeat(pw.chars().count());
+        if display.get_untracked() != masked {
+            display.set(masked);
+            prev_len.set(pw.chars().count());
+        }
+    });
+
+    scope.create_effect(move |_| {
+        let visible = display.get();
+        let prev = prev_len.get_untracked();
+        let visible_len = visible.chars().count();
+
+        if visible_len > prev {
+            let added: String = visible.chars().skip(prev).collect();
+            password.update(|p| p.push_str(&added));
+        } else if visible_len < prev {
+            password.update(|p| p.truncate(visible_len));
+        }
+
+        let pw_len = password.get_untracked().chars().count();
+        let masked = "•".repeat(pw_len);
+        if visible != masked {
+            display.set(masked);
+        }
+        prev_len.set(pw_len);
+    });
+
+    stack((
+        label(move || label_text).style(move |s| {
+            let config = config.get();
+            s.width(130.0)
+                .font_size(config.ui.font_size() as f32)
+                .color(config.color(LapceColor::EDITOR_FOREGROUND))
+                .items_start()
+                .padding_top(6.0)
+        }),
+        text_input(display)
+            .placeholder("••••••")
             .keyboard_navigable()
             .style(move |s: floem::style::Style| {
                 let config = config.get();

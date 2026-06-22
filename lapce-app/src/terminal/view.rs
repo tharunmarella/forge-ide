@@ -8,9 +8,12 @@ use alacritty_terminal::{
 };
 use floem::{
     Renderer, View, ViewId,
+    action::show_context_menu,
     context::{EventCx, PaintCx},
     event::{Event, EventPropagation},
+    keyboard::{Key, Modifiers},
     kurbo::Stroke,
+    menu::{Menu, MenuItem},
     peniko::{
         Color,
         kurbo::{Point, Rect, Size},
@@ -28,10 +31,11 @@ use parking_lot::RwLock;
 use regex::Regex;
 use unicode_width::UnicodeWidthChar;
 
-use super::{panel::TerminalPanelData, raw::RawTerminal};
+use super::{data::TerminalData, panel::TerminalPanelData, raw::RawTerminal};
 use crate::{
+    app::clickable_icon,
     command::InternalCommand,
-    config::{LapceConfig, color::LapceColor},
+    config::{LapceConfig, color::LapceColor, icon::LapceIcons},
     debug::RunDebugProcess,
     editor::location::{EditorLocation, EditorPosition},
     listener::Listener,
@@ -60,6 +64,7 @@ struct TerminalLineContent<'a> {
 pub struct TerminalView {
     id: ViewId,
     term_id: TermId,
+    terminal: TerminalData,
     raw: Arc<RwLock<RawTerminal>>,
     mode: ReadSignal<Mode>,
     size: Size,
@@ -77,6 +82,7 @@ pub struct TerminalView {
 
 #[allow(clippy::too_many_arguments)]
 pub fn terminal_view(
+    terminal: TerminalData,
     term_id: TermId,
     raw: ReadSignal<Arc<RwLock<RawTerminal>>>,
     mode: ReadSignal<Mode>,
@@ -131,6 +137,7 @@ pub fn terminal_view(
     TerminalView {
         id,
         term_id,
+        terminal,
         raw: raw.get_untracked(),
         mode,
         config,
@@ -148,6 +155,19 @@ pub fn terminal_view(
 }
 
 impl TerminalView {
+    fn paste_from_clipboard(&self) {
+        self.terminal.paste_from_clipboard();
+    }
+
+    fn show_context_menu(&self) {
+        let terminal = self.terminal.clone();
+        let menu = Menu::new("")
+            .entry(MenuItem::new("Paste").action(move || {
+                terminal.paste_from_clipboard();
+            }));
+        show_context_menu(menu, None);
+    }
+
     fn char_size(&self) -> Size {
         let config = self.config.get_untracked();
         let font_family = config.terminal_font_family();
@@ -502,6 +522,17 @@ impl View for TerminalView {
         event: &Event,
     ) -> EventPropagation {
         match event {
+            Event::KeyDown(key_event) if self.is_focused => {
+                let is_paste = matches!(
+                    &key_event.key.logical_key,
+                    Key::Character(c) if c.as_str() == "v" || c.as_str() == "V"
+                ) && (key_event.modifiers == Modifiers::CONTROL
+                    || key_event.modifiers == Modifiers::META);
+                if is_paste {
+                    self.paste_from_clipboard();
+                    return EventPropagation::Stop;
+                }
+            }
             Event::PointerDown(e) => {
                 self.update_mouse_action_by_down(e);
             }
@@ -564,6 +595,7 @@ impl View for TerminalView {
                             }
                             clear_selection = true;
                         }
+                        self.show_context_menu();
                     }
                     _ => {
                         clear_selection = true;

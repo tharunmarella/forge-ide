@@ -30,8 +30,8 @@ use crate::{
     command::CommandExecuted,
     config::{
         DropdownInfo, LapceConfig, color::LapceColor, core::CoreConfig,
-        editor::EditorConfig, icon::LapceIcons, terminal::TerminalConfig,
-        ui::UIConfig,
+        editor::EditorConfig, forge::ForgeConfig, icon::LapceIcons,
+        terminal::TerminalConfig, ui::UIConfig,
     },
     keypress::KeyPressFocus,
     main_split::Editors,
@@ -181,6 +181,12 @@ impl SettingsData {
                     &TerminalConfig::DESCS[..],
                     into_settings_map(&config.terminal),
                 ),
+                (
+                    "Forge",
+                    &ForgeConfig::FIELDS[..],
+                    &ForgeConfig::DESCS[..],
+                    into_settings_map(&config.forge),
+                ),
             ] {
                 let pos = cx.create_rw_signal(Point::new(0.0, item_height_accum));
                 data_items.push_back(SettingsItem {
@@ -208,7 +214,12 @@ impl SettingsData {
                             Value::Number(index.into()),
                         )
                     } else {
-                        let value = settings_map.remove(&field).unwrap();
+                        let Some(value) = settings_map.remove(&field) else {
+                            tracing::warn!(
+                                "Settings field {field} missing from config map"
+                            );
+                            continue;
+                        };
                         (SettingsValue::from(value.clone()), value)
                     };
 
@@ -353,12 +364,22 @@ pub fn settings_view(
 
         let mut filtered_items = im::Vector::new();
         for item in &items {
-            if item.header || item.filter_text.contains(&pattern) {
+            let matches = if item.header {
+                item.kind.to_lowercase().contains(&pattern)
+            } else {
+                item.filter_text.contains(&pattern)
+            };
+            if matches {
                 filtered_items.push_back(item.clone());
             }
         }
         for item in plugin_items {
-            if item.header || item.filter_text.contains(&pattern) {
+            let matches = if item.header {
+                item.kind.to_lowercase().contains(&pattern)
+            } else {
+                item.filter_text.contains(&pattern)
+            };
+            if matches {
                 filtered_items.push_back(item);
             }
         }
@@ -388,7 +409,10 @@ pub fn settings_view(
                 }
             }
 
-            kinds.get(0).unwrap().0.to_string()
+            kinds
+                .get(0)
+                .map(|(kind, _)| kind.to_string())
+                .unwrap_or_default()
         })
     };
 
@@ -524,7 +548,6 @@ pub fn settings_view(
                         s.flex_col()
                             .padding_horiz(50.0)
                             .min_width_pct(100.0)
-                            .max_width(400.0)
                     })
                 })
                 .on_scroll(move |rect| {
@@ -758,7 +781,7 @@ fn settings_item_view(
         s.flex_col()
             .padding_vert(10.0)
             .min_width_pct(100.0)
-            .max_width(300.0)
+            .max_width_pct(100.0)
     })
 }
 

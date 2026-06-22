@@ -12,8 +12,6 @@
 
 use std::rc::Rc;
 
-use std::sync::atomic::AtomicU64;
-
 use floem::{
     IntoView, View,
     event::EventListener,
@@ -35,7 +33,7 @@ use crate::{
     ai_chat::{
         AiChatData, ChatEntry, ChatEntryKind, ChatRole, ChatToolCall, ToolCallStatus,
         ChatPlan, ChatPlanStep, ChatPlanStepStatus, ChatServerToolCall,
-        ALL_PROVIDERS, models_for_provider,
+        ALL_PROVIDERS, models_for_provider, new_message,
     },
     config::{color::LapceColor, icon::LapceIcons},
     text_input::TextInputBuilder,
@@ -43,6 +41,32 @@ use crate::{
 };
 
 // ── View functions ───────────────────────────────────────────────
+
+/// Report agent RPC failures as system messages in the chat thread.
+fn report_agent_rpc_error(
+    entries: floem::reactive::RwSignal<im::Vector<ChatEntry>>,
+    result: Result<lapce_rpc::proxy::ProxyResponse, lapce_rpc::RpcError>,
+) {
+    match result {
+        Ok(lapce_rpc::proxy::ProxyResponse::AgentError { error }) => {
+            entries.update(|entries| {
+                entries.push_back(new_message(
+                    ChatRole::System,
+                    format!("Error: {}", error),
+                ));
+            });
+        }
+        Err(rpc_err) => {
+            entries.update(|entries| {
+                entries.push_back(new_message(
+                    ChatRole::System,
+                    format!("RPC Error: {}", rpc_err.message),
+                ));
+            });
+        }
+        _ => {}
+    }
+}
 
 /// Build the AI chat panel.
 /// Shows setup view if no keys configured, otherwise the chat view.
@@ -59,9 +83,12 @@ pub fn ai_chat_panel(
     container(
         dyn_stack(
             move || {
-                let _ = keys_config.with(|_| ()); // track so UI updates when API keys change
-                let has_key = chat_data.has_any_key(); // forge-auth.json (same path as agent) or API keys
-                vec![has_key]
+                let _ = keys_config.with(|_| ()); // track API key changes
+                let _ = chat_data.index_status.with(|_| ()); // track auth failures
+                let has_api_keys = chat_data.keys_config.with_untracked(|c| c.has_any_key());
+                let forge_ok = forge_agent::forge_search::is_authenticated();
+                let auth_expired = chat_data.index_status.with_untracked(|s| s == "Auth expired");
+                vec![(has_api_keys || forge_ok) && !auth_expired]
             },
             |v| *v,
             {
@@ -197,8 +224,7 @@ fn start_oauth_flow(
     let session_id = uuid::Uuid::new_v4().to_string();
     
     // Open browser with poll state
-    let base = std::env::var("FORGE_SEARCH_URL")
-        .unwrap_or_else(|_| "https://forge-search-production.up.railway.app".to_string());
+    let base = forge_agent::forge_search::resolve_base_url(None);
     let url = format!("{}/auth/{}?state=poll-{}", base, provider, session_id);
     
     if let Err(e) = open::that(&url) {
@@ -377,6 +403,8 @@ fn ai_diff_toolbar(window_tab_data: Rc<WindowTabData>) -> impl View {
     let proxy_reject = window_tab_data.common.proxy.clone();
     let ai_diffs_accept = ai_diffs.clone();
     let ai_diffs_reject = ai_diffs.clone();
+    let chat_entries = window_tab_data.ai_chat.entries;
+    let chat_scope = window_tab_data.ai_chat.scope;
 
     container(
         stack((
@@ -397,9 +425,12 @@ fn ai_diff_toolbar(window_tab_data: Rc<WindowTabData>) -> impl View {
             label(|| "Accept All".to_string())
                 .on_click_stop(move |_| {
                     ai_diffs_accept.accept_all();
+                    let entries = chat_entries;
                     proxy_accept.request_async(
                         lapce_rpc::proxy::ProxyRequest::AgentDiffAcceptAll {},
-                        |_| {},
+                        create_ext_action(chat_scope, move |result| {
+                            report_agent_rpc_error(entries, result);
+                        }),
                     );
                 })
                 .style(move |s| {
@@ -421,9 +452,12 @@ fn ai_diff_toolbar(window_tab_data: Rc<WindowTabData>) -> impl View {
             label(|| "Reject All".to_string())
                 .on_click_stop(move |_| {
                     ai_diffs_reject.reject_all();
+                    let entries = chat_entries;
                     proxy_reject.request_async(
                         lapce_rpc::proxy::ProxyRequest::AgentDiffRejectAll {},
-                        |_| {},
+                        create_ext_action(chat_scope, move |result| {
+                            report_agent_rpc_error(entries, result);
+                        }),
                     );
                 })
                 .style(move |s| {
@@ -467,6 +501,7 @@ fn chat_header(
 ) -> impl View {
     let chat_data_clear = chat_data.clone();
     let chat_data_badge = chat_data.clone();
+    let chat_data_model = chat_data.clone();
 
     // Kick off a background index status check
     chat_data.refresh_index_status();
@@ -491,6 +526,7 @@ fn chat_header(
                 }),
             ))
             .style(|s| s.items_center()),
+            model_selector(config, chat_data_model),
             // Index status badge with Index button + progress bar
             index_status_badge(config, chat_data_badge),
             // Spacer
@@ -632,6 +668,7 @@ fn chat_message_list(
     proxy: lapce_rpc::proxy::ProxyRpcHandler,
 ) -> impl View {
     let entries = chat_data.entries;
+    let chat_scope = chat_data.scope;
     let chat_data_dropdown = chat_data.clone();
     let is_loading = chat_data.is_loading;
     let has_first_token = chat_data.has_first_token;
@@ -645,7 +682,7 @@ fn chat_message_list(
     // Scroll containers give children unconstrained horizontal width in taffy,
     // so rich_text's built-in wrapping never fires. We fix this by pre-calling
     // text_layout.set_size(panel_width) before the layout pass.
-    let panel_width = floem::reactive::create_rw_signal(0.0_f64);
+    let panel_width = floem::reactive::create_rw_signal(320.0_f64);
 
     stack((
         // ── Dropdown overlay (shown when dropdown_open is true) ──
@@ -662,7 +699,18 @@ fn chat_message_list(
                     |entry: &ChatEntry| entry.key(),
                     {
                         let proxy = proxy.clone();
-                        move |entry| chat_entry_view(config, entry, internal_command, proxy.clone(), panel_width, auto_approve_session)
+                        move |entry| {
+                            chat_entry_view(
+                                config,
+                                entry,
+                                internal_command,
+                                proxy.clone(),
+                                panel_width,
+                                auto_approve_session,
+                                entries,
+                                chat_scope,
+                            )
+                        }
                     },
                 )
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
@@ -724,12 +772,7 @@ fn chat_message_list(
         .scroll_to(move || {
             // React to scroll_trigger changes to auto-scroll to bottom
             let _trigger = scroll_trigger.get();
-            let loading = is_loading.get();
-            if loading {
-                Some(Point::new(0.0, f64::MAX))
-            } else {
-                None
-            }
+            Some(Point::new(0.0, f64::MAX))
         })
         .style(|s| {
             s.flex_grow(1.0)
@@ -742,10 +785,9 @@ fn chat_message_list(
     ))
     .on_resize(move |rect| {
         // Update the tracked panel width whenever the outer container resizes.
-        // This triggers re-computation of all rich_text closures that read panel_width,
-        // which pre-calls set_size() on their TextLayouts and requests a re-layout.
+        // Ignore zero-width first paint so markdown pre-wrap keeps a sensible default.
         let w = rect.width();
-        if (panel_width.get_untracked() - w).abs() > 1.0 {
+        if w > 40.0 && (panel_width.get_untracked() - w).abs() > 1.0 {
             panel_width.set(w);
         }
     })
@@ -793,6 +835,36 @@ fn thinking_indicator(
             .width_pct(100.0)
             .apply_if(!show, |s| s.hide())
     })
+}
+
+/// Clickable model selector shown in the header; opens the model dropdown.
+fn model_selector(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    chat_data: AiChatData,
+) -> impl View {
+    let dropdown_open = chat_data.dropdown_open;
+    let provider = chat_data.provider;
+    let model = chat_data.model;
+
+    label(move || format!("{} / {} \u{25BE}", provider.get(), model.get()))
+        .on_click_stop(move |_| {
+            dropdown_open.update(|open| *open = !*open);
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                .padding_horiz(8.0)
+                .padding_vert(3.0)
+                .margin_left(4.0)
+                .cursor(CursorStyle::Pointer)
+                .color(config.color(LapceColor::PANEL_FOREGROUND))
+                .border(1.0)
+                .border_radius(4.0)
+                .border_color(config.color(LapceColor::LAPCE_BORDER))
+                .hover(|s| {
+                    s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                })
+        })
 }
 
 /// The dropdown panel that appears below the header when model is clicked.
@@ -882,15 +954,27 @@ fn chat_entry_view(
     proxy: lapce_rpc::proxy::ProxyRpcHandler,
     panel_width: floem::reactive::RwSignal<f64>,
     auto_approve_session: floem::reactive::RwSignal<bool>,
+    entries: floem::reactive::RwSignal<im::Vector<ChatEntry>>,
+    scope: Scope,
 ) -> impl View {
     match entry.kind {
         ChatEntryKind::Message { role, content } => {
-            message_bubble(config, role, content, panel_width).into_any()
+            message_bubble(config, role, content, panel_width, internal_command).into_any()
         }
         ChatEntryKind::ToolCall(tc) => {
             // Approval-pending tools get Accept/Reject/Approve-All buttons
             if tc.status == ToolCallStatus::WaitingApproval || tc.status == ToolCallStatus::AwaitingReview {
-                return approval_card(config, tc, proxy, internal_command, auto_approve_session, panel_width).into_any();
+                return approval_card(
+                    config,
+                    tc,
+                    proxy,
+                    internal_command,
+                    auto_approve_session,
+                    panel_width,
+                    entries,
+                    scope,
+                )
+                .into_any();
             }
             // File-related tools get a special clickable file block
             let is_file_tool = matches!(
@@ -928,6 +1012,7 @@ fn message_bubble(
     role: ChatRole,
     content: String,
     panel_width: floem::reactive::RwSignal<f64>,
+    internal_command: crate::listener::Listener<crate::command::InternalCommand>,
 ) -> impl View {
     let is_user = role == ChatRole::User;
     let is_system = role == ChatRole::System;
@@ -945,6 +1030,12 @@ fn message_bubble(
         crate::markdown::parse_markdown_sized(&content, 1.5, &cfg, chat_font)
     } else {
         Vec::new()
+    };
+    let content_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
     };
 
     container(
@@ -965,11 +1056,37 @@ fn message_bubble(
             }),
             // Message content: markdown for assistant, plain text otherwise
             if is_assistant {
-                let id_counter = AtomicU64::new(0);
                 dyn_stack(
-                    move || md_content.clone(),
-                    move |_| id_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-                    move |md_item| {
+                    move || {
+                        md_content
+                            .iter()
+                            .enumerate()
+                            .map(|(i, item)| (i, item.clone()))
+                            .collect::<Vec<_>>()
+                    },
+                    move |(idx, item)| {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        content_hash.hash(&mut hasher);
+                        idx.hash(&mut hasher);
+                        match item {
+                            crate::markdown::MarkdownContent::Link { url, text } => {
+                                url.hash(&mut hasher);
+                                text.hash(&mut hasher);
+                            }
+                            crate::markdown::MarkdownContent::Image { url, .. } => {
+                                url.hash(&mut hasher);
+                            }
+                            crate::markdown::MarkdownContent::Separator => {
+                                0u8.hash(&mut hasher);
+                            }
+                            crate::markdown::MarkdownContent::Text(_) => {
+                                1u8.hash(&mut hasher);
+                            }
+                        }
+                        hasher.finish()
+                    },
+                    move |(_, md_item)| {
                         use crate::markdown::MarkdownContent;
                         match md_item {
                             MarkdownContent::Text(text_layout) => container(
@@ -1000,6 +1117,26 @@ fn message_bubble(
                             )
                             .style(|s| s.width_pct(100.0))
                             .into_any(),
+                            MarkdownContent::Link { url, text } => {
+                                let url_click = url.clone();
+                                let cmd = internal_command.clone();
+                                container(
+                                    label(move || text.clone()).style(move |s| {
+                                        let config = config.get();
+                                        s.color(config.color(LapceColor::EDITOR_LINK))
+                                            .cursor(CursorStyle::Pointer)
+                                    }),
+                                )
+                                .on_click_stop(move |_| {
+                                    if !url_click.is_empty() {
+                                        cmd.send(crate::command::InternalCommand::OpenWebUri {
+                                            uri: url_click.clone(),
+                                        });
+                                    }
+                                })
+                                .style(|s| s.width_pct(100.0))
+                                .into_any()
+                            }
                             MarkdownContent::Image { url, .. } => {
                                 // Handle both data URIs and regular URLs
                                 if url.starts_with("data:image/") {
@@ -1326,6 +1463,8 @@ fn approval_card(
     internal_command: crate::listener::Listener<crate::command::InternalCommand>,
     auto_approve_session: floem::reactive::RwSignal<bool>,
     panel_width: floem::reactive::RwSignal<f64>,
+    entries: floem::reactive::RwSignal<im::Vector<ChatEntry>>,
+    scope: Scope,
 ) -> impl View {
     let tool_name = tc.name.clone();
     let summary = tc.output.clone().unwrap_or_else(|| format!("Execute: {}", tool_name));
@@ -1528,11 +1667,14 @@ fn approval_card(
                 stack((
                     label(|| "Accept".to_string())
                         .on_click_stop(move |_| {
+                            let entries = entries;
                             proxy_accept.request_async(
                                 lapce_rpc::proxy::ProxyRequest::AgentApproveToolCall {
                                     tool_call_id: tc_id.clone(),
                                 },
-                                |_| {},
+                                create_ext_action(scope, move |result| {
+                                    report_agent_rpc_error(entries, result);
+                                }),
                             );
                         })
                         .style(move |s| {
@@ -1553,11 +1695,14 @@ fn approval_card(
 
                     label(|| "Reject".to_string())
                         .on_click_stop(move |_| {
+                            let entries = entries;
                             proxy_reject.request_async(
                                 lapce_rpc::proxy::ProxyRequest::AgentRejectToolCall {
                                     tool_call_id: tc_id_reject.clone(),
                                 },
-                                |_| {},
+                                create_ext_action(scope, move |result| {
+                                    report_agent_rpc_error(entries, result);
+                                }),
                             );
                         })
                         .style(move |s| {
@@ -1588,16 +1733,22 @@ fn approval_card(
                     .on_click_stop(move |_| {
                         if !auto_approve_session.get_untracked() {
                             auto_approve_session.set(true);
+                            let entries_approve = entries;
                             // Approve current tool call + tell proxy to enable session auto-approve
                             proxy_approve_all.request_async(
                                 lapce_rpc::proxy::ProxyRequest::AgentApproveToolCall {
                                     tool_call_id: tc_id_approve_all.clone(),
                                 },
-                                |_| {},
+                                create_ext_action(scope, move |result| {
+                                    report_agent_rpc_error(entries_approve, result);
+                                }),
                             );
+                            let entries_future = entries;
                             proxy_approve_all.request_async(
                                 lapce_rpc::proxy::ProxyRequest::AgentApproveAllFuture {},
-                                |_| {},
+                                create_ext_action(scope, move |result| {
+                                    report_agent_rpc_error(entries_future, result);
+                                }),
                             );
                         }
                     })
@@ -2379,6 +2530,7 @@ fn chat_input_area(
     let chat_data_attach = chat_data.clone();
     let chat_data_preview = chat_data.clone();
     let chat_data_paste = chat_data.clone();
+    let chat_data_stop = chat_data.clone();
 
     // ── Image preview strip (shown above input when images are attached) ──
     let image_preview = dyn_stack(
@@ -2448,6 +2600,9 @@ fn chat_input_area(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="32" d="M216.08 192v143.85a40.08 40.08 0 0 0 80.15 0l.13-188.55a67.94 67.94 0 1 0-135.87 0v189.82a95.51 95.51 0 1 0 191 0V159.74"/></svg>"#.to_string()
         })
         .on_click_stop(move |_| {
+            if is_loading.get_untracked() {
+                return;
+            }
             // Open file picker for images
             use floem::action::open_file;
             use floem::file::FileDialogOptions;
@@ -2476,12 +2631,22 @@ fn chat_input_area(
         })
         .style(move |s| {
             let config = config.get();
+            let loading = is_loading.get();
             s.width(28.0)
                 .height(28.0)
                 .padding(6.0)
-                .cursor(CursorStyle::Pointer)
+                .cursor(if loading {
+                    CursorStyle::Default
+                } else {
+                    CursorStyle::Pointer
+                })
                 .color(config.color(LapceColor::EDITOR_DIM))
-                .hover(|s| s.color(config.color(LapceColor::EDITOR_FOREGROUND)))
+                .apply_if(loading, |s| {
+                    s.color(config.color(LapceColor::EDITOR_DIM).multiply_alpha(0.4))
+                })
+                .apply_if(!loading, |s| {
+                    s.hover(|s| s.color(config.color(LapceColor::EDITOR_FOREGROUND)))
+                })
         }),
         // Input editor -- fills all remaining width
         scroll(
@@ -2527,6 +2692,32 @@ fn chat_input_area(
                 .items_center()
                 .background(config.color(LapceColor::EDITOR_BACKGROUND))
         }),
+        // Stop button — visible while the agent is generating
+        container(
+            label(|| "\u{25A0}".to_string())
+                .style(move |s| {
+                    let config = config.get();
+                    s.font_size(14.0)
+                        .color(config.color(LapceColor::PANEL_FOREGROUND))
+                }),
+        )
+        .on_click_stop(move |_| {
+            chat_data_stop.cancel_message();
+        })
+        .style(move |s| {
+            let config = config.get();
+            let loading = is_loading.get();
+            s.width(32.0)
+                .height_pct(100.0)
+                .items_center()
+                .justify_center()
+                .cursor(CursorStyle::Pointer)
+                .background(config.color(LapceColor::LAPCE_ERROR))
+                .hover(|s| {
+                    s.background(config.color(LapceColor::LAPCE_ERROR).multiply_alpha(0.85))
+                })
+                .apply_if(!loading, |s| s.hide())
+        }),
         // Mic button (SVG mic icon, or stop square when recording)
         {
             let is_rec = is_recording;
@@ -2562,23 +2753,33 @@ fn chat_input_area(
                 .style(|s| s.items_center().justify_center()),
             )
             .on_click_stop(move |_| {
-                chat_data_mic.toggle_recording();
+                if !is_loading.get_untracked() {
+                    chat_data_mic.toggle_recording();
+                }
             })
             .style(move |s| {
                 let config = config.get();
                 let recording = is_recording.get();
+                let loading = is_loading.get();
                 s.width(32.0)
                     .height_pct(100.0)
                     .items_center()
                     .justify_center()
-                    .cursor(CursorStyle::Pointer)
+                    .cursor(if loading {
+                        CursorStyle::Default
+                    } else {
+                        CursorStyle::Pointer
+                    })
                     .background(if recording {
                         config.color(LapceColor::LAPCE_ERROR)
                     } else {
                         config.color(LapceColor::EDITOR_BACKGROUND)
                     })
-                    .hover(|s| {
-                        s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                    .apply_if(loading, |s| s.hide())
+                    .apply_if(!loading && !recording, |s| {
+                        s.hover(|s| {
+                            s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+                        })
                     })
             })
         },

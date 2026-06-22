@@ -235,10 +235,6 @@ fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Containe
         .is_focused(is_focused)
         .key_focus(text_input_file_explorer_data)
         .build_editor(naming_editor_data.clone())
-        .on_event_stop(EventListener::FocusLost, move |_| {
-            data.finish_naming();
-            data.naming.set(Naming::None);
-        })
         .style(move |s| {
             s.width_full()
                 .height(ui_line_height.get())

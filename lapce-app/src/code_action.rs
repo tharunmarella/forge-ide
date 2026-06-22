@@ -106,11 +106,19 @@ impl CodeActionData {
             let code_action = code_action.clone();
             cx.create_effect(move |_| {
                 let focus = code_action.common.focus.get();
-                if focus != Focus::CodeAction
-                    && code_action.status.get_untracked()
-                        != CodeActionStatus::Inactive
-                {
-                    code_action.cancel();
+                if code_action.status.get_untracked() == CodeActionStatus::Inactive {
+                    return;
+                }
+                if focus == Focus::CodeAction {
+                    return;
+                }
+                match focus {
+                    Focus::Palette
+                    | Focus::Rename
+                    | Focus::AboutPopup
+                    | Focus::SearchPopup
+                    | Focus::Panel(_) => code_action.cancel(),
+                    _ => {}
                 }
             })
         }
@@ -134,10 +142,14 @@ impl CodeActionData {
 
     pub fn next_page(&self) {
         let config = self.common.config.get_untracked();
-        let count = ((self.layout_rect.size().height
-            / config.editor.line_height() as f64)
-            .floor() as usize)
-            .saturating_sub(1);
+        let height = self.layout_rect.size().height;
+        let count = if height > 0.0 {
+            ((height / config.editor.line_height() as f64).floor() as usize)
+                .saturating_sub(1)
+        } else {
+            10
+        };
+        let count = count.max(10);
         let active = self.active.get_untracked();
         let new = Movement::Down.update_index(
             active,
@@ -150,10 +162,14 @@ impl CodeActionData {
 
     pub fn previous_page(&self) {
         let config = self.common.config.get_untracked();
-        let count = ((self.layout_rect.size().height
-            / config.editor.line_height() as f64)
-            .floor() as usize)
-            .saturating_sub(1);
+        let height = self.layout_rect.size().height;
+        let count = if height > 0.0 {
+            ((height / config.editor.line_height() as f64).floor() as usize)
+                .saturating_sub(1)
+        } else {
+            10
+        };
+        let count = count.max(10);
         let active = self.active.get_untracked();
         let new = Movement::Up.update_index(
             active,

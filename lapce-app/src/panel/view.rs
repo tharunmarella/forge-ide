@@ -215,6 +215,7 @@ pub fn panel_container_view(
     window_tab_data: Rc<WindowTabData>,
     position: PanelContainerPosition,
 ) -> impl View {
+    const SIDE_ICON_BAR_WIDTH: f32 = 48.0;
     let panel = window_tab_data.panel.clone();
     let config = window_tab_data.common.config;
     let dragging = window_tab_data.common.dragging;
@@ -310,11 +311,10 @@ pub fn panel_container_view(
                                 let new_size = current_size.height
                                     - (pointer_event.pos.y - drag_start_point.y);
                                 let maximized = panel.panel_bottom_maximized(false);
-                                if (maximized
-                                    && new_size < available_size.height - 50.0)
-                                    || (!maximized
-                                        && new_size > available_size.height - 50.0)
-                                {
+                                // Require a deliberate drag before restoring from maximize
+                                let restore_threshold = (available_size.height * 0.85)
+                                    .max(available_size.height - 120.0);
+                                if maximized && new_size < restore_threshold {
                                     panel.toggle_bottom_maximize();
                                 }
 
@@ -358,15 +358,15 @@ pub fn panel_container_view(
                 let config = config.get();
                 s.absolute()
                     .apply_if(position == PanelContainerPosition::Bottom, |s| {
-                        s.width_pct(100.0).height(4.0).margin_top(-2.0)
+                        s.width_pct(100.0).height(8.0).margin_top(-4.0)
                     })
                     .apply_if(position == PanelContainerPosition::Left, |s| {
-                        s.width(4.0)
-                            .margin_left(current_size.width as f32 - 2.0)
+                        s.width(8.0)
+                            .margin_left(current_size.width as f32 - 4.0)
                             .height_pct(100.0)
                     })
                     .apply_if(position == PanelContainerPosition::Right, |s| {
-                        s.width(4.0).margin_left(-2.0).height_pct(100.0)
+                        s.width(8.0).margin_left(-4.0).height_pct(100.0)
                     })
                     .apply_if(is_dragging, |s| {
                         s.background(config.color(LapceColor::EDITOR_CARET))
@@ -402,22 +402,34 @@ pub fn panel_container_view(
     // For bottom panel: original stacked layout
     if !is_bottom {
         // Left/Right panels: horizontal layout [icons | content]
-        // Only show the activity bar (icon picker) for the left panel, not the right (AI chat)
-        let is_left = position == PanelContainerPosition::Left;
+        let panel_for_content = panel.clone();
         stack((
-            panel_picker(window_tab_data.clone(), position.first())
-                .style(move |s| s.apply_if(!is_left, |s| s.hide())),
+            panel_picker(window_tab_data.clone(), position.first()),
             stack((
-                panel_view(window_tab_data.clone(), position.first()),
-                panel_view(window_tab_data.clone(), position.second()),
+                split_panel_slot(
+                    window_tab_data.clone(),
+                    position,
+                    position.first(),
+                    true,
+                ),
+                split_panel_slot(
+                    window_tab_data.clone(),
+                    position,
+                    position.second(),
+                    false,
+                ),
             ))
             .style(move |s| {
                 let config = config.get();
+                let content_shown = panel_for_content.is_container_shown(&position, true);
                 s.flex_col()
                     .flex_grow(1.0)
                     .height_pct(100.0)
                     .border_left(1.0)
                     .border_color(config.color(LapceColor::LAPCE_BORDER))
+                    .apply_if(!content_shown, |s| {
+                        s.hide().width(0.0).flex_grow(0.0).min_width(0.0)
+                    })
             }),
             resize_drag_view(position),
             stack((drop_view(position.first()), drop_view(position.second()))).style(
@@ -434,8 +446,18 @@ pub fn panel_container_view(
         // Bottom panel layout
         stack((
             panel_picker(window_tab_data.clone(), position.first()),
-            panel_view(window_tab_data.clone(), position.first()),
-            panel_view(window_tab_data.clone(), position.second()),
+            split_panel_slot(
+                window_tab_data.clone(),
+                position,
+                position.first(),
+                true,
+            ),
+            split_panel_slot(
+                window_tab_data.clone(),
+                position,
+                position.second(),
+                false,
+            ),
             panel_picker(window_tab_data.clone(), position.second()),
             resize_drag_view(position),
             stack((drop_view(position.first()), drop_view(position.second()))).style(
@@ -462,7 +484,10 @@ pub fn panel_container_view(
         });
         let is_maximized = panel.panel_bottom_maximized(true);
         let config = config.get();
-        s.apply_if(!panel.is_container_shown(&position, true), |s| s.hide())
+        let container_shown = panel.is_container_shown(&position, true);
+        s.apply_if(!container_shown && position == PanelContainerPosition::Bottom, |s| {
+            s.hide()
+        })
             .apply_if(position == PanelContainerPosition::Bottom, |s| {
                 s.width_pct(100.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
@@ -472,14 +497,24 @@ pub fn panel_container_view(
                     .apply_if(is_maximized, |s| s.flex_grow(1.0))
             })
             .apply_if(position == PanelContainerPosition::Left, |s| {
+                let width = if container_shown {
+                    size as f32
+                } else {
+                    SIDE_ICON_BAR_WIDTH
+                };
                 s.border_right(1.0)
-                    .width(size as f32)
+                    .width(width)
                     .height_pct(100.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
             })
             .apply_if(position == PanelContainerPosition::Right, |s| {
+                let width = if container_shown {
+                    size as f32
+                } else {
+                    SIDE_ICON_BAR_WIDTH
+                };
                 s.border_left(1.0)
-                    .width(size as f32)
+                    .width(width)
                     .height_pct(100.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
             })
@@ -487,6 +522,29 @@ pub fn panel_container_view(
             .color(config.color(LapceColor::PANEL_FOREGROUND))
     })
     .debug_name(format!("{:?} Pannel Container View", position))
+}
+
+/// Panel slot sized by the container's persisted split ratio (first vs second).
+fn split_panel_slot(
+    window_tab_data: Rc<WindowTabData>,
+    container_position: PanelContainerPosition,
+    panel_position: PanelPosition,
+    is_first: bool,
+) -> impl View {
+    let panel = window_tab_data.panel.clone();
+    container(panel_view(window_tab_data, panel_position)).style(move |s| {
+        let ratio = panel.size.with(|sz| match container_position {
+            PanelContainerPosition::Left => sz.left_split,
+            PanelContainerPosition::Bottom => sz.bottom_split,
+            PanelContainerPosition::Right => sz.right_split,
+        });
+        let ratio = ratio.clamp(0.15, 0.85);
+        let grow = if is_first { ratio } else { 1.0 - ratio };
+        s.flex_grow(grow as f32)
+            .flex_basis(0.0)
+            .min_height(0.0)
+            .width_pct(100.0)
+    })
 }
 
 fn panel_view(
@@ -773,8 +831,15 @@ fn panel_icon_button(
             || icon,
             move || {
                 if p == PanelKind::Terminal {
-                    // Terminal opens at bottom, not in left panel
-                    window_tab_data.toggle_panel_visual_at_position(p, PanelPosition::BottomLeft);
+                    let terminal_position = window_tab_data.panel.panels.with_untracked(
+                        |panels| {
+                            p.position(panels)
+                                .map(|(_, pos)| pos)
+                                .unwrap_or(PanelPosition::BottomLeft)
+                        },
+                    );
+                    window_tab_data
+                        .toggle_panel_visual_at_position(p, terminal_position);
                 } else if p == PanelKind::DatabaseManager {
                     // DatabaseManager opens as editor tab, not as a panel
                     window_tab_data.main_split.open_database_manager();
@@ -858,15 +923,14 @@ fn panel_picker(
             panel
                 .panels
                 .with(|panels| panels.get(&position).cloned().unwrap_or_default())
-                // Hide icons not yet ready for use
+                // Hide panels that open as editor tabs instead of side panels
                 .into_iter()
-                .filter(|p| !matches!(
-                    p,
-                    crate::panel::kind::PanelKind::Search
-                        | crate::panel::kind::PanelKind::Plugin
-                        | crate::panel::kind::PanelKind::DatabaseManager
-                        | crate::panel::kind::PanelKind::ProjectMapPage
-                ))
+                .filter(|p| {
+                    !matches!(
+                        p,
+                        PanelKind::DatabaseManager | PanelKind::ProjectMapPage
+                    )
+                })
                 .collect::<Vec<_>>()
         },
         |p| *p,

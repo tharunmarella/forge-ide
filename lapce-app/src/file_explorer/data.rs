@@ -28,9 +28,11 @@ use lapce_rpc::{
         Renaming,
     },
     proxy::ProxyResponse,
+    RpcError,
 };
 
 use crate::{
+    alert::AlertButton,
     command::{CommandExecuted, CommandKind, InternalCommand, LapceCommand},
     config::LapceConfig,
     editor::EditorData,
@@ -508,12 +510,17 @@ impl FileExplorerData {
         menu = menu.entry(MenuItem::new("New File").action(move || {
             let base_path_b = &base_path;
             let base_path = base_path.clone();
+            let internal_command = data.common.internal_command.clone();
             data.read_dir_cb(base_path_b, move |was_read| {
                 if !was_read {
-                    tracing::warn!(
-                        "Failed to read directory, avoiding creating node in: {:?}",
-                        base_path
-                    );
+                    internal_command.send(InternalCommand::ShowAlert {
+                        title: "Failed to create file".to_string(),
+                        msg: format!(
+                            "Could not read directory: {}",
+                            base_path.display()
+                        ),
+                        buttons: Vec::<AlertButton>::new(),
+                    });
                     return;
                 }
 
@@ -532,12 +539,17 @@ impl FileExplorerData {
         menu = menu.entry(MenuItem::new("New Directory").action(move || {
             let base_path_b = &base_path;
             let base_path = base_path.clone();
+            let internal_command = data.common.internal_command.clone();
             data.read_dir_cb(base_path_b, move |was_read| {
                 if !was_read {
-                    tracing::warn!(
-                        "Failed to read directory, avoiding creating node in: {:?}",
-                        base_path
-                    );
+                    internal_command.send(InternalCommand::ShowAlert {
+                        title: "Failed to create directory".to_string(),
+                        msg: format!(
+                            "Could not read directory: {}",
+                            base_path.display()
+                        ),
+                        buttons: Vec::<AlertButton>::new(),
+                    });
                     return;
                 }
 
@@ -597,17 +609,25 @@ impl FileExplorerData {
             // Delete, which can be useful for large files.
             let path = path_a.clone();
             let proxy = common.proxy.clone();
+            let internal_command = common.internal_command.clone();
+            let scope = common.scope;
             let trash_text = if is_dir {
                 "Move Directory to Trash"
             } else {
                 "Move File to Trash"
             };
             menu = menu.entry(MenuItem::new(trash_text).action(move || {
-                proxy.trash_path(path.clone(), |res| {
-                    if let Err(err) = res {
-                        tracing::warn!("Failed to trash path: {:?}", err);
+                let internal_command = internal_command.clone();
+                let send = create_ext_action(scope, move |response: Result<ProxyResponse, RpcError>| {
+                    if let Err(err) = response {
+                        internal_command.send(InternalCommand::ShowAlert {
+                            title: "Failed to move to trash".to_string(),
+                            msg: err.message,
+                            buttons: Vec::<AlertButton>::new(),
+                        });
                     }
-                })
+                });
+                proxy.trash_path(path.clone(), send);
             }));
         }
 

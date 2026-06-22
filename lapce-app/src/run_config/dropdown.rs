@@ -15,8 +15,9 @@ use floem::{
 
 use crate::{
     app::clickable_icon,
-    command::LapceWorkbenchCommand,
+    command::{InternalCommand, LapceWorkbenchCommand},
     config::{LapceConfig, color::LapceColor, icon::LapceIcons},
+    debug::RunDebugMode,
     listener::Listener,
     window_tab::WindowTabData,
 };
@@ -28,13 +29,51 @@ fn run_config_dropdown_overlay(
     config: ReadSignal<Arc<LapceConfig>>,
     run_config_data: RunConfigData,
     workbench_command: Listener<LapceWorkbenchCommand>,
-    on_run: Rc<dyn Fn(super::RunConfigItem)>,
+    on_run: Rc<dyn Fn(super::RunConfigItem, RunDebugMode)>,
 ) -> impl View {
     let selected = run_config_data.selected;
     let dropdown_visible = run_config_data.dropdown_visible;
+    let loading = run_config_data.loading;
+    let error = run_config_data.error;
     
     container(
         stack((
+            // Loading state
+            container(
+                label(move || {
+                    if loading.get() {
+                        "Loading configurations...".to_string()
+                    } else {
+                        String::new()
+                    }
+                })
+                .style(move |s| {
+                    let cfg = config.get();
+                    s.font_size(cfg.ui.font_size() as f32)
+                        .color(cfg.color(LapceColor::PANEL_FOREGROUND_DIM))
+                }),
+            )
+            .style(move |s| {
+                s.padding_horiz(12.0)
+                    .padding_vert(8.0)
+                    .width_full()
+                    .apply_if(!loading.get(), |s| s.hide())
+            }),
+            // Error state
+            container(
+                label(move || error.get().unwrap_or_default())
+                    .style(move |s| {
+                        let cfg = config.get();
+                        s.font_size(cfg.ui.font_size() as f32)
+                            .color(cfg.color(LapceColor::LAPCE_ERROR))
+                    }),
+            )
+            .style(move |s| {
+                s.padding_horiz(12.0)
+                    .padding_vert(8.0)
+                    .width_full()
+                    .apply_if(error.get().is_none(), |s| s.hide())
+            }),
             // Config list
             scroll(
                 dyn_stack(
@@ -91,7 +130,7 @@ fn run_config_dropdown_overlay(
                                         || LapceIcons::START,
                                         move || {
                                             dropdown_visible.set(false);
-                                            on_run_clone(item_for_run.clone());
+                                            on_run_clone(item_for_run.clone(), RunDebugMode::Run);
                                         },
                                         || false,
                                         || false,
@@ -129,7 +168,12 @@ fn run_config_dropdown_overlay(
                 )
                 .style(|s| s.flex_col().width_full()),
             )
-            .style(|s| s.width_full().max_height(300.0)),
+            .style(move |s| {
+                s.width_full().max_height(300.0).apply_if(
+                    loading.get() || error.get().is_some(),
+                    |s| s.hide(),
+                )
+            }),
             
             // Separator
             empty().style(move |s| {
@@ -202,18 +246,13 @@ pub fn run_config_dropdown(
     let dropdown_visible = run_config_data.dropdown_visible;
     let selected = run_config_data.selected;
     
-    // Run action callback - opens a new terminal and runs the command
-    let common_for_run = common.clone();
-    let on_run: Rc<dyn Fn(super::RunConfigItem)> = Rc::new(move |item: super::RunConfigItem| {
-        // Run command via proxy terminal
-        let cmd = if item.args.is_empty() {
-            item.command.clone()
-        } else {
-            format!("{} {}", item.command, item.args.join(" "))
-        };
-        tracing::info!("Running: {}", cmd);
-        // TODO: Create terminal with command - for now just log
-    });
+    // Run action callback — opens terminal / debugger via internal command
+    let internal_command = common.internal_command;
+    let on_run: Rc<dyn Fn(super::RunConfigItem, RunDebugMode)> =
+        Rc::new(move |item: super::RunConfigItem, mode: RunDebugMode| {
+            let config = item.to_run_debug_config();
+            internal_command.send(InternalCommand::RunAndDebug { mode, config });
+        });
     
     // Fetch configs on mount
     fetch_run_configs(scope, common.clone(), run_config_data.clone());
@@ -301,7 +340,7 @@ pub fn run_config_dropdown(
                 let on_run = on_run.clone();
                 move || {
                     if let Some(item) = run_config_data_for_play.get_selected_config() {
-                        on_run(item);
+                        on_run(item, RunDebugMode::Run);
                     }
                 }
             },
@@ -318,7 +357,7 @@ pub fn run_config_dropdown(
                 let on_run = on_run.clone();
                 move || {
                     if let Some(item) = run_config_data_for_debug.get_selected_config() {
-                        on_run(item);
+                        on_run(item, RunDebugMode::Debug);
                     }
                 }
             },

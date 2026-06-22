@@ -118,6 +118,7 @@ impl CompletionData {
             .collect();
         self.input_items.insert(input.to_string(), items);
         self.filter_items();
+        self.status = CompletionStatus::Done;
     }
 
     /// Request for completion items wit the current request id.
@@ -230,7 +231,7 @@ impl CompletionData {
                     })
                     .collect()
             })
-            .unwrap();
+            .unwrap_or_default();
         // Sort all the items by their score, then their label score, then their length.
         items.sort_by(|a, b| {
             b.score
@@ -260,9 +261,14 @@ impl CompletionData {
     /// The amount of items that can be displayed in the current layout.
     fn display_count(&self) -> usize {
         let config = self.config.get_untracked();
-        ((self.layout_rect.size().height / config.editor.line_height() as f64)
-            .floor() as usize)
-            .saturating_sub(1)
+        let height = self.layout_rect.size().height;
+        let count = if height > 0.0 {
+            ((height / config.editor.line_height() as f64).floor() as usize)
+                .saturating_sub(1)
+        } else {
+            10
+        };
+        count.max(10)
     }
 
     /// Move to the next page of items.

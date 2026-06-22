@@ -69,6 +69,7 @@ use tracing_subscriber::{filter::Targets, reload::Handle};
 use crate::{
     about, alert,
     code_action::CodeActionStatus,
+    completion::CompletionStatus,
     command::{
         CommandKind, InternalCommand, LapceCommand, LapceWorkbenchCommand,
         WindowCommand,
@@ -3025,6 +3026,11 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
                 )
                 .style(|s| s.max_width_full()),
                 MarkdownContent::Image { .. } => container(empty()), // TODO: render images
+                MarkdownContent::Link { text, .. } => container(
+                    label(move || text.clone()).style(move |s| {
+                        s.color(config.get().color(LapceColor::EDITOR_LINK))
+                    }),
+                ),
                 MarkdownContent::Separator => container(empty().style(move |s| {
                     s.width_full()
                         .margin_vert(5.0)
@@ -3072,7 +3078,29 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
     let request_id =
         move || completion_data.with_untracked(|c| (c.request_id, c.input_id));
     scroll(
-        virtual_stack(
+        stack((
+            label(move || {
+                if completion_data.with_untracked(|c| {
+                    c.status == CompletionStatus::Started && c.filtered_items.is_empty()
+                }) {
+                    "Loading...".to_string()
+                } else {
+                    String::new()
+                }
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding_horiz(10.0)
+                    .height(config.editor.line_height() as f32)
+                    .apply_if(
+                        !completion_data.with_untracked(|c| {
+                            c.status == CompletionStatus::Started
+                                && c.filtered_items.is_empty()
+                        }),
+                        |s| s.hide(),
+                    )
+            }),
+            virtual_stack(
             move || completion_data.with(|c| VectorItems(c.filtered_items.clone())),
             move |(i, _item)| (request_id(), *i),
             move |(i, item)| {
@@ -3153,6 +3181,8 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                 .width_full()
                 .flex_col()
         }),
+        ))
+        .style(|s| s.width_full().flex_col()),
     )
     .ensure_visible(move || {
         let config = config.get();
@@ -3173,7 +3203,16 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
     .style(move |s| {
         let config = config.get();
         let origin = window_tab_data.completion_origin();
+        let visible = completion_data.with_untracked(|c| {
+            c.status != CompletionStatus::Inactive
+                && (c.status == CompletionStatus::Started || !c.filtered_items.is_empty())
+        });
         s.position(Position::Absolute)
+            .display(if visible {
+                Display::Flex
+            } else {
+                Display::None
+            })
             .width(config.editor.completion_width as i32)
             .max_height(400.0)
             .margin_left(origin.x as f32)
@@ -3771,6 +3810,7 @@ pub fn launch() {
     if !stdin.is_terminal() {
         trace!(TraceLevel::INFO, "Loading custom environment from shell");
         load_shell_env();
+        forge_agent::forge_search::ensure_forge_search_url_env(None);
     }
 
     // small hack to unblock terminal if launched from it
@@ -3883,6 +3923,7 @@ pub fn launch() {
 
     let windows = scope.create_rw_signal(im::HashMap::new());
     let config = LapceConfig::load(&LapceWorkspace::default(), &[], &plugin_paths);
+    forge_agent::forge_search::ensure_forge_search_url_env(Some(&config.forge.search_url));
 
     // Restore scale from config
     window_scale.set(config.ui.scale());

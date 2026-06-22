@@ -52,6 +52,14 @@ impl MapClient {
         }
     }
 
+    pub fn set_token(&mut self, token: Option<String>) {
+        self.token = token;
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn get_map(&self, req: MapRequest) -> Result<MapResponse> {
         let url = format!("{}/map", self.base_url);
         let mut builder = self.client.post(url).json(&req);

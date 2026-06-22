@@ -22,6 +22,7 @@ use self::{
     color_theme::{ColorThemeConfig, ThemeColor, ThemeColorPreference},
     core::CoreConfig,
     editor::{EditorConfig, SCALE_OR_SIZE_LIMIT, WrapStyle},
+    forge::ForgeConfig,
     icon::LapceIcons,
     icon_theme::IconThemeConfig,
     svg::SvgStore,
@@ -34,6 +35,7 @@ pub mod color;
 pub mod color_theme;
 pub mod core;
 pub mod editor;
+pub mod forge;
 pub mod icon;
 pub mod icon_theme;
 pub mod svg;
@@ -100,6 +102,8 @@ pub struct LapceConfig {
     pub ui: UIConfig,
     pub editor: EditorConfig,
     pub terminal: TerminalConfig,
+    #[serde(default)]
+    pub forge: ForgeConfig,
     #[serde(default)]
     pub color_theme: ColorThemeConfig,
     #[serde(default)]

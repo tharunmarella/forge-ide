@@ -201,22 +201,36 @@ impl EditorTabChild {
     pub fn child_info(&self, data: &WindowTabData) -> EditorTabChildInfo {
         match &self {
             EditorTabChild::Editor(editor_id) => {
-                let editor_data = data
+                if let Some(editor_data) = data
                     .main_split
                     .editors
                     .editor_untracked(*editor_id)
-                    .unwrap();
-                EditorTabChildInfo::Editor(editor_data.editor_info(data))
+                {
+                    EditorTabChildInfo::Editor(editor_data.editor_info(data))
+                } else {
+                    tracing::warn!(
+                        "Tab references missing editor {:?}, skipping",
+                        editor_id
+                    );
+                    EditorTabChildInfo::Settings
+                }
             }
             EditorTabChild::DiffEditor(diff_editor_id) => {
-                let diff_editor_data = data
+                if let Some(diff_editor_data) = data
                     .main_split
                     .diff_editors
                     .get_untracked()
                     .get(diff_editor_id)
                     .cloned()
-                    .unwrap();
-                EditorTabChildInfo::DiffEditor(diff_editor_data.diff_editor_info())
+                {
+                    EditorTabChildInfo::DiffEditor(diff_editor_data.diff_editor_info())
+                } else {
+                    tracing::warn!(
+                        "Tab references missing diff editor {:?}, skipping",
+                        diff_editor_id
+                    );
+                    EditorTabChildInfo::Settings
+                }
             }
             EditorTabChild::Settings(_) => EditorTabChildInfo::Settings,
             EditorTabChild::ThemeColorSettings(_) => {

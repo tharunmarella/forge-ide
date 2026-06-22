@@ -8,9 +8,9 @@ use std::{rc::Rc, sync::Arc};
 
 use floem::{
     View,
-    reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate},
+    reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, create_memo},
     style::{CursorStyle, Display},
-    views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg, text_input},
     ext_event::create_ext_action,
 };
 use lapce_rpc::{
@@ -249,7 +249,10 @@ fn left_panel(
     )
     .style(move |s| {
         let cfg = config.get();
-        s.width(280.0)
+        s.min_width(200.0)
+            .flex_grow(1.0)
+            .flex_basis(0.0)
+            .max_width(360.0)
             .height_full()
             .background(cfg.color(LapceColor::PANEL_BACKGROUND))
     })
@@ -399,89 +402,140 @@ fn right_panel(
             container(
                 scroll(
                     stack((
-                        // Run button — always visible when a config is selected
+                        // Run button
                         {
                             let internal_command = common.internal_command;
+                            let run_action: std::rc::Rc<dyn Fn(RunDebugMode)> =
+                                std::rc::Rc::new(move |mode: RunDebugMode| {
+                                    let name = edit_name.get();
+                                    let program = edit_command.get();
+                                    if program.is_empty() {
+                                        return;
+                                    }
+                                    let args: Vec<String> = edit_args
+                                        .get()
+                                        .split_whitespace()
+                                        .map(String::from)
+                                        .collect();
+                                    let cwd = edit_cwd.get();
+                                    let config = RunDebugConfig {
+                                        ty: {
+                                            let t = edit_type.get();
+                                            if t.is_empty() { None } else { Some(t) }
+                                        },
+                                        name: name.clone(),
+                                        program,
+                                        args: if args.is_empty() { None } else { Some(args) },
+                                        cwd: if cwd.is_empty() { None } else { Some(cwd) },
+                                        env: None,
+                                        prelaunch: None,
+                                        debug_command: None,
+                                        dap_id: lapce_rpc::dap_types::DapId::next(),
+                                        tracing_output: false,
+                                        config_source:
+                                            lapce_rpc::dap_types::ConfigSource::Palette,
+                                    };
+                                    internal_command.send(InternalCommand::RunAndDebug {
+                                        mode,
+                                        config,
+                                    });
+                                });
                             container(
                                 stack((
-                                    svg(move || config.get().ui_svg(LapceIcons::START))
-                                        .style(move |s| {
-                                            let cfg = config.get();
-                                            s.size(14.0, 14.0)
-                                                .margin_right(6.0)
-                                                .color(cfg.color(LapceColor::PANEL_FOREGROUND))
-                                        }),
-                                    label(|| "Run".to_string())
-                                        .style(move |s| {
-                                            let cfg = config.get();
-                                            s.font_size(cfg.ui.font_size() as f32)
-                                                .font_bold()
-                                                .color(cfg.color(LapceColor::PANEL_FOREGROUND))
-                                        }),
+                                    // Run
+                                    container(
+                                        stack((
+                                            svg(move || config.get().ui_svg(LapceIcons::START))
+                                                .style(move |s| {
+                                                    let cfg = config.get();
+                                                    s.size(14.0, 14.0)
+                                                        .margin_right(6.0)
+                                                        .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                                                }),
+                                            label(|| "Run".to_string())
+                                                .style(move |s| {
+                                                    let cfg = config.get();
+                                                    s.font_size(cfg.ui.font_size() as f32)
+                                                        .font_bold()
+                                                        .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                                                }),
+                                        ))
+                                        .style(|s| s.items_center()),
+                                    )
+                                    .on_click_stop({
+                                        let run_action = run_action.clone();
+                                        move |_| run_action(RunDebugMode::Run)
+                                    })
+                                    .style(move |s| {
+                                        let cfg = config.get();
+                                        s.margin_right(12.0)
+                                            .margin_bottom(24.0)
+                                            .padding_horiz(20.0)
+                                            .padding_vert(8.0)
+                                            .border_radius(4.0)
+                                            .cursor(CursorStyle::Pointer)
+                                            .background(cfg.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
+                                            .hover(|s| s.background(
+                                                cfg.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                                                    .multiply_alpha(0.85),
+                                            ))
+                                    }),
+                                    // Debug
+                                    container(
+                                        stack((
+                                            svg(move || config.get().ui_svg(LapceIcons::DEBUG))
+                                                .style(move |s| {
+                                                    let cfg = config.get();
+                                                    s.size(14.0, 14.0)
+                                                        .margin_right(6.0)
+                                                        .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                                                }),
+                                            label(|| "Debug".to_string())
+                                                .style(move |s| {
+                                                    let cfg = config.get();
+                                                    s.font_size(cfg.ui.font_size() as f32)
+                                                        .font_bold()
+                                                        .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                                                }),
+                                        ))
+                                        .style(|s| s.items_center()),
+                                    )
+                                    .on_click_stop({
+                                        let run_action = run_action.clone();
+                                        move |_| run_action(RunDebugMode::Debug)
+                                    })
+                                    .style(move |s| {
+                                        let cfg = config.get();
+                                        s.margin_bottom(24.0)
+                                            .padding_horiz(20.0)
+                                            .padding_vert(8.0)
+                                            .border_radius(4.0)
+                                            .cursor(CursorStyle::Pointer)
+                                            .background(cfg.color(LapceColor::PANEL_BACKGROUND))
+                                            .border(1.0)
+                                            .border_color(cfg.color(LapceColor::LAPCE_BORDER))
+                                            .hover(|s| s.background(
+                                                cfg.color(LapceColor::PANEL_HOVERED_BACKGROUND),
+                                            ))
+                                    }),
                                 ))
-                                .style(|s| s.items_center()),
+                                .style(|s| s.flex_row().items_center()),
                             )
-                            .on_click_stop(move |_| {
-                                let name = edit_name.get();
-                                let program = edit_command.get();
-                                if program.is_empty() { return; }
-                                let args: Vec<String> = edit_args.get()
-                                    .split_whitespace()
-                                    .map(String::from)
-                                    .collect();
-                                let cwd = edit_cwd.get();
-                                let config = lapce_rpc::dap_types::RunDebugConfig {
-                                    ty: None,
-                                    name: name.clone(),
-                                    program: "sh".to_string(),
-                                    args: Some(vec![
-                                        "-c".to_string(),
-                                        if args.is_empty() {
-                                            program.clone()
-                                        } else {
-                                            format!("{} {}", program, args.join(" "))
-                                        },
-                                    ]),
-                                    cwd: if cwd.is_empty() { None } else { Some(cwd) },
-                                    env: None,
-                                    prelaunch: None,
-                                    debug_command: None,
-                                    dap_id: lapce_rpc::dap_types::DapId::next(),
-                                    tracing_output: false,
-                                    config_source: lapce_rpc::dap_types::ConfigSource::Palette,
-                                };
-                                internal_command.send(InternalCommand::RunAndDebug {
-                                    mode: RunDebugMode::Run,
-                                    config,
-                                });
-                            })
-                            .style(move |s| {
-                                let cfg = config.get();
-                                s.margin_bottom(24.0)
-                                    .padding_horiz(20.0)
-                                    .padding_vert(8.0)
-                                    .border_radius(4.0)
-                                    .cursor(CursorStyle::Pointer)
-                                    .background(cfg.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
-                                    .hover(|s| s.background(
-                                        cfg.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND).multiply_alpha(0.85)
-                                    ))
-                            })
                         },
                         // Name field
-                        form_field(config, "Name", edit_name, !is_user_config.get()),
+                        form_field(config, "Name", edit_name, is_user_config, false),
                         
                         // Type field (read-only for detected)
-                        form_field(config, "Type", edit_type, true),
+                        form_field(config, "Type", edit_type, is_user_config, true),
                         
                         // Command field
-                        form_field(config, "Command", edit_command, !is_user_config.get()),
+                        form_field(config, "Command", edit_command, is_user_config, false),
                         
                         // Arguments field
-                        form_field(config, "Arguments", edit_args, !is_user_config.get()),
+                        form_field(config, "Arguments", edit_args, is_user_config, false),
                         
                         // Working Directory field
-                        form_field(config, "Working Directory", edit_cwd, !is_user_config.get()),
+                        form_field(config, "Working Directory", edit_cwd, is_user_config, false),
                         
                         // Save message
                         label(move || save_message.get().unwrap_or_default())
@@ -586,13 +640,15 @@ fn right_panel(
     })
 }
 
-/// A form field with label and text input
+/// A form field with label and text input (read-only when not a user config or always_readonly)
 fn form_field(
     config: ReadSignal<Arc<LapceConfig>>,
     label_text: &'static str,
     value: RwSignal<String>,
-    readonly: bool,
+    is_user_config: RwSignal<bool>,
+    always_readonly: bool,
 ) -> impl View {
+    let readonly = create_memo(move |_| always_readonly || !is_user_config.get());
     stack((
         label(move || label_text.to_string())
             .style(move |s| {
@@ -603,17 +659,37 @@ fn form_field(
                     .margin_bottom(4.0)
             }),
         container(
-            label(move || value.get())
-                .style(move |s| {
-                    let cfg = config.get();
-                    s.width_full()
-                        .font_size(cfg.ui.font_size() as f32)
-                        .color(if readonly {
-                            cfg.color(LapceColor::PANEL_FOREGROUND_DIM)
-                        } else {
-                            cfg.color(LapceColor::PANEL_FOREGROUND)
-                        })
-                }),
+            stack((
+                label(move || value.get())
+                    .style(move |s| {
+                        let cfg = config.get();
+                        s.width_full()
+                            .font_size(cfg.ui.font_size() as f32)
+                            .color(cfg.color(LapceColor::PANEL_FOREGROUND_DIM))
+                            .display(if readonly.get() {
+                                Display::Flex
+                            } else {
+                                Display::None
+                            })
+                    }),
+                text_input(value)
+                    .keyboard_navigable()
+                    .style(move |s| {
+                        let cfg = config.get();
+                        s.width_full()
+                            .padding_horiz(8.0)
+                            .padding_vert(6.0)
+                            .font_size(cfg.ui.font_size() as f32)
+                            .color(cfg.color(LapceColor::PANEL_FOREGROUND))
+                            .cursor(CursorStyle::Text)
+                            .display(if readonly.get() {
+                                Display::None
+                            } else {
+                                Display::Flex
+                            })
+                    }),
+            ))
+            .style(|s| s.width_full()),
         )
         .style(move |s| {
             let cfg = config.get();
@@ -623,7 +699,7 @@ fn form_field(
                 .border(1.0)
                 .border_radius(4.0)
                 .border_color(cfg.color(LapceColor::LAPCE_BORDER))
-                .background(if readonly {
+                .background(if readonly.get() {
                     cfg.color(LapceColor::PANEL_BACKGROUND)
                 } else {
                     cfg.color(LapceColor::EDITOR_BACKGROUND)

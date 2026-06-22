@@ -27,7 +27,18 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
 }
 
+// ── React webview build ───────────────────────────────────────────────────────
+val buildWebview by tasks.registering(Exec::class) {
+    description = "Build the React/Vite webview into src/main/resources/webview/dist/"
+    group = "build"
+    workingDir = file("webview-src")
+    commandLine("npm", "run", "build")
+}
+
 tasks {
+    // Auto-build webview before the plugin JAR is assembled
+    named("processResources") { dependsOn(buildWebview) }
+
     withType<JavaCompile> {
         sourceCompatibility = "17"
         targetCompatibility = "17"

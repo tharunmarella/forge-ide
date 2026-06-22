@@ -85,6 +85,11 @@ default = {}
 # environemnt = { "KEY" = "VALUE" }
 # workdir     = "/home/user"
 
+[forge]
+search-url = "http://localhost:8080"
+default-provider = "gemini"
+default-model = "gemini-2.5-flash"
+
 [ui]
 scale = +1.0
 font-family = ""
