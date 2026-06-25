@@ -118,6 +118,11 @@ pub struct Dispatcher {
     auto_approve_session: Arc<std::sync::atomic::AtomicBool>,
     /// Manages terminals created by the AI agent (visible in terminal panel).
     agent_terminal_mgr: Arc<AgentTerminalManager>,
+    /// Monotonically increasing id for agent runs. Each new AgentPrompt bumps
+    /// this; a running agent loop aborts as soon as its captured generation no
+    /// longer matches, so cancelled/superseded runs stop streaming tokens and
+    /// executing tools into the shared conversation.
+    agent_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl ProxyHandler for Dispatcher {
@@ -2328,6 +2333,20 @@ impl ProxyHandler for Dispatcher {
                 let catalog_rpc = self.catalog_rpc.clone();
                 let _ = (provider, model, api_key); // Unused — all LLM calls go through forge-search
 
+                // Bump the generation: this supersedes (cancels) any in-flight
+                // agent run so it stops streaming/executing into this conversation.
+                use std::sync::atomic::Ordering;
+                let agent_generation = self.agent_generation.clone();
+                let my_generation = agent_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                // Abort any pending approval waits from the superseded run so its
+                // loop unblocks and exits instead of holding the conversation.
+                {
+                    let mut approvals = self.pending_approvals.lock();
+                    for (_, tx) in approvals.drain() {
+                        let _ = tx.send(false);
+                    }
+                }
+
                 thread::spawn(move || {
                     let rt = match tokio::runtime::Runtime::new() {
                         Ok(rt) => rt,
@@ -2391,7 +2410,16 @@ impl ProxyHandler for Dispatcher {
                         let mut is_first_turn = true;
                         let mut turn = 0;
                         
+                        // True while this run is still the active generation.
+                        let is_current = || agent_generation.load(Ordering::SeqCst) == my_generation;
+
                         loop {
+                            // Stop if a newer prompt or an explicit cancel superseded us.
+                            if !is_current() {
+                                tracing::info!("Agent run gen={} superseded — aborting before turn", my_generation);
+                                return;
+                            }
+
                             turn += 1;
                             let mut chat_req = serde_json::json!({
                                 "workspace_id": workspace_name,
@@ -2438,7 +2466,14 @@ impl ProxyHandler for Dispatcher {
                                     
                                     while let Some(event) = stream.next().await {
                                         use forge_agent::forge_search::SseEvent;
-                                        
+
+                                        // Stop forwarding tokens/tool calls the moment a
+                                        // newer prompt or cancel supersedes this run.
+                                        if !is_current() {
+                                            tracing::info!("Agent run gen={} superseded — dropping SSE stream", my_generation);
+                                            return;
+                                        }
+
                                         match event {
                                             // Agent reasoning/thinking
                                             SseEvent::Thinking { step_type, message, detail } => {
@@ -2941,11 +2976,21 @@ impl ProxyHandler for Dispatcher {
                                             }
                                             
                                             if has_tool_calls {
+                                                // Don't send tool results from a superseded run —
+                                                // that would corrupt the conversation on the server.
+                                                if !is_current() {
+                                                    tracing::info!("Agent run gen={} superseded — discarding tool results", my_generation);
+                                                    return;
+                                                }
                                                 continue; // Loop back to send results to server
                                             }
                                     }
                                     
-                                    // Done
+                                    // Done — only finalize if we're still the active run.
+                                    if !is_current() {
+                                        tracing::info!("Agent run gen={} superseded — not finalizing", my_generation);
+                                        return;
+                                    }
                                     core_rpc.agent_text_chunk(String::new(), true);
                                     proxy_rpc.handle_response(id, Ok(ProxyResponse::AgentDone {
                                         message: final_answer.clone(),
@@ -2965,8 +3010,18 @@ impl ProxyHandler for Dispatcher {
                 });
             }
             AgentCancel {} => {
-                // TODO: Cancel running agent task
-                tracing::info!("Agent cancel requested");
+                use std::sync::atomic::Ordering;
+                // Bump the generation so any in-flight agent loop sees it's no
+                // longer current and stops streaming/executing into the convo.
+                let cancelled_gen = self.agent_generation.fetch_add(1, Ordering::SeqCst);
+                tracing::info!("Agent cancel requested (superseding gen={})", cancelled_gen);
+                // Unblock any approval waits so a paused loop can exit promptly.
+                {
+                    let mut approvals = self.pending_approvals.lock();
+                    for (_, tx) in approvals.drain() {
+                        let _ = tx.send(false);
+                    }
+                }
                 self.respond_rpc(id, Ok(ProxyResponse::AgentDone {
                     message: "Cancelled".to_string(),
                 }));
@@ -4183,6 +4238,7 @@ impl Dispatcher {
             pending_approvals: Arc::new(Mutex::new(HashMap::new())),
             auto_approve_session: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             agent_terminal_mgr: Arc::new(AgentTerminalManager::new()),
+            agent_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
