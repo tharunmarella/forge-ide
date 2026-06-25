@@ -1,7 +1,7 @@
 //! Forge Search API client.
 //!
 //! Replaces local embedding providers, API key management, and LLM configuration.
-//! Users sign in once (GitHub/Google OAuth), and forge-search handles everything:
+//! Users sign in once (GitHub OAuth), and forge-search handles everything:
 //!   - Code embeddings (Jina AI)
 //!   - Semantic search (pgvector)
 //!   - Call chain tracing (recursive CTEs)
@@ -270,11 +270,6 @@ impl ForgeSearchClient {
     /// URL to open in browser for sign-in
     pub fn login_url(&self) -> String {
         format!("{}/auth/github?state=forge-ide", self.base_url)
-    }
-
-    /// URL for Google sign-in
-    pub fn google_login_url(&self) -> String {
-        format!("{}/auth/google?state=forge-ide", self.base_url)
     }
 
     /// Store the JWT token received from OAuth callback
