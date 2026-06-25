@@ -2521,6 +2521,19 @@ impl ProxyHandler for Dispatcher {
                                                 if let Some(ans) = answer {
                                                     if final_answer.is_empty() {
                                                         final_answer = ans;
+                                                    } else if ans.len() > final_answer.len()
+                                                        && ans.starts_with(&final_answer)
+                                                    {
+                                                        // Gemini often streams one token then sends the
+                                                        // full answer only in done — append the rest.
+                                                        let remainder = ans[final_answer.len()..].to_string();
+                                                        if !remainder.is_empty() {
+                                                            core_rpc.agent_text_chunk(remainder, false);
+                                                            final_answer = ans;
+                                                            streamed_any_text = true;
+                                                        }
+                                                    } else if !ans.is_empty() && ans != final_answer {
+                                                        final_answer = ans;
                                                     }
                                                 }
                                                 tracing::info!("[SSE] Stream complete (streamed_text={})", streamed_any_text);

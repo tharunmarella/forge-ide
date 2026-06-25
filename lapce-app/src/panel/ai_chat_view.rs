@@ -218,8 +218,6 @@ fn start_oauth_flow(
     auth_status: floem::reactive::RwSignal<String>,
     keys_config: floem::reactive::RwSignal<crate::ai_chat::AiKeysConfig>,
 ) {
-    use lapce_core::directory::Directory;
-    
     // Generate unique session ID
     let session_id = uuid::Uuid::new_v4().to_string();
     
@@ -240,20 +238,7 @@ fn start_oauth_flow(
     let on_result = create_ext_action(scope, move |result: Result<(String, String, String), String>| {
         match result {
             Ok((token, email, name)) => {
-                // Save token to disk
-                if let Some(dir) = Directory::config_directory() {
-                    let auth_data = serde_json::json!({
-                        "token": token,
-                        "email": email,
-                        "name": name,
-                    });
-                    if let Ok(content) = serde_json::to_string_pretty(&auth_data) {
-                        let _ = std::fs::write(dir.join("forge-auth.json"), content);
-                    }
-                }
-                // Trigger keys_config signal so dyn_stack re-evaluates has_any_key()
-                // which will now find the forge-auth.json file on disk.
-                // A no-op update still notifies all subscribers of the signal.
+                forge_agent::forge_search::persist_token(token, email.clone(), name);
                 keys_config.update(|_| {});
                 auth_status.set(format!("Signed in as {}", email));
             }

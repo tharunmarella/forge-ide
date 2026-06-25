@@ -68,9 +68,39 @@ pub fn is_authenticated() -> bool {
     AuthToken::load().is_valid()
 }
 
-/// Remove persisted forge-search credentials.
+/// Remove persisted forge-search credentials and clear the in-memory client.
 pub fn clear_auth() {
     AuthToken::clear();
+    sync_client_auth(AuthToken::default());
+}
+
+/// Save a JWT from OAuth and update the live API client (proxy uses this token).
+pub fn persist_token(token: String, email: String, name: String) {
+    let auth = AuthToken {
+        token,
+        email,
+        name,
+    };
+    auth.save();
+    sync_client_auth(auth);
+}
+
+fn sync_client_auth(auth: AuthToken) {
+    if CLIENT.get().is_none() {
+        return;
+    }
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let _ = handle.block_on(async {
+            *client().auth.write().await = auth;
+        });
+    } else {
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                *client().auth.write().await = auth;
+            });
+        });
+    }
 }
 
 fn forge_ide_config_dirs() -> Vec<std::path::PathBuf> {
@@ -129,8 +159,10 @@ impl AuthToken {
         for dir in forge_ide_config_dirs() {
             let path = dir.join(TOKEN_FILE);
             if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(auth) = serde_json::from_str(&content) {
-                    return auth;
+                if let Ok(auth) = serde_json::from_str::<AuthToken>(&content) {
+                    if auth.is_valid() {
+                        return auth;
+                    }
                 }
             }
         }
