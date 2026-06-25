@@ -86,7 +86,7 @@ default = {}
 # workdir     = "/home/user"
 
 [forge]
-search-url = "http://localhost:8080"
+search-url = "https://forge-search-production.up.railway.app"
 default-provider = "gemini"
 default-model = "gemini-2.5-flash"
 

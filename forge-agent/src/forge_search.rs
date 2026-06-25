@@ -20,7 +20,7 @@ use walkdir::WalkDir;
 
 // ── Config ───────────────────────────────────────────────────────
 
-const DEFAULT_API_URL: &str = "http://localhost:8080";
+const DEFAULT_API_URL: &str = "https://forge-search-production.up.railway.app";
 const TOKEN_FILE: &str = "forge-auth.json";
 
 /// Returns true when `url` is empty or a documented placeholder value.
