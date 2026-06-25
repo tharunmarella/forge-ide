@@ -2784,11 +2784,8 @@ impl WindowTabData {
             CoreNotification::AgentTextChunk { text, done } => {
                 use crate::ai_chat::{ChatRole, new_message};
                 if !text.is_empty() {
-                    // Mark that we've received the first token (hides thinking indicator)
                     if !self.ai_chat.has_first_token.get_untracked() {
                         self.ai_chat.has_first_token.set(true);
-                        // Auto-collapse thinking section when answer starts arriving
-                        self.ai_chat.thinking_collapsed.set(true);
                     }
 
                     // Accumulate into the streaming_text signal (plain text, fast)
