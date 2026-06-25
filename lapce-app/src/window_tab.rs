@@ -3045,16 +3045,35 @@ impl WindowTabData {
                 self.ai_chat.index_progress.set(*progress);
             }
             CoreNotification::AgentThinkingStep { step_type, message, detail } => {
-                // Add a thinking step to the thinking section
-                use crate::ai_chat::new_thinking_step;
-                let entry = new_thinking_step(
-                    step_type.clone(),
-                    message.clone(),
-                    detail.clone(),
-                );
-                self.ai_chat.thinking_steps.update(|steps| {
-                    steps.push_back(entry);
-                });
+                use crate::ai_chat::{new_thinking_step, ChatEntryKind};
+                if step_type == "reasoning" && detail.as_deref() == Some("stream") {
+                    // Streaming thought summaries: update the latest reasoning row.
+                    self.ai_chat.thinking_steps.update(|steps| {
+                        if let Some(entry) = steps.iter_mut().rev().find(|e| {
+                            matches!(&e.kind, ChatEntryKind::ThinkingStep(s) if s.step_type == "reasoning")
+                        }) {
+                            if let ChatEntryKind::ThinkingStep(ref mut s) = entry.kind {
+                                s.message = message.clone();
+                                entry.version += 1;
+                            }
+                        } else {
+                            steps.push_back(new_thinking_step(
+                                step_type.clone(),
+                                message.clone(),
+                                None,
+                            ));
+                        }
+                    });
+                } else {
+                    let entry = new_thinking_step(
+                        step_type.clone(),
+                        message.clone(),
+                        detail.clone(),
+                    );
+                    self.ai_chat.thinking_steps.update(|steps| {
+                        steps.push_back(entry);
+                    });
+                }
                 // Ensure thinking section is visible (not collapsed)
                 self.ai_chat.thinking_collapsed.set(false);
                 self.ai_chat.request_scroll_to_bottom();

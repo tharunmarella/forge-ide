@@ -32,7 +32,7 @@ use super::position::PanelPosition;
 use crate::{
     ai_chat::{
         AiChatData, ChatEntry, ChatEntryKind, ChatRole, ChatToolCall, ToolCallStatus,
-        ChatPlan, ChatPlanStep, ChatPlanStepStatus, ChatServerToolCall,
+        ChatPlan, ChatPlanStep, ChatPlanStepStatus, ChatServerToolCall, ChatThinkingStep,
         ALL_PROVIDERS, models_for_provider, new_message,
     },
     config::{color::LapceColor, icon::LapceIcons},
@@ -659,6 +659,8 @@ fn chat_message_list(
     let has_first_token = chat_data.has_first_token;
     let streaming_text = chat_data.streaming_text;
     let scroll_trigger = chat_data.scroll_trigger;
+    let thinking_steps = chat_data.thinking_steps;
+    let thinking_collapsed = chat_data.thinking_collapsed;
 
     // Session-level auto-approve flag — shared across all approval cards in this view.
     let auto_approve_session = floem::reactive::create_rw_signal(true);
@@ -699,6 +701,9 @@ fn chat_message_list(
                     },
                 )
                 .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
+
+                // ── Live activity / reasoning feed (current turn) ──
+                thinking_section(config, thinking_steps, thinking_collapsed, is_loading),
 
                 // ── Streaming text preview (rich text, pre-wrapped) ──
                 // Shown while the assistant is actively streaming.
@@ -744,8 +749,8 @@ fn chat_message_list(
                 },
 
                 // ── Thinking indicator ──
-                // Shown when loading but no text has arrived yet.
-                thinking_indicator(config, is_loading, has_first_token),
+                // Shown when loading but no activity or answer text has arrived yet.
+                thinking_indicator(config, is_loading, has_first_token, thinking_steps),
             ))
             .style(|s| {
                 s.flex_col()
@@ -785,11 +790,141 @@ fn chat_message_list(
     })
 }
 
+/// Collapsible live activity feed: reasoning text + server-side tool calls.
+fn thinking_section(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    thinking_steps: floem::reactive::RwSignal<im::Vector<ChatEntry>>,
+    thinking_collapsed: floem::reactive::RwSignal<bool>,
+    is_loading: floem::reactive::RwSignal<bool>,
+) -> impl View {
+    container(
+        stack((
+            // Header — click to expand/collapse
+            container(
+                stack((
+                    label(|| "Activity".to_string()).style(move |s| {
+                        let config = config.get();
+                        s.font_size((config.ui.font_size() as f32 - 1.0).max(11.0))
+                            .font_bold()
+                            .margin_right(6.0)
+                            .color(config.color(LapceColor::PANEL_FOREGROUND))
+                    }),
+                    label(move || {
+                        let count = thinking_steps
+                            .get()
+                            .iter()
+                            .filter(|e| !is_transient_start_step(e))
+                            .count();
+                        if count == 0 {
+                            String::new()
+                        } else {
+                            format!("({count})")
+                        }
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
+                            .color(config.color(LapceColor::EDITOR_DIM))
+                    }),
+                    empty().style(|s| s.flex_grow(1.0)),
+                    label(move || {
+                        if thinking_collapsed.get() {
+                            "\u{25B8}".to_string()
+                        } else {
+                            "\u{25BE}".to_string()
+                        }
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.font_size(10.0)
+                            .color(config.color(LapceColor::EDITOR_DIM))
+                    }),
+                ))
+                .style(|s| s.items_center().width_pct(100.0)),
+            )
+            .on_click_stop(move |_| {
+                thinking_collapsed.update(|collapsed| *collapsed = !*collapsed);
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding_horiz(10.0)
+                    .padding_vert(6.0)
+                    .cursor(CursorStyle::Pointer)
+                    .border_bottom(1.0)
+                    .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.4))
+            }),
+            // Step list
+            dyn_stack(
+                move || {
+                    let steps = thinking_steps.get();
+                    let has_real_steps = steps.iter().any(|e| !is_transient_start_step(e));
+                    steps
+                        .iter()
+                        .filter(|e| {
+                            if is_transient_start_step(e) {
+                                !has_real_steps
+                            } else {
+                                true
+                            }
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                },
+                |entry: &ChatEntry| entry.key(),
+                move |entry| thinking_entry_view(config, entry),
+            )
+            .style(move |s| {
+                if thinking_collapsed.get() {
+                    s.hide()
+                } else {
+                    s.flex_col().width_pct(100.0).padding_vert(4.0)
+                }
+            }),
+        ))
+        .style(|s| s.flex_col().width_pct(100.0).min_width(0.0)),
+    )
+    .style(move |s| {
+        let config = config.get();
+        let loading = is_loading.get();
+        let has_steps = !thinking_steps.get().is_empty();
+        let show = loading && has_steps;
+        s.width_pct(100.0)
+            .min_width(0.0)
+            .margin_horiz(8.0)
+            .margin_vert(4.0)
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER).multiply_alpha(0.5))
+            .border_radius(6.0)
+            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.45))
+            .apply_if(!show, |s| s.hide())
+    })
+}
+
+fn is_transient_start_step(entry: &ChatEntry) -> bool {
+    matches!(
+        &entry.kind,
+        ChatEntryKind::ThinkingStep(s) if s.step_type == "start"
+    )
+}
+
+fn thinking_entry_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
+    entry: ChatEntry,
+) -> impl View {
+    match entry.kind {
+        ChatEntryKind::ThinkingStep(step) => thinking_step_view(config, step).into_any(),
+        ChatEntryKind::ServerToolCall(tc) => server_tool_call_view(config, tc).into_any(),
+        ChatEntryKind::Plan(plan) => plan_view(config, plan).into_any(),
+        _ => empty().into_any(),
+    }
+}
+
 /// "Forge is thinking..." indicator with pulsing dots.
 fn thinking_indicator(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
     is_loading: floem::reactive::RwSignal<bool>,
     has_first_token: floem::reactive::RwSignal<bool>,
+    thinking_steps: floem::reactive::RwSignal<im::Vector<ChatEntry>>,
 ) -> impl View {
     container(
         stack((
@@ -814,7 +949,8 @@ fn thinking_indicator(
     .style(move |s| {
         let loading = is_loading.get();
         let has_token = has_first_token.get();
-        let show = loading && !has_token;
+        let has_activity = !thinking_steps.get().is_empty();
+        let show = loading && !has_token && !has_activity;
         s.padding_horiz(12.0)
             .padding_vert(10.0)
             .width_pct(100.0)
@@ -977,7 +1113,7 @@ fn chat_entry_view(
             plan_view(config, plan).into_any()
         }
         ChatEntryKind::ThinkingStep(_) | ChatEntryKind::ServerToolCall(_) => {
-            // These entry types were used by the removed thinking section — render nothing.
+            // Rendered in the live activity section during the current turn.
             empty().into_any()
         }
     }
@@ -2254,22 +2390,28 @@ fn tool_call_card(
     })
 }
 
-/// View for a thinking step (server-side activity) — kept for pattern matching but not rendered.
-#[allow(dead_code)]
+/// View for a thinking step (server-side activity or streamed reasoning).
 fn thinking_step_view(
     config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::LapceConfig>>,
-    step: crate::ai_chat::ChatThinkingStep,
+    step: ChatThinkingStep,
 ) -> impl View {
+    let is_reasoning = step.step_type == "reasoning";
     // Icon based on step type
     let icon = match step.step_type.as_str() {
         "enriching" | "searching" => "\u{1F50D}", // magnifying glass
         "reasoning" => "\u{1F4AD}",                // thought bubble
         "plan" => "\u{1F4CB}",                     // clipboard
         "tool" => "\u{1F527}",                     // wrench
+        "start" => "\u{25CF}",                     // pulsing dot substitute
         _ => "\u{2022}",                           // bullet
     };
-    let message = step.message.clone();
+    let message = if is_reasoning && step.message.len() > 400 {
+        format!("{}...", &step.message[..400])
+    } else {
+        step.message.clone()
+    };
     let detail = step.detail.clone();
+    let step_type = step.step_type.clone();
 
     container(
         stack((
@@ -2286,13 +2428,23 @@ fn thinking_step_view(
                 s.font_size((config.ui.font_size() as f32 - 2.0).max(10.0))
                     .color(config.color(LapceColor::EDITOR_DIM))
                     .flex_grow(1.0)
+                    .apply_if(is_reasoning, |s| {
+                        s.font_style(floem::text::Style::Italic)
+                    })
             }),
             // Optional detail (truncated)
             {
-                let detail_text = detail.clone().map(|d| {
-                    if d.len() > 50 { format!("{}...", &d[..50]) } else { d }
-                }).unwrap_or_default();
-                let has_detail = detail.is_some();
+                let detail_text = detail
+                    .clone()
+                    .map(|d| {
+                        if d.len() > 50 {
+                            format!("{}...", &d[..50])
+                        } else {
+                            d
+                        }
+                    })
+                    .unwrap_or_default();
+                let has_detail = detail.as_ref().is_some_and(|d| !d.is_empty() && d != "stream");
                 label(move || detail_text.clone()).style(move |s| {
                     let config = config.get();
                     s.font_size((config.ui.font_size() as f32 - 3.0).max(9.0))
@@ -2302,15 +2454,20 @@ fn thinking_step_view(
                 })
             },
         ))
-        .style(|s| s.items_center().width_pct(100.0)),
+        .style(|s| s.items_start().width_pct(100.0)),
     )
     .style(move |s| {
         let config = config.get();
         s.padding_horiz(8.0)
             .padding_vert(3.0)
-            .margin_horiz(8.0)
+            .margin_horiz(4.0)
             .min_width(0.0)
-            .background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.3))
+            .apply_if(step_type == "reasoning", |s| {
+                s.background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.25))
+            })
+            .apply_if(step_type != "reasoning", |s| {
+                s.background(config.color(LapceColor::PANEL_BACKGROUND).multiply_alpha(0.3))
+            })
     })
 }
 

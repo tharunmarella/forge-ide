@@ -498,6 +498,8 @@ impl AiChatData {
         self.is_loading.set(true);
         self.has_first_token.set(false);
         self.streaming_text.set(String::new());
+        self.thinking_steps.set(im::Vector::new());
+        self.thinking_collapsed.set(false);
 
         // Only check API key when NOT using forge-search
         if !forge_search_auth && api_key.is_empty() {
