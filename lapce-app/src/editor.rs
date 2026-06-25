@@ -2946,7 +2946,6 @@ impl EditorData {
                     }
                 }
 
-                    return;
                 if (cfg!(target_os = "macos") && pointer_event.modifiers.meta())
                     || (cfg!(not(target_os = "macos"))
                         && pointer_event.modifiers.control())

@@ -179,6 +179,10 @@ pub enum PluginCatalogNotification {
     UpdatePluginConfigs(HashMap<String, HashMap<String, serde_json::Value>>),
     UnactivatedVolts(Vec<VoltMetadata>),
     PluginServerLoaded(PluginServerRpcHandler),
+    NativeLspStopped {
+        language_id: String,
+        plugin_id: PluginId,
+    },
     InstallVolt(VoltInfo),
     StopVolt(VoltInfo),
     EnableVolt(VoltInfo),
@@ -428,9 +432,22 @@ impl PluginCatalogRpcHandler {
                 }
                 let result = match result {
                     Ok(value) => {
-                        if let Ok(item) = serde_json::from_value::<Resp>(value) {
+                        if let Ok(item) = serde_json::from_value::<Resp>(value.clone()) {
                             got_success.store(true, Ordering::Release);
                             Ok(item)
+                        } else if value.is_null() {
+                            if let Ok(item) = serde_json::from_value::<Resp>(Value::Array(Vec::new())) {
+                                got_success.store(true, Ordering::Release);
+                                Ok(item)
+                            } else if let Ok(item) = serde_json::from_value::<Resp>(Value::Object(Map::new())) {
+                                got_success.store(true, Ordering::Release);
+                                Ok(item)
+                            } else {
+                                Err(RpcError {
+                                    code: 0,
+                                    message: "deserialize error".to_string(),
+                                })
+                            }
                         } else {
                             Err(RpcError {
                                 code: 0,
@@ -1340,6 +1357,17 @@ impl PluginCatalogRpcHandler {
         ))
     }
 
+    pub fn native_lsp_stopped(
+        &self,
+        language_id: String,
+        plugin_id: PluginId,
+    ) -> Result<()> {
+        self.catalog_notification(PluginCatalogNotification::NativeLspStopped {
+            language_id,
+            plugin_id,
+        })
+    }
+
     pub fn update_plugin_configs(
         &self,
         configs: HashMap<String, HashMap<String, serde_json::Value>>,
@@ -1811,7 +1839,7 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             configuration: Some(false),
-            workspace_folders: Some(true),
+            workspace_folders: Some(false),
             ..Default::default()
         }),
         experimental: Some(experimental.into()),

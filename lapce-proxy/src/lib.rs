@@ -2,6 +2,7 @@
 
 pub mod agent_terminal;
 pub mod ai_completion;
+pub mod bundled_lsp;
 pub mod buffer;
 pub mod cli;
 pub mod database;

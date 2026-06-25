@@ -239,8 +239,14 @@ impl LspClient {
 
         let local_server_rpc = server_rpc.clone();
         let core_rpc = plugin_rpc.core_rpc.clone();
+        let catalog_rpc = plugin_rpc.clone();
         let volt_id_closure = volt_id.clone();
         let name = volt_display_name.clone();
+        let plugin_id = server_rpc.plugin_id;
+        let language_id = document_selector
+            .first()
+            .and_then(|f| f.language.clone())
+            .unwrap_or_default();
         thread::spawn(move || {
             let mut reader = Box::new(BufReader::new(stdout));
             loop {
@@ -253,6 +259,7 @@ impl LspClient {
                             &local_server_rpc,
                             &message_str,
                             &name,
+                            &io_tx,
                         ) {
                             if let Err(err) = io_tx.send(resp) {
                                 tracing::error!("{:?}", err);
@@ -268,6 +275,9 @@ impl LspClient {
                                 volt_id_closure.author, volt_id_closure.name
                             )),
                         );
+                        if !language_id.is_empty() {
+                            let _ = catalog_rpc.native_lsp_stopped(language_id, plugin_id);
+                        }
                         return;
                     }
                 };
@@ -403,6 +413,45 @@ impl LspClient {
                     None,
                     false,
                 );
+                if self.host.volt_id.name == "pyright" {
+                    let mut python_path = None;
+
+                    // 1. Check if VIRTUAL_ENV environment variable is set
+                    if let Ok(venv_dir) = std::env::var("VIRTUAL_ENV") {
+                        let venv_path = PathBuf::from(venv_dir);
+                        #[cfg(target_os = "windows")]
+                        let bin_path = venv_path.join("Scripts").join("python.exe");
+                        #[cfg(not(target_os = "windows"))]
+                        let bin_path = venv_path.join("bin").join("python");
+
+                        if bin_path.exists() {
+                            python_path = Some(bin_path);
+                        }
+                    }
+
+                    // 2. Check common virtual environment directories in the workspace
+                    if python_path.is_none() {
+                        if let Some(ref workspace_path) = self.workspace {
+                            python_path = find_venv_in_dir(workspace_path, 3);
+                        }
+                    }
+
+                    if let Some(python_path) = python_path {
+                        let settings = serde_json::json!({
+                            "python": {
+                                "pythonPath": python_path.to_string_lossy()
+                            }
+                        });
+                        tracing::info!("Sending pythonPath to pyright: {:?}", python_path);
+                        self.server_rpc.server_notification(
+                            lsp_types::notification::DidChangeConfiguration::METHOD,
+                            lsp_types::DidChangeConfigurationParams { settings },
+                            None,
+                            None,
+                            false,
+                        );
+                    }
+                }
                 if self
                     .plugin_rpc
                     .plugin_server_loaded(self.server_rpc.clone())
@@ -554,4 +603,44 @@ pub fn get_change_for_sync_kind(
         TextDocumentSyncKind::INCREMENTAL => Some(vec![content_change.clone()]),
         _ => None,
     }
+}
+
+fn find_venv_in_dir(dir: &Path, depth: usize) -> Option<PathBuf> {
+    if depth == 0 {
+        return None;
+    }
+
+    // 1. Check if this directory itself contains a virtual environment
+    for venv_name in &[".venv", "venv", "env", ".conda", "conda"] {
+        let venv_path = dir.join(venv_name);
+        #[cfg(target_os = "windows")]
+        let bin_path = venv_path.join("Scripts").join("python.exe");
+        #[cfg(not(target_os = "windows"))]
+        let bin_path = venv_path.join("bin").join("python");
+
+        if bin_path.exists() {
+            return Some(bin_path);
+        }
+    }
+
+    // 2. Recursively check subdirectories
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with('.') && name != ".venv" {
+                    continue;
+                }
+                if name == "node_modules" || name == "target" || name == "build" || name == "dist" {
+                    continue;
+                }
+                if let Some(bin_path) = find_venv_in_dir(&path, depth - 1) {
+                    return Some(bin_path);
+                }
+            }
+        }
+    }
+
+    None
 }

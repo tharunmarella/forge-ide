@@ -438,6 +438,8 @@ impl PluginServerRpcHandler {
     pub fn handle_server_response(&self, id: Id, result: Result<Value, RpcError>) {
         if let Some(handler) = { self.server_pending.lock().remove(&id) } {
             handler.invoke(result);
+        } else {
+            tracing::debug!("LSP response for unknown request id: {:?}", id);
         }
     }
 
@@ -552,37 +554,78 @@ pub fn handle_plugin_server_message(
     server_rpc: &PluginServerRpcHandler,
     message: &str,
     from: &str,
+    io_tx: &Sender<JsonRpc>,
 ) -> Option<JsonRpc> {
     match JsonRpc::parse(message) {
         Ok(value @ JsonRpc::Request(_)) => {
-            let (tx, rx) = crossbeam_channel::bounded(1);
+            let method = value.get_method().unwrap_or("");
             let id = value.get_id().unwrap();
+
+            // Answer immediately on the reader thread. Routing through the plugin
+            // mainloop can deadlock when it is busy waiting for LSP responses.
+            if method == WorkDoneProgressCreate::METHOD {
+                let resp = JsonRpc::success(id, &serde_json::Value::Null);
+                if let Err(err) = io_tx.send(resp) {
+                    tracing::error!("{:?}", err);
+                }
+                return None;
+            }
+
+            if method == RegisterCapability::METHOD {
+                let params = value.get_params().unwrap();
+                let resp = JsonRpc::success(id.clone(), &serde_json::Value::Null);
+                if let Err(err) = io_tx.send(resp) {
+                    tracing::error!("{:?}", err);
+                }
+                let server_rpc = server_rpc.clone();
+                thread::spawn(move || {
+                    let (tx, rx) = crossbeam_channel::bounded(1);
+                    server_rpc.handle_rpc(PluginServerRpc::HostRequest {
+                        id,
+                        method: RegisterCapability::METHOD.to_string(),
+                        params,
+                        resp: ResponseSender::new(tx),
+                    });
+                    let _ = rx.recv();
+                });
+                return None;
+            }
+
+            let (tx, rx) = crossbeam_channel::bounded(1);
             let rpc = PluginServerRpc::HostRequest {
                 id: id.clone(),
-                method: value.get_method().unwrap().to_string(),
+                method: method.to_string(),
                 params: value.get_params().unwrap(),
                 resp: ResponseSender::new(tx),
             };
             server_rpc.handle_rpc(rpc);
-            let result = match rx.recv() {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("Plugin RPC response channel closed: {e}");
-                    return None;
+            // Don't block the stdout reader — other server requests may need answers
+            // while LSP responses are still in flight.
+            let io_tx = io_tx.clone();
+            thread::spawn(move || {
+                let result = match rx.recv() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("Plugin RPC response channel closed: {e}");
+                        return;
+                    }
+                };
+                let resp = match result {
+                    Ok(v) => JsonRpc::success(id, &v),
+                    Err(e) => JsonRpc::error(
+                        id,
+                        jsonrpc_lite::Error {
+                            code: e.code,
+                            message: e.message,
+                            data: None,
+                        },
+                    ),
+                };
+                if let Err(err) = io_tx.send(resp) {
+                    tracing::error!("{:?}", err);
                 }
-            };
-            let resp = match result {
-                Ok(v) => JsonRpc::success(id, &v),
-                Err(e) => JsonRpc::error(
-                    id,
-                    jsonrpc_lite::Error {
-                        code: e.code,
-                        message: e.message,
-                        data: None,
-                    },
-                ),
-            };
-            Some(resp)
+            });
+            None
         }
         Ok(value @ JsonRpc::Notification(_)) => {
             let rpc = PluginServerRpc::HostNotification {
@@ -627,7 +670,7 @@ struct ServerRegistrations {
 }
 
 pub struct PluginHostHandler {
-    volt_id: VoltID,
+    pub(crate) volt_id: VoltID,
     volt_display_name: String,
     pwd: Option<PathBuf>,
     pub(crate) workspace: Option<PathBuf>,

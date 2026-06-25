@@ -495,15 +495,16 @@ pub fn start_volt(
     let mut store = wasmtime::Store::new(&engine, wasi);
 
     let (io_tx, io_rx) = crossbeam_channel::unbounded();
-    let rpc = PluginServerRpcHandler::new(meta.id(), None, None, io_tx);
+    let rpc = PluginServerRpcHandler::new(meta.id(), None, None, io_tx.clone());
 
     let local_rpc = rpc.clone();
     let local_stdin = stdin.clone();
     let volt_name = format!("volt {}", meta.name);
+    let local_io_tx = io_tx.clone();
     linker.func_wrap("lapce", "host_handle_rpc", move || {
         if let Ok(msg) = wasi_read_string(&stdout) {
             if let Some(resp) =
-                handle_plugin_server_message(&local_rpc, &msg, &volt_name)
+                handle_plugin_server_message(&local_rpc, &msg, &volt_name, &local_io_tx)
             {
                 if let Ok(msg) = serde_json::to_string(&resp) {
                     if let Err(err) = writeln!(local_stdin.write().unwrap(), "{msg}")

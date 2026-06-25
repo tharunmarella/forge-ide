@@ -73,6 +73,11 @@ cp "$BUILD_DIR/lapce-proxy" "$APP_DIR/Contents/MacOS/lapce-proxy"
 cp "$PROJECT_DIR/scripts/forge-launcher.sh" "$APP_DIR/Contents/MacOS/forge-launcher"
 chmod +x "$APP_DIR/Contents/MacOS/forge-launcher"
 
+# Step 3b: Bundle language servers (Python, TypeScript, Rust, Go)
+echo "==> Bundling language servers..."
+chmod +x "$PROJECT_DIR/scripts/bundle-lsps-macos.sh"
+"$PROJECT_DIR/scripts/bundle-lsps-macos.sh" "$APP_DIR"
+
 # Strip debug symbols to reduce size
 strip "$APP_DIR/Contents/MacOS/lapce" 2>/dev/null || true
 strip "$APP_DIR/Contents/MacOS/lapce-proxy" 2>/dev/null || true
@@ -160,13 +165,16 @@ if [ -z "${CODESIGN_IDENTITY:-}" ]; then
     echo "  3. Export CODESIGN_IDENTITY='Developer ID Application: Your Name (TEAM_ID)'"
     echo "  4. Re-run this script"
     echo ""
-    codesign --force --deep --sign - "$APP_DIR"
+    ENTITLEMENTS="$PROJECT_DIR/extra/entitlements.plist"
+    codesign --force --deep --sign - --options runtime --entitlements "$ENTITLEMENTS" "$APP_DIR"
 else
     echo "Signing with identity: $CODESIGN_IDENTITY"
+    ENTITLEMENTS="$PROJECT_DIR/extra/entitlements.plist"
     # Sign with hardened runtime and timestamp (required for notarization)
     codesign --force --deep \
         --options runtime \
         --timestamp \
+        --entitlements "$ENTITLEMENTS" \
         --sign "$CODESIGN_IDENTITY" \
         "$APP_DIR"
     

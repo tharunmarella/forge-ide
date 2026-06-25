@@ -184,6 +184,8 @@ impl SourceControlData {
                 }
                 Err(e) => {
                     eprintln!("DEBUG: git_log error: {:?}", e);
+                    commits.set(im::Vector::new());
+                    commits_total_count.set(0);
                 }
             }
         });

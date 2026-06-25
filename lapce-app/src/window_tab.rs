@@ -3684,6 +3684,9 @@ impl WindowTabData {
             );
         }
         self.panel.show_panel(&kind);
+        if kind == PanelKind::GitLog {
+            self.source_control.load_git_log();
+        }
         if kind == PanelKind::Search
             && self.common.focus.get_untracked() == Focus::Workbench
         {

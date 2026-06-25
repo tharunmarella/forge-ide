@@ -404,7 +404,12 @@ pub fn panel_container_view(
         // Left/Right panels: horizontal layout [icons | content]
         let panel_for_content = panel.clone();
         stack((
-            panel_picker(window_tab_data.clone(), position.first()),
+            panel_picker(window_tab_data.clone(), position.first()).style(move |s| {
+                s.flex_shrink(0.0)
+                    .width(SIDE_ICON_BAR_WIDTH)
+                    .min_width(SIDE_ICON_BAR_WIDTH)
+                    .height_pct(100.0)
+            }),
             stack((
                 split_panel_slot(
                     window_tab_data.clone(),
@@ -442,6 +447,7 @@ pub fn panel_container_view(
                 },
             ),
         ))
+        .style(|s| s.flex_row().height_pct(100.0))
     } else {
         // Bottom panel layout
         stack((
@@ -504,6 +510,8 @@ pub fn panel_container_view(
                 };
                 s.border_right(1.0)
                     .width(width)
+                    .min_width(SIDE_ICON_BAR_WIDTH)
+                    .flex_shrink(0.0)
                     .height_pct(100.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
             })
@@ -515,6 +523,8 @@ pub fn panel_container_view(
                 };
                 s.border_left(1.0)
                     .width(width)
+                    .min_width(SIDE_ICON_BAR_WIDTH)
+                    .flex_shrink(0.0)
                     .height_pct(100.0)
                     .background(config.color(LapceColor::PANEL_BACKGROUND))
             })
@@ -533,17 +543,41 @@ fn split_panel_slot(
 ) -> impl View {
     let panel = window_tab_data.panel.clone();
     container(panel_view(window_tab_data, panel_position)).style(move |s| {
-        let ratio = panel.size.with(|sz| match container_position {
-            PanelContainerPosition::Left => sz.left_split,
-            PanelContainerPosition::Bottom => sz.bottom_split,
-            PanelContainerPosition::Right => sz.right_split,
-        });
-        let ratio = ratio.clamp(0.15, 0.85);
-        let grow = if is_first { ratio } else { 1.0 - ratio };
+        let slot_active = !panel.is_position_empty(&panel_position, true)
+            && panel.is_position_shown(&panel_position, true);
+        if !slot_active {
+            return s.hide()
+                .flex_grow(0.0)
+                .flex_basis(0.0)
+                .min_height(0.0)
+                .width_pct(100.0);
+        }
+
+        let peer = panel_position.peer();
+        let peer_active = !panel.is_position_empty(&peer, true)
+            && panel.is_position_shown(&peer, true);
+
+        let grow = if peer_active {
+            let ratio = panel.size.with(|sz| match container_position {
+                PanelContainerPosition::Left => sz.left_split,
+                PanelContainerPosition::Bottom => sz.bottom_split,
+                PanelContainerPosition::Right => sz.right_split,
+            });
+            let ratio = ratio.clamp(0.15, 0.85);
+            if is_first {
+                ratio
+            } else {
+                1.0 - ratio
+            }
+        } else {
+            1.0
+        };
+
         s.flex_grow(grow as f32)
             .flex_basis(0.0)
             .min_height(0.0)
             .width_pct(100.0)
+            .height_pct(100.0)
     })
 }
 
@@ -955,6 +989,7 @@ fn panel_picker(
                 }),
                 |s| s.hide(),
             )
+            .apply_if(!is_bottom, |s| s.height_pct(100.0))
             // Bottom panel icon borders
             .apply_if(is_bottom && is_first, |s| s.border_right(1.0))
             .apply_if(is_bottom && !is_first, |s| s.border_left(1.0))

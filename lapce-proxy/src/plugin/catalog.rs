@@ -45,7 +45,7 @@ pub struct PluginCatalog {
     plugin_configurations: HashMap<String, HashMap<String, serde_json::Value>>,
     unactivated_volts: HashMap<VoltID, VoltMetadata>,
     open_files: HashMap<PathBuf, String>,
-    native_lsps_started: std::collections::HashSet<String>,
+    native_lsps_started: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl PluginCatalog {
@@ -65,7 +65,7 @@ impl PluginCatalog {
             debuggers: HashMap::new(),
             unactivated_volts: HashMap::new(),
             open_files: HashMap::new(),
-            native_lsps_started: std::collections::HashSet::new(),
+            native_lsps_started: Arc::new(Mutex::new(std::collections::HashSet::new())),
         };
 
         thread::spawn(move || {
@@ -309,20 +309,65 @@ impl PluginCatalog {
         self.start_unactivated_volts(to_be_activated);
 
         // Native LSP auto-install logic
-        if !self.native_lsps_started.contains(&document.language_id) {
-            let has_plugin_for_lang = self.plugins.values().any(|p| {
-                // Approximate check if the plugin is handling this language
-                // The actual check is `document_supported`, but `PluginServerRpcHandler`
-                // doesn't have a synchronous `document_supported`.
-                // However, if we reach here and there's no activated volt, maybe we should start one.
-                false // We will refine this if needed, but since we insert to native_lsps_started, it only tries once.
-            });
-            
-            self.native_lsps_started.insert(document.language_id.clone());
-            self.start_native_lsp_for_language(&document.language_id);
+        {
+            let mut started = self.native_lsps_started.lock();
+            if !started.contains(&document.language_id) {
+                started.insert(document.language_id.clone());
+                drop(started);
+                self.start_native_lsp_for_language(&document.language_id);
+            }
         }
 
         let path = document.uri.to_file_path().ok();
+        if document.language_id == "python" {
+            if let Some(ref file_path) = path {
+                let mut current_dir = file_path.parent();
+                let mut python_path = None;
+                while let Some(dir) = current_dir {
+                    for venv_name in &[".venv", "venv", "env", ".conda", "conda"] {
+                        let venv_path = dir.join(venv_name);
+                        #[cfg(target_os = "windows")]
+                        let bin_path = venv_path.join("Scripts").join("python.exe");
+                        #[cfg(not(target_os = "windows"))]
+                        let bin_path = venv_path.join("bin").join("python");
+
+                        if bin_path.exists() {
+                            python_path = Some(bin_path);
+                            break;
+                        }
+                    }
+                    if python_path.is_some() {
+                        break;
+                    }
+                    if Some(dir) == self.workspace.as_deref() {
+                        break;
+                    }
+                    current_dir = dir.parent();
+                }
+
+                if let Some(python_path) = python_path {
+                    tracing::info!("Found python virtual env for {:?}: {:?}", file_path, python_path);
+                    for (_, plugin) in self.plugins.iter() {
+                        if plugin.volt_id.name == "pyright" {
+                            let settings = serde_json::json!({
+                                "python": {
+                                    "pythonPath": python_path.to_string_lossy()
+                                }
+                            });
+                            tracing::info!("Sending pythonPath to pyright for {:?}: {:?}", file_path, python_path);
+                            plugin.server_notification(
+                                lsp_types::notification::DidChangeConfiguration::METHOD,
+                                lsp_types::DidChangeConfigurationParams { settings },
+                                Some(document.language_id.clone()),
+                                Some(file_path.clone()),
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         for (_, plugin) in self.plugins.iter() {
             plugin.server_notification(
                 DidOpenTextDocument::METHOD,
@@ -351,6 +396,7 @@ impl PluginCatalog {
         let catalog_rpc = self.plugin_rpc.clone();
         let workspace = self.workspace.clone();
         let language_id = language_id.to_string();
+        let native_lsps_started = self.native_lsps_started.clone();
 
         std::thread::spawn(move || {
             let core_rpc = catalog_rpc.core_rpc.clone();
@@ -360,40 +406,57 @@ impl PluginCatalog {
                 None,
             );
 
-            // 1. Try to find the binary in PATH or proto
-            let mut bin_path = lsp_binary.to_string();
-            
-            // Check if proto is available and install if needed
-            let proto_bin = crate::proto_manager::proto_bin();
-            let proto_available = std::process::Command::new(&proto_bin)
-                .arg("--version")
-                .output()
-                .is_ok();
+            // 1. Prefer bundled binary, then PATH, then proto install
+            let mut bin_path = crate::bundled_lsp::resolve_lsp_binary(lsp_binary)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| lsp_binary.to_string());
 
-            if proto_available {
-                // Ensure it is installed
+            if let Some(bundled) = crate::bundled_lsp::bundled_lsp_binary(lsp_binary) {
                 core_rpc.log(
                     lapce_rpc::core::LogLevel::Info,
-                    format!("Installing {} via proto...", tool_name),
+                    format!(
+                        "Using bundled LSP for {}: {}",
+                        language_id,
+                        bundled.display()
+                    ),
                     None,
                 );
-                
-                let _ = std::process::Command::new(&proto_bin)
-                    .arg("install")
-                    .arg(tool_name)
-                    .output();
-                    
-                // Get the exact binary path from proto
-                if let Ok(output) = std::process::Command::new(&proto_bin)
-                    .arg("bin")
-                    .arg(tool_name)
+            } else if !std::path::Path::new(&bin_path).exists() {
+                let proto_bin = crate::proto_manager::proto_bin();
+                let proto_available = std::process::Command::new(&proto_bin)
+                    .arg("--version")
                     .output()
-                {
-                    if let Ok(path) = String::from_utf8(output.stdout) {
-                        let path = path.trim();
-                        if !path.is_empty() {
-                            bin_path = path.to_string();
+                    .is_ok();
+
+                if proto_available {
+                    core_rpc.log(
+                        lapce_rpc::core::LogLevel::Info,
+                        format!("Installing {} via proto...", tool_name),
+                        None,
+                    );
+
+                    let _ = std::process::Command::new(&proto_bin)
+                        .arg("install")
+                        .arg(tool_name)
+                        .output();
+
+                    if let Ok(output) = std::process::Command::new(&proto_bin)
+                        .arg("bin")
+                        .arg(tool_name)
+                        .output()
+                    {
+                        if let Ok(path) = String::from_utf8(output.stdout) {
+                            let path = path.trim();
+                            if !path.is_empty() {
+                                bin_path = path.to_string();
+                            }
                         }
+                    }
+                }
+
+                if !std::path::Path::new(&bin_path).exists() {
+                    if let Some(found) = crate::bundled_lsp::path_lookup(lsp_binary) {
+                        bin_path = found.to_string_lossy().into_owned();
                     }
                 }
             }
@@ -410,7 +473,15 @@ impl PluginCatalog {
                 name: tool_name.to_string(),
             };
 
-            let server_uri = lsp_types::Url::parse(&format!("urn:{}", bin_path)).unwrap_or_else(|_| lsp_types::Url::parse(&format!("urn:{}", lsp_binary)).unwrap());
+            let server_uri = if std::path::Path::new(&bin_path).is_absolute() {
+                lsp_types::Url::from_file_path(&bin_path).unwrap_or_else(|_| {
+                    lsp_types::Url::parse(&format!("urn:{}", bin_path)).unwrap()
+                })
+            } else {
+                lsp_types::Url::parse(&format!("urn:{}", bin_path)).unwrap_or_else(|_| {
+                    lsp_types::Url::parse(&format!("urn:{}", lsp_binary)).unwrap()
+                })
+            };
             
             let document_selector = vec![lsp_types::DocumentFilter {
                 language: Some(language_id.clone()),
@@ -432,6 +503,7 @@ impl PluginCatalog {
                 args,
                 None,
             ) {
+                native_lsps_started.lock().remove(&language_id);
                 tracing::error!("Failed to start native LSP: {:?}", err);
                 core_rpc.log(
                     lapce_rpc::core::LogLevel::Error,
@@ -648,6 +720,13 @@ impl PluginCatalog {
                         ));
                     }
                 }
+            }
+            NativeLspStopped {
+                language_id,
+                plugin_id,
+            } => {
+                self.native_lsps_started.lock().remove(&language_id);
+                self.plugins.remove(&plugin_id);
             }
             InstallVolt(volt) => {
                 tracing::debug!("InstallVolt {:?}", volt);

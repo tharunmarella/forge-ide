@@ -32,6 +32,77 @@ use crate::{
     window_tab::{Focus, WindowTabData},
 };
 
+fn scm_action_button_style(
+    s: Style,
+    config: &crate::config::LapceConfig,
+    primary: bool,
+    disabled: bool,
+) -> Style {
+    let font_size = (config.ui.font_size() as f32 - 1.0).max(11.0);
+    let s = s
+        .line_height(1.0)
+        .flex_grow(1.0)
+        .justify_center()
+        .items_center()
+        .padding_vert(5.0)
+        .padding_horiz(10.0)
+        .font_size(font_size)
+        .border_radius(5.0)
+        .selectable(false);
+
+    if primary {
+        if disabled {
+            s.background(
+                config
+                    .color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                    .multiply_alpha(0.35),
+            )
+            .color(
+                config
+                    .color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND)
+                    .multiply_alpha(0.45),
+            )
+            .cursor(CursorStyle::Default)
+        } else {
+            s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
+                .color(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND))
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config
+                            .color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                            .multiply_alpha(0.88),
+                    )
+                })
+                .active(|s| {
+                    s.background(
+                        config
+                            .color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
+                            .multiply_alpha(0.72),
+                    )
+                })
+        }
+    } else if disabled {
+        s.background(config.color(LapceColor::PANEL_BACKGROUND))
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER))
+            .color(config.color(LapceColor::EDITOR_DIM))
+            .cursor(CursorStyle::Default)
+    } else {
+        s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+            .border(1.0)
+            .border_color(config.color(LapceColor::LAPCE_BORDER))
+            .color(config.color(LapceColor::PANEL_FOREGROUND))
+            .hover(|s| {
+                s.cursor(CursorStyle::Pointer).background(
+                    config.color(LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
+                )
+            })
+            .active(|s| {
+                s.background(config.color(LapceColor::PANEL_HOVERED_BACKGROUND))
+            })
+    }
+}
+
 pub fn source_control_panel(
     window_tab_data: Rc<WindowTabData>,
     _position: PanelPosition,
@@ -192,33 +263,12 @@ pub fn source_control_panel(
                             }
                         })
                         .style(move |s| {
-                            let config = config.get();
-                            let disabled = is_empty.get();
-                            s.line_height(1.6)
-                                .flex_grow(1.0)
-                                .justify_center()
-                                .padding_vert(10.0)
-                                .font_size(config.ui.font_size() as f32)
-                                .border(1.0)
-                                .border_radius(6.0)
-                                .border_color(config.color(LapceColor::LAPCE_BORDER))
-                                .apply_if(disabled, |s| {
-                                    s.color(config.color(LapceColor::EDITOR_DIM))
-                                        .cursor(CursorStyle::Default)
-                                })
-                                .apply_if(!disabled, |s| {
-                                    s.hover(|s| {
-                                        s.cursor(CursorStyle::Pointer).background(
-                                            config.color(LapceColor::PANEL_HOVERED_BACKGROUND),
-                                        )
-                                    })
-                                    .active(|s| {
-                                        s.background(config.color(
-                                            LapceColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                        ))
-                                    })
-                                })
-                                .selectable(false)
+                            scm_action_button_style(
+                                s,
+                                &config.get(),
+                                false,
+                                is_empty.get(),
+                            )
                         })
                 },
                 {
@@ -230,49 +280,16 @@ pub fn source_control_panel(
                             }
                         })
                         .style(move |s| {
-                            let config = config.get();
-                            let disabled = is_empty.get();
-                            s.margin_left(8.0)
-                                .line_height(1.6)
-                                .flex_grow(1.0)
-                                .justify_center()
-                                .padding_vert(10.0)
-                                .font_size(config.ui.font_size() as f32)
-                                .border(1.0)
-                                .border_radius(6.0)
-                                .border_color(config.color(LapceColor::LAPCE_BORDER))
-                                .apply_if(disabled, |s| {
-                                    s.background(
-                                        config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
-                                            .multiply_alpha(0.4)
-                                    )
-                                    .color(
-                                        config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND)
-                                            .multiply_alpha(0.5)
-                                    )
-                                    .cursor(CursorStyle::Default)
-                                })
-                                .apply_if(!disabled, |s| {
-                                    s.background(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND))
-                                        .color(config.color(LapceColor::LAPCE_BUTTON_PRIMARY_FOREGROUND))
-                                        .hover(|s| {
-                                            s.cursor(CursorStyle::Pointer).background(
-                                                config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
-                                                    .multiply_alpha(0.85),
-                                            )
-                                        })
-                                        .active(|s| {
-                                            s.background(
-                                                config.color(LapceColor::LAPCE_BUTTON_PRIMARY_BACKGROUND)
-                                                    .multiply_alpha(0.7),
-                                            )
-                                        })
-                                })
-                                .selectable(false)
+                            scm_action_button_style(
+                                s.margin_left(6.0),
+                                &config.get(),
+                                true,
+                                is_empty.get(),
+                            )
                         })
                 },
             ))
-            .style(|s| s.margin_top(12.0).width_pct(100.0)),
+            .style(|s| s.margin_top(8.0).width_pct(100.0)),
         ))
         .style(|s| s.flex_col().width_pct(100.0).padding(12.0)),
     ))

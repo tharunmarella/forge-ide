@@ -712,7 +712,7 @@ impl ProxyHandler for Dispatcher {
             GitLog { limit, skip, branch, author, search } => {
                 let workspace = self.workspace.clone();
                 let proxy_rpc = self.proxy_rpc.clone();
-                tokio::task::spawn_blocking(move || {
+                std::thread::spawn(move || {
                     let result = if let Some(ws) = workspace.as_ref() {
                         match git_log(ws, limit, skip, branch, author, search) {
                             Ok(result) => Ok(ProxyResponse::GitLogResponse { result }),
@@ -1050,7 +1050,7 @@ impl ProxyHandler for Dispatcher {
             GitGetCommitDiff { commit } => {
                 let workspace = self.workspace.clone();
                 let proxy_rpc = self.proxy_rpc.clone();
-                tokio::task::spawn_blocking(move || {
+                std::thread::spawn(move || {
                     let result = if let Some(ws) = workspace.as_ref() {
                         match git_get_commit_diff(ws, &commit) {
                             Ok(diff) => Ok(ProxyResponse::GitCommitDiffResponse { result: diff }),
@@ -3577,7 +3577,9 @@ fn get_offset(content: &str, position: lsp_types::Position) -> usize {
 }
 
 fn make_lsp_position(line: u64, col: u64) -> lsp_types::Position {
-    lsp_types::Position::new(line as u32, col as u32)
+    let l = if line > 0 { line - 1 } else { 0 };
+    let c = if col > 0 { col - 1 } else { 0 };
+    lsp_types::Position::new(l as u32, c as u32)
 }
 
 fn format_lsp_locations(
@@ -3600,8 +3602,8 @@ fn format_lsp_locations(
         output.push_str(&format!(
             "- {}:{}:{}\n",
             rel_path.display(),
-            loc.range.start.line,
-            loc.range.start.character
+            loc.range.start.line + 1,
+            loc.range.start.character + 1
         ));
     }
     output
